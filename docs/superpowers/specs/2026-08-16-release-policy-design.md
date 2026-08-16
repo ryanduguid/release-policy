@@ -1,7 +1,7 @@
 # Release-policy module: design
 
 - Date: 2026-08-16
-- Status: approved in discussion; written form pending review
+- Status: approved 2026-08-16
 - Governing decision: [ADR-0001](../../adr/0001-shared-release-policy.md)
 
 ## Problem
