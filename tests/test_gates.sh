@@ -67,4 +67,29 @@ run_case  "clean tree accepted"          gate_clean_tree
 echo dirty >> RELEASE_NOTES.md
 expect_fail "dirty tree rejected"        gate_clean_tree
 
+# --- API gates via stub gh ---
+make_repo
+stub_dir="$(mktemp -d)"
+cat > "$stub_dir/gh" <<'STUB'
+#!/usr/bin/env bash
+# Stub: emits canned responses driven by env vars.
+case "$*" in
+  *git/ref/heads/main*) printf '%s\n' "${STUB_MAIN_SHA:?}" ;;
+  *releases*)           printf '%s'   "${STUB_RELEASE_IDS:-}" ;;
+  *) echo "stub gh: unexpected args: $*" >&2; exit 64 ;;
+esac
+STUB
+chmod +x "$stub_dir/gh"
+export GH="$stub_dir/gh"
+
+export STUB_MAIN_SHA="abc123"
+run_case  "main matches"                  gate_main_matches "abc123" "ryanduguid/example"
+expect_fail "main mismatch"               gate_main_matches "def456" "ryanduguid/example"
+
+export STUB_RELEASE_IDS=""
+run_case  "no existing release"           gate_no_existing_release "v1.2.3" "ryanduguid/example"
+export STUB_RELEASE_IDS="12345"
+expect_fail "existing release rejected"   gate_no_existing_release "v1.2.3" "ryanduguid/example"
+unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
+
 finish

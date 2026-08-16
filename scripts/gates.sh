@@ -4,6 +4,7 @@
 set -euo pipefail
 
 PYTHON="${PYTHON:-python3}"
+GH="${GH:-gh}"
 
 gate_tag_format() {
   local tag="$1"
@@ -46,6 +47,27 @@ gate_notes_header() {
 gate_clean_tree() {
   if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
     echo "gate_clean_tree: working tree has tracked modifications" >&2
+    return 1
+  fi
+}
+
+gate_main_matches() {
+  local expected="$1" repo="$2" main_sha
+  main_sha="$("$GH" api -H "X-GitHub-Api-Version: 2026-03-10" \
+    "repos/$repo/git/ref/heads/main" --jq '.object.sha')"
+  if [ "$main_sha" != "$expected" ]; then
+    echo "gate_main_matches: origin main $main_sha != $expected" >&2
+    return 1
+  fi
+}
+
+gate_no_existing_release() {
+  local tag="$1" repo="$2" ids
+  ids="$("$GH" api --paginate -H "X-GitHub-Api-Version: 2026-03-10" \
+    "repos/$repo/releases?per_page=100" \
+    --jq ".[] | select(.tag_name == \"$tag\") | .id")"
+  if [ -n "$ids" ]; then
+    echo "gate_no_existing_release: a release for $tag already exists; refusing to replace it" >&2
     return 1
   fi
 }
