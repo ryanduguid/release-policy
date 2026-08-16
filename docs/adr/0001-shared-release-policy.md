@@ -1,6 +1,6 @@
 # ADR-0001: Shared release-policy module as a dedicated repository of reusable workflows
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-16
 - Deciders: Ryan Duguid
 - Source: account architecture survey, 16 August 2026, candidate 1
