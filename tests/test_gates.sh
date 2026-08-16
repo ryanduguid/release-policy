@@ -54,4 +54,17 @@ make_repo
 git tag v9.9.9   # lightweight
 expect_fail "lightweight tag rejected"       gate_annotated_tag "v9.9.9"
 
+# --- notes header ---
+make_repo
+run_case  "notes header matches tag"     gate_notes_header "v1.2.3"
+expect_fail "notes header mismatch"      gate_notes_header "v1.2.4"
+rm RELEASE_NOTES.md
+expect_fail "missing notes file"         gate_notes_header "v1.2.3"
+
+# --- clean tree ---
+make_repo
+run_case  "clean tree accepted"          gate_clean_tree
+echo dirty >> RELEASE_NOTES.md
+expect_fail "dirty tree rejected"        gate_clean_tree
+
 finish

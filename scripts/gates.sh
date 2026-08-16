@@ -29,3 +29,23 @@ gate_tag_commit_matches() {
     return 1
   fi
 }
+
+gate_notes_header() {
+  local tag="$1" first
+  if [ ! -f RELEASE_NOTES.md ]; then
+    echo "gate_notes_header: RELEASE_NOTES.md missing" >&2
+    return 1
+  fi
+  first="$(sed -n '1p' RELEASE_NOTES.md)"
+  if [ "$first" != "# $tag" ]; then
+    echo "gate_notes_header: first line '$first' != '# $tag'" >&2
+    return 1
+  fi
+}
+
+gate_clean_tree() {
+  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    echo "gate_clean_tree: working tree has tracked modifications" >&2
+    return 1
+  fi
+}
