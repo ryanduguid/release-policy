@@ -92,4 +92,22 @@ export STUB_RELEASE_IDS="12345"
 expect_fail "existing release rejected"   gate_no_existing_release "v1.2.3" "ryanduguid/example"
 unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
 
+# --- name/version derivation ---
+make_repo
+cat > pyproject.toml <<'EOF'
+[project]
+name = "demo-pkg"
+version = "1.2.3"
+EOF
+run_case "derive static version" test "$(derive_name_version | tr '\n' ' ')" = "demo_pkg 1.2.3 "
+
+cat > pyproject.toml <<'EOF'
+[project]
+name = "dyn-pkg"
+dynamic = ["version"]
+EOF
+run_case "derive dynamic version via command" \
+  test "$(derive_name_version "echo 9.8.7" | tr '\n' ' ')" = "dyn_pkg 9.8.7 "
+expect_fail "dynamic without command fails" derive_name_version
+
 finish

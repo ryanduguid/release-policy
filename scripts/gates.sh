@@ -71,3 +71,18 @@ gate_no_existing_release() {
     return 1
   fi
 }
+
+derive_name_version() {
+  local version_command="${1:-}" name stem version
+  name="$("$PYTHON" -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["name"])')"
+  stem="$("$PYTHON" -c 'import re,sys; print(re.sub(r"[^A-Za-z0-9.]+","_",sys.argv[1]))' "$name")"
+  version="$("$PYTHON" -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"].get("version",""))')"
+  if [ -z "$version" ]; then
+    if [ -z "$version_command" ]; then
+      echo "derive_name_version: version is dynamic and no version-command was provided" >&2
+      return 1
+    fi
+    version="$(bash -c "$version_command")"
+  fi
+  printf '%s\n%s\n' "$stem" "$version"
+}
