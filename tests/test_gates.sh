@@ -31,7 +31,7 @@ finish() {
   if [ "$FAILURES" -eq 0 ]; then echo "all gate tests passed"; else echo "$FAILURES gate test(s) failed"; exit 1; fi
 }
 
-# shellcheck source=../scripts/gates.sh
+# shellcheck source=scripts/gates.sh
 . "$GATES"
 
 # --- tag format ---
