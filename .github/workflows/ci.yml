@@ -34,7 +34,8 @@ jobs:
           tar -xJf "shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
 
       - name: Shellcheck the scripts and tests
-        run: ./shellcheck-v${SHELLCHECK_VERSION}/shellcheck -x scripts/*.sh tests/*.sh
+        run: |
+          "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" -x scripts/*.sh tests/*.sh
 
       - name: Download and verify actionlint
         shell: bash
