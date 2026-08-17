@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "demo-pkg"
+version = "0.1.0"
+description = "Determinism fixture for release-policy CI"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["demo_pkg*"]
