@@ -18,7 +18,7 @@ Every policy fix must land up to ten times or drift. Ten per-repo hardening draf
 
 ## Goals
 
-1. One policy core owning the release gate set, artifact integrity steps and publish lifecycle.
+1. One policy core owning the release gate set, artefact integrity steps and publish lifecycle.
 2. Consumers reduced to a thin caller pinned to a full commit SHA.
 3. Read-only conformance separated from publish permissions.
 4. Gates testable outside a release run.
@@ -29,7 +29,7 @@ Every policy fix must land up to ten times or drift. Ten per-repo hardening draf
 - No tag creation and no inference of publication approval; the human-created annotated tag is the approval act.
 - No cross-repository secrets.
 - No changes to `.github`.
-- DrDebits stays out of scope (different artifact type; possible later adapter).
+- DrDebits stays out of scope (different artefact type; possible later adapter).
 
 ## Architecture
 
