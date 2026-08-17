@@ -36,6 +36,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ryanduguid/release-policy
+          # job.workflow_sha is the resolved SHA of this reusable workflow
+          # (the reusable-workflow analogue of the OIDC job_workflow_sha
+          # claim; GHES-unavailable; actionlint false positive tracked in
+          # rhysd/actionlint#707).
           ref: ${{ job.workflow_sha }}
           path: .release-policy
           persist-credentials: false
@@ -50,12 +54,16 @@ jobs:
 
       - name: Require an immutable module pin
         env:
+          # job.workflow_sha is the resolved SHA of this reusable workflow
+          # (the reusable-workflow analogue of the OIDC job_workflow_sha
+          # claim; GHES-unavailable; actionlint false positive tracked in
+          # rhysd/actionlint#707).
           MODULE_SHA: ${{ job.workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
           [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-            || { echo "release-policy pin is empty or not a 40-hex SHA; refusing to publish with unpinned policy" >&2; exit 1; }
+            || { echo "job.workflow_sha is empty or not a 40-hex SHA; refusing to run with an unverifiable policy checkout" >&2; exit 1; }
           actual="$(git -C .release-policy rev-parse HEAD)"
           [ "$actual" = "$MODULE_SHA" ] \
             || { echo "release-policy checkout is $actual, expected $MODULE_SHA" >&2; exit 1; }

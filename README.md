@@ -36,6 +36,11 @@ Projects whose `pyproject.toml` declares `dynamic = ["version"]` add:
 - `uv.lock` committed; the workflow runs `uv run --locked`.
 - `pyproject.toml` with a static `[project] version`, or the
   `version-command` input.
+- A `dev` extra in `pyproject.toml` providing `pytest` and `build`; the
+  workflow runs `uv run --locked --extra dev`.
+- A pure-Python wheel; the `py3-none-any` wheel name is expected by the
+  SBOM and attestation steps.
+- Releases cut from `main`; the main-match gate checks `heads/main`.
 
 ## Policy guarantees
 
@@ -44,7 +49,7 @@ Projects whose `pyproject.toml` declares `dynamic = ["version"]` add:
   existing release for the tag, all verified before any build.
 - Wheel and sdist built from the locked environment after the locked test
   suite passes.
-- SPDX SBOM, verified `SHA256SUMS`, provenance and SBOM attestations on
-  every asset, draft-then-publish lifecycle.
+- SPDX SBOM, verified `SHA256SUMS`, provenance attestation on every asset
+  and an SBOM attestation on the wheel, draft-then-publish lifecycle.
 - Consumers pin this repository by full commit SHA and upgrade by reviewed
   pull request (ADR-0001).

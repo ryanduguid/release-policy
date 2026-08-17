@@ -96,7 +96,7 @@ Documented prerequisites in the module README: annotated tags only, `RELEASE_NOT
 - `gates.sh` holds every gate so module CI can exercise them without a release: synthetic git fixtures cover wrong tag form, lightweight tag, tag off `main`, missing notes header, dirty tree and pre-existing release.
 - Determinism: module CI builds `fixtures/demo-pkg` twice and compares digests.
 - Static checks: `actionlint` and `shellcheck`, both pinned.
-- Publish paths are exercised only by the module's own releases; the module releases using its own reusable workflow.
+- Publish paths cannot be exercised by the module itself (it is not a Python package); the module's v0.1.0 release is a notes-only marker created manually. The first pilot release is therefore the first live run of the publish path and is treated as a supervised event; a module self-release path arrives with the phase 2 source-archive workflow.
 
 ## Rollout
 

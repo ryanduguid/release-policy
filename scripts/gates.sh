@@ -62,6 +62,9 @@ gate_main_matches() {
 }
 
 gate_no_existing_release() {
+  # Precondition: TAG must already have passed gate_tag_format. TAG is
+  # interpolated into the jq program below; the format gate is what makes
+  # that safe.
   local tag="$1" repo="$2" ids
   ids="$("$GH" api --paginate -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$repo/releases?per_page=100" \
