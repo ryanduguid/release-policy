@@ -39,4 +39,4 @@ Key properties:
 - One review updates release policy for every consumer; drift between families ends at the module boundary.
 - Consumers accept a cross-repository dependency on a pinned, reviewed commit of the module.
 - The module repository must hold itself to the same standard: it releases with its own policy, and its CI must exercise the gates without publishing.
-- Repositories with no release workflow (`.github`, `DrDebits`, profile) are out of scope. DrDebits is a possible later adapter but a different artifact type.
+- Repositories with no release workflow (`.github`, `DrDebits`, profile) are out of scope. DrDebits is a possible later adapter but a different artefact type.
