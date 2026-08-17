@@ -91,7 +91,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          (cd dist && sha256sum *.whl *.tar.gz *.spdx.json > SHA256SUMS)
+          (cd dist && sha256sum -- *.whl *.tar.gz *.spdx.json > SHA256SUMS)
           (cd dist && sha256sum --check SHA256SUMS)
 
       - name: Attest release asset provenance
