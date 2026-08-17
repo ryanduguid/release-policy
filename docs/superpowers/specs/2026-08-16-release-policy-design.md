@@ -113,6 +113,6 @@ Fail closed at every gate. A defective module version blocks a consumer's next r
 
 ## Open questions for implementation
 
-1. Whether `xero-ai-review-gateway` has a static `pyproject.toml` version (decides if the `version-command` fallback is exercised in the pilot).
-2. Confirm the fourth packaged-Python repository at migration time.
-3. Exact list of superseded draft PR numbers, compiled during phase 1.
+1. Resolved 2026-08-17: xero-ai-review-gateway declares `dynamic = ["version"]`, so its pilot caller passes the `version-command` input (PR #20).
+2. Open for phase 2 scoping: the fourth packaged-Python repository.
+3. Resolved 2026-08-17: superseded drafts were au-tax-change-impact-monitor #18, monthly-close-control-plane #19, xero-ai-review-gateway #16, closed by the pilot PRs (#21, #23, #20 respectively). The pilots pin module commit 5923aba7a8bb680cf4134b8c810c56742d9ec721.
