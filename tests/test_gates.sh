@@ -110,4 +110,26 @@ run_case "derive dynamic version via command" \
   test "$(derive_name_version "echo 9.8.7" | tr '\n' ' ')" = "dyn_pkg 9.8.7 "
 expect_fail "dynamic without command fails" derive_name_version
 
+# --- entrypoint ---
+make_repo
+cat > pyproject.toml <<'EOF'
+[project]
+name = "demo-pkg"
+version = "1.2.3"
+EOF
+git add -A && git commit --quiet -m "pyproject"
+git tag -a v1.2.3 -m "release v1.2.3"
+head_sha="$(git rev-parse HEAD)"
+export GH="$stub_dir/gh" STUB_MAIN_SHA="$head_sha" STUB_RELEASE_IDS=""
+out_file="$(mktemp)"
+GITHUB_OUTPUT="$out_file" run_case "entrypoint passes and writes outputs" \
+  run_release_gates "v1.2.3" "$head_sha" "ryanduguid/example"
+run_case "outputs contain stem" grep -q '^stem=demo_pkg$' "$out_file"
+run_case "outputs contain version" grep -q '^version=1.2.3$' "$out_file"
+
+git tag -a v1.2.4 -m "mismatched"   # tag does not match pyproject version
+expect_fail "version/tag mismatch rejected" \
+  run_release_gates "v1.2.4" "$head_sha" "ryanduguid/example"
+unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
+
 finish
