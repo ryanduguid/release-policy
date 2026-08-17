@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
 
       - name: Shellcheck the scripts and tests
-        run: shellcheck scripts/*.sh tests/*.sh
+        run: shellcheck -x scripts/*.sh tests/*.sh
 
       - name: Download and verify actionlint
         shell: bash
