@@ -86,3 +86,27 @@ derive_name_version() {
   fi
   printf '%s\n%s\n' "$stem" "$version"
 }
+
+run_release_gates() {
+  local tag="$1" head_sha="$2" repo="$3" version_command="${4:-}" stem version
+  gate_tag_format "$tag"
+  gate_annotated_tag "$tag"
+  gate_tag_commit_matches "$tag" "$head_sha"
+  gate_main_matches "$head_sha" "$repo"
+  gate_notes_header "$tag"
+  gate_clean_tree
+  gate_no_existing_release "$tag" "$repo"
+  { read -r stem; read -r version; } < <(derive_name_version "$version_command")
+  if [ "$tag" != "v$version" ]; then
+    echo "run_release_gates: tag $tag != v$version from project metadata" >&2
+    return 1
+  fi
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    {
+      echo "tag=$tag"
+      echo "version=$version"
+      echo "stem=$stem"
+      echo "commit=$head_sha"
+    } >> "$GITHUB_OUTPUT"
+  fi
+}
