@@ -83,7 +83,16 @@ jobs:
         run: uv run --locked --extra dev --python 3.12 pytest
 
       - name: Build wheel and source distribution
-        run: uv run --locked --extra dev --python 3.12 python -m build
+        env:
+          PYTHONHASHSEED: "0"
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Pin the same determinism inputs tests/test_determinism.sh proves,
+          # so the shipped wheel carries the reproducibility the test asserts.
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          uv run --locked --extra dev --python 3.12 python -m build
 
       - name: Generate SPDX SBOM for the wheel
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
