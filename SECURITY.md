@@ -2,16 +2,27 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest version on the default branch.
+Security fixes target the latest commit on the default branch. Older commits
+and historical tags receive fixes only through an update to the current
+default branch. Consumers that pin a reviewed commit SHA must update that pin
+to receive a fix. The notes-only `v0.1.0` marker is not a separately maintained
+release line.
 
 ## Reporting a vulnerability
 
-Please use this repository's private vulnerability reporting feature. Do not
-open a public issue for a suspected security vulnerability. Include a clear
-description, reproduction steps, impact, and any suggested mitigation.
+Use GitHub's private **Report a vulnerability** form when it is available in
+this repository's Security tab. If the form is absent, do not disclose the
+vulnerability in a public issue or public discussion. Include a clear
+description, safe reproduction steps, impact, and any suggested mitigation.
 
-A valid report will be acknowledged within seven days, and the fix and
-disclosure timeline will be agreed with the reporter.
+## Safe reporting data
+
+Use fabricated or redacted evidence only. Do not include real client data,
+credentials, access tokens, cookies, secrets, `.env` contents, private keys,
+workpapers, or release credentials.
+
+A security report does not authorise anyone to run a release, create a tag,
+publish an asset, use consumer credentials, or disclose the concern publicly.
 
 ## Supply-chain note
 

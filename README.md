@@ -5,6 +5,20 @@ workflows plus testable release-readiness gates. Governed by
 [ADR-0001](./docs/adr/0001-shared-release-policy.md); design in
 [docs/superpowers/specs/](./docs/superpowers/specs/).
 
+## Release status
+
+`v0.1.0` is a manually created, notes-only historical source marker. It has no
+uploaded, checksummed module artefact and is not a verified distributable
+module release. It remains mutable, but must not be silently rewritten,
+replaced, or retrofitted with assets.
+
+A future module self-release requires a separately designed source-archive
+path, deterministic assets, a `SHA256SUMS` file, user-facing verification
+instructions, attestations where GitHub supports them, and immutability only
+after the notes, assets, checksums, and attestations have been verified. These
+are future conditions, not a description of a currently available release
+path.
+
 ## Using the packaged-Python release workflow
 
 Caller workflow (`.github/workflows/release.yml` in the consumer):
