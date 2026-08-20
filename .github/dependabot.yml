@@ -13,3 +13,7 @@ updates:
       codeql-action:
         patterns:
           - "github/codeql-action*"
+  - package-ecosystem: pip
+    directory: /fixtures/demo-pkg
+    schedule:
+      interval: monthly
