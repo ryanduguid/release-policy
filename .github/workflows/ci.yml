@@ -58,6 +58,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Check repository baseline
+        run: bash tests/test_repository_baseline.sh
+
       - name: Run gate tests
         run: bash tests/test_gates.sh
 
