@@ -168,6 +168,34 @@ class ReleaseArchiveWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/build_release_archives.py", workflow)
         self.assertIn("python -B -m unittest discover -s tests -v", workflow)
 
+    def test_post_test_policy_scripts_use_a_fresh_verified_checkout(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
+            encoding="utf-8"
+        )
+
+        consumer_tests = "python -B -m unittest discover -s tests -v"
+        clear_consumer_path = "rm -rf -- .release-policy-verified"
+        fresh_checkout = "path: .release-policy-verified"
+        fresh_verification = (
+            'actual="$(git -C .release-policy-verified rev-parse HEAD)"'
+        )
+        self.assertIn(clear_consumer_path, workflow)
+        self.assertIn(fresh_checkout, workflow)
+        self.assertIn(fresh_verification, workflow)
+        self.assertGreater(workflow.index(clear_consumer_path), workflow.index(consumer_tests))
+        self.assertGreater(workflow.index(fresh_checkout), workflow.index(clear_consumer_path))
+        self.assertGreater(workflow.index(fresh_verification), workflow.index(fresh_checkout))
+
+        post_test_policy = workflow[workflow.index(fresh_checkout) :]
+        self.assertNotIn(".release-policy/scripts/", post_test_policy)
+        for policy_script in (
+            ".release-policy-verified/scripts/build_release_archives.py",
+            ".release-policy-verified/scripts/gates.sh",
+            ".release-policy-verified/scripts/find_created_draft_release.py",
+        ):
+            with self.subTest(policy_script=policy_script):
+                self.assertIn(policy_script, post_test_policy)
+
     def test_workflow_preserves_exact_asset_and_publication_gates(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
             encoding="utf-8"

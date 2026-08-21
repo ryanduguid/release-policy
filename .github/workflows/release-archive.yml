@@ -78,6 +78,31 @@ jobs:
       - name: Run the standard source-archive regression suite
         run: python -B -m unittest discover -s tests -v
 
+      - name: Clear the policy target controlled by consumer tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf -- .release-policy-verified
+
+      - name: Check out release-policy again after consumer tests
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ryanduguid/release-policy
+          ref: ${{ job.workflow_sha }}
+          path: .release-policy-verified
+          persist-credentials: false
+
+      - name: Verify the post-test policy checkout
+        env:
+          MODULE_SHA: ${{ job.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
+          actual="$(git -C .release-policy-verified rev-parse HEAD)"
+          test "$actual" = "$MODULE_SHA"
+
       - name: Build deterministic source archives
         env:
           TZ: UTC
@@ -86,7 +111,7 @@ jobs:
           set -euo pipefail
           stem="${{ steps.release.outputs.stem }}"
           version="${{ steps.release.outputs.version }}"
-          python .release-policy/scripts/build_release_archives.py \
+          python .release-policy-verified/scripts/build_release_archives.py \
             --commit "${{ steps.release.outputs.commit }}" \
             --prefix "${{ steps.release.outputs.prefix }}" \
             --output-base "dist/$stem-$version"
@@ -192,7 +217,7 @@ jobs:
           test -n "$remote_tag_commit"
           test "$remote_tag_commit" = "$expected_commit"
           test "$GITHUB_SHA" = "$expected_commit"
-          . .release-policy/scripts/gates.sh
+          . .release-policy-verified/scripts/gates.sh
           gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
           gate_no_existing_release "$tag" "$GITHUB_REPOSITORY"
 
@@ -221,7 +246,7 @@ jobs:
             "$sbom#SPDX 2.3 SBOM" \
             "dist/SHA256SUMS#SHA-256 checksums")"
 
-          release_id="$(python .release-policy/scripts/find_created_draft_release.py \
+          release_id="$(python .release-policy-verified/scripts/find_created_draft_release.py \
             --repository "$GITHUB_REPOSITORY" \
             --created-url "$created_release_url" \
             --expected-tag "$tag" \
