@@ -10,6 +10,15 @@ on:
         required: false
         type: string
         default: ""
+      upload-dist-artifact:
+        description: >-
+          Upload the built wheel and source distribution as a run artifact so a
+          caller-side job can publish them. PyPI cannot name a reusable workflow
+          as a Trusted Publisher (pypi/warehouse#11096), so the publish step has
+          to run in the calling repository's own workflow.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -18,6 +27,9 @@ jobs:
   release:
     name: gate, build, attest and publish
     runs-on: ubuntu-latest
+    outputs:
+      stem: ${{ steps.release.outputs.stem }}
+      version: ${{ steps.release.outputs.version }}
     permissions:
       attestations: write # Record provenance and SBOM attestations for release assets.
       contents: write # Create the draft release, upload assets and publish it.
@@ -125,6 +137,17 @@ jobs:
         with:
           subject-path: dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
           sbom-path: dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+
+      - name: Upload the distribution for a caller-side publish
+        if: inputs.upload-dist-artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Publish the complete release
         env:
