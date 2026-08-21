@@ -22,10 +22,11 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
     ".github/dependabot.yml": "fa18b8f1272681a83062c370d846ca8a96cc4bcc6ede6441f19ac34e97d9fd40",
-    ".github/workflows/ci.yml": "0a98c9849e8278625e406e416f4cc4c1ee226ac5038440b07ee3565f01d81f1d",
+    ".github/workflows/ci.yml": "e88544cfe5c0e4374f1f1ca6bad36b5fdd736100211445d24dba33a8c96cd09c",
     ".github/workflows/codeql.yml": "ba23c9dd6f19a3f10df08a0dff74cf5ab762120d0b5afa3dc4f88bd140079667",
+    ".github/workflows/release-archive.yml": "8da2d2b19053939e1b3c060dd5fc7f827013dc674f1eed1be7b6a9deac71faa9",
     ".github/workflows/release-python.yml": "6556e688348ce90c8a9a7bdf65a11e5d036b06b929875fba132b96aac2f43144",
-    "README.md": "aa9cbee1af7d4068f2b6d8a1f12915105e777226f1b5f7b8a202eed8265b8b11",
+    "README.md": "5d6696a0678df698ebeb57b9bfb158891c7aac31b0ba9c1a0a2af264de3ab108",
     "SECURITY.md": "b364b6ace7947117d246501953a36c6cfdd4dc53343c7c56554744b6ec90f794",
 }
 
@@ -319,8 +320,8 @@ def mutate(canonical: dict[str, bytes], name: str) -> dict[str, bytes]:
             readme,
             replace_once(
                 text(readme),
-                "These\nare future conditions",
-                contradictions[name] + "\n\nThese\nare future conditions",
+                "The repository now contains",
+                contradictions[name] + "\n\nThe repository now contains",
                 name,
             ),
         )
@@ -392,7 +393,7 @@ if self_test_failures:
     raise SystemExit(1)
 
 print(
-    "repository baseline passed: 6 canonical documents; "
+    "repository baseline passed: 7 canonical documents; "
     "LF/CRLF controls and 25 adverse variants"
 )
 PY
