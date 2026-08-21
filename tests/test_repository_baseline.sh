@@ -22,10 +22,10 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
     ".github/dependabot.yml": "fa18b8f1272681a83062c370d846ca8a96cc4bcc6ede6441f19ac34e97d9fd40",
-    ".github/workflows/ci.yml": "e88544cfe5c0e4374f1f1ca6bad36b5fdd736100211445d24dba33a8c96cd09c",
-    ".github/workflows/codeql.yml": "ba23c9dd6f19a3f10df08a0dff74cf5ab762120d0b5afa3dc4f88bd140079667",
-    ".github/workflows/release-archive.yml": "8da2d2b19053939e1b3c060dd5fc7f827013dc674f1eed1be7b6a9deac71faa9",
-    ".github/workflows/release-python.yml": "248ebd5ad7a3a166e53a6c05f12cf2e3a2a543ebf65d46393d279f8591962799",
+    ".github/workflows/ci.yml": "6f44f454f49eec801b5d4361e4cd309230b7380c0ff97fbfbb8861a4fdc25dd8",
+    ".github/workflows/codeql.yml": "0c2061acec159bb2d439412d42b0a0ec0030429f0c61c02b8455c4b20650f948",
+    ".github/workflows/release-archive.yml": "82baa102d55bda861ad6bb97b19d9c606cfdc4b775196722e47f3bcd010f894a",
+    ".github/workflows/release-python.yml": "3600f77c57dd5c9b9019c5c17f655d8465b0edfa551bd6524a499ef70dd701df",
     "README.md": "219f0226240895dd2bed48f363c89a648fff2ccabc17ba4f459c8ea80c6ebea3",
     "SECURITY.md": "b364b6ace7947117d246501953a36c6cfdd4dc53343c7c56554744b6ec90f794",
 }
