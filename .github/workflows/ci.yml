@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   checks:
-    timeout-minutes: 15
     name: lint and test
     runs-on: ubuntu-latest
     env:

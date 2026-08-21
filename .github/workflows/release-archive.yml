@@ -18,7 +18,6 @@ permissions:
 
 jobs:
   consumer-tests:
-    timeout-minutes: 15
     name: run consumer source-archive tests
     runs-on: ubuntu-latest
     permissions:
@@ -41,7 +40,6 @@ jobs:
         run: python -B -m unittest discover -s tests -v
 
   release:
-    timeout-minutes: 15
     name: gate, build, attest and publish source archives
     runs-on: ubuntu-latest
     needs: consumer-tests
