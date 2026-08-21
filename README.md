@@ -12,12 +12,11 @@ uploaded, checksummed module artefact and is not a verified distributable
 module release. It remains mutable, but must not be silently rewritten,
 replaced, or retrofitted with assets.
 
-A future module self-release requires a separately designed source-archive
-path, deterministic assets, a `SHA256SUMS` file, user-facing verification
-instructions, attestations where GitHub supports them, and immutability only
-after the notes, assets, checksums, and attestations have been verified. These
-are future conditions, not a description of a currently available release
-path.
+The repository now contains a reviewed-in-code source-archive workflow design
+and implementation candidate. That does not retrofit `v0.1.0`, make the module
+itself distributable, or prove a live consumer release. A source-archive
+consumer migration remains a separate reviewed change pinned to a full policy
+commit.
 
 ## Using the packaged-Python release workflow
 
@@ -42,6 +41,26 @@ Projects whose `pyproject.toml` declares `dynamic = ["version"]` add:
         with:
           version-command: "python -c 'from your_package.version import __version__; print(__version__)'"
 
+## Using the source-archive release workflow
+
+Source-only callers use the separate family workflow:
+
+    jobs:
+      release:
+        permissions:
+          attestations: write
+          contents: write
+          id-token: write
+        uses: ryanduguid/release-policy/.github/workflows/release-archive.yml@<full-40-char-commit-sha>
+        with:
+          artifact-stem: accounting-excel-toolkit
+
+`version-file` defaults to `VERSION`. The workflow accepts no arbitrary test
+command, build command or asset glob. It runs the fixed unittest contract,
+builds deterministic ZIP and tar.gz source archives from the tagged commit,
+generates an SPDX SBOM, and publishes exactly those three files plus
+`SHA256SUMS` after inspecting the exact draft returned by GitHub.
+
 ## Prerequisites in the consumer
 
 - Annotated tags only; the human-created annotated tag is the release
@@ -56,6 +75,16 @@ Projects whose `pyproject.toml` declares `dynamic = ["version"]` add:
   SBOM and attestation steps.
 - Releases cut from `main`; the main-match gate checks `heads/main`.
 
+Source-archive callers additionally require:
+
+- a lower-case hyphenated `artifact-stem`;
+- a safe relative version file containing one canonical `MAJOR.MINOR.PATCH`
+  line;
+- a standard-library unittest suite runnable as
+  `python -B -m unittest discover -s tests -v`; and
+- no release-specific files that must be generated outside the four exact
+  policy-owned assets.
+
 ## Policy guarantees
 
 - Fail closed: canonical semver tag, annotated tag object, tag commit equal
@@ -65,5 +94,14 @@ Projects whose `pyproject.toml` declares `dynamic = ["version"]` add:
   suite passes.
 - SPDX SBOM, verified `SHA256SUMS`, provenance attestation on every asset
   and an SBOM attestation on the wheel, draft-then-publish lifecycle.
+- The source-archive family preserves the exact candidate artefacts, verifies
+  provenance and both archive SBOM attestations before publication, rechecks
+  remote tag/main/release absence, binds inspection to the draft create URL and
+  numeric release ID, and verifies immutable/latest release state afterwards.
 - Consumers pin this repository by full commit SHA and upgrade by reviewed
   pull request (ADR-0001).
+
+Phase 2 and phase 3 designs are recorded under
+[`docs/superpowers/specs/`](./docs/superpowers/specs/). Skill packs remain a
+separate future adapter so their inventory and stronger validation controls are
+not reduced to the source-archive contract.

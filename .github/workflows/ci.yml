@@ -64,6 +64,9 @@ jobs:
       - name: Run gate tests
         run: bash tests/test_gates.sh
 
+      - name: Run source-archive policy tests
+        run: python -B -m unittest discover -s tests -p "test_*.py" -v
+
       - name: Run determinism test
         run: |
           set -euo pipefail
