@@ -132,4 +132,33 @@ expect_fail "version/tag mismatch rejected" \
   run_release_gates "v1.2.4" "$head_sha" "ryanduguid/example"
 unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
 
+# --- source-archive metadata ---
+make_repo
+printf '1.2.3\n' > VERSION
+git add VERSION && git commit --quiet -m "archive version"
+run_case "derive archive metadata" \
+  test "$(derive_archive_metadata "example-toolkit" "VERSION" | tr '\n' ' ')" = "example-toolkit 1.2.3 "
+expect_fail "archive stem rejects uppercase" derive_archive_metadata "Example-Toolkit" "VERSION"
+expect_fail "archive stem rejects path separators" derive_archive_metadata "../example" "VERSION"
+expect_fail "archive version path rejects traversal" derive_archive_metadata "example-toolkit" "../VERSION"
+expect_fail "archive version path rejects a directory" derive_archive_metadata "example-toolkit" "."
+
+printf '01.2.3\n' > VERSION
+expect_fail "archive version rejects leading zero" derive_archive_metadata "example-toolkit" "VERSION"
+printf '1.2.3\nextra\n' > VERSION
+expect_fail "archive version rejects multiple lines" derive_archive_metadata "example-toolkit" "VERSION"
+printf '1.2.3\n' > VERSION
+git tag -a v1.2.3 -m "release v1.2.3"
+head_sha="$(git rev-parse HEAD)"
+export GH="$stub_dir/gh" STUB_MAIN_SHA="$head_sha" STUB_RELEASE_IDS=""
+archive_out="$(mktemp)"
+GITHUB_OUTPUT="$archive_out" run_case "archive entrypoint passes and writes outputs" \
+  run_archive_release_gates "v1.2.3" "$head_sha" "ryanduguid/example" "example-toolkit" "VERSION"
+run_case "archive outputs contain stem" grep -q '^stem=example-toolkit$' "$archive_out"
+run_case "archive outputs contain version" grep -q '^version=1.2.3$' "$archive_out"
+run_case "archive outputs contain prefix" grep -q '^prefix=example-toolkit-1.2.3/$' "$archive_out"
+expect_fail "archive tag/version mismatch rejected" \
+  run_archive_release_gates "v1.2.4" "$head_sha" "ryanduguid/example" "example-toolkit" "VERSION"
+unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
+
 finish

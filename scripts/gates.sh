@@ -90,6 +90,53 @@ derive_name_version() {
   printf '%s\n%s\n' "$stem" "$version"
 }
 
+derive_archive_metadata() {
+  local artifact_stem="$1" version_file="$2"
+  "$PYTHON" - "$artifact_stem" "$version_file" <<'PY' | tr -d '\r'
+from __future__ import annotations
+
+from pathlib import Path, PurePosixPath
+import re
+import sys
+
+
+stem, supplied_path = sys.argv[1:]
+if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", stem) is None:
+    raise SystemExit("derive_archive_metadata: artifact-stem must be lower-case and hyphenated")
+
+if "\\" in supplied_path:
+    raise SystemExit("derive_archive_metadata: version-file must use a safe relative POSIX path")
+relative = PurePosixPath(supplied_path)
+if (
+    not supplied_path
+    or relative.is_absolute()
+    or any(part in {"", ".", ".."} for part in relative.parts)
+):
+    raise SystemExit("derive_archive_metadata: version-file must be a safe relative path")
+
+root = Path.cwd().resolve()
+candidate = (root / Path(*relative.parts)).resolve()
+if candidate == root or root not in candidate.parents or not candidate.is_file():
+    raise SystemExit("derive_archive_metadata: version-file is missing, outside the checkout, or not a file")
+
+try:
+    text = candidate.read_bytes().decode("utf-8")
+except UnicodeDecodeError as error:
+    raise SystemExit("derive_archive_metadata: version-file must be UTF-8") from error
+if text.startswith("\ufeff"):
+    raise SystemExit("derive_archive_metadata: version-file must not contain a BOM")
+match = re.fullmatch(
+    r"((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))(?:\r?\n)?",
+    text,
+)
+if match is None:
+    raise SystemExit("derive_archive_metadata: version-file must contain one canonical MAJOR.MINOR.PATCH line")
+
+print(stem)
+print(match.group(1))
+PY
+}
+
 run_release_gates() {
   local tag="$1" head_sha="$2" repo="$3" version_command="${4:-}" stem version
   gate_tag_format "$tag"
@@ -109,6 +156,32 @@ run_release_gates() {
       echo "tag=$tag"
       echo "version=$version"
       echo "stem=$stem"
+      echo "commit=$head_sha"
+    } >> "$GITHUB_OUTPUT"
+  fi
+}
+
+run_archive_release_gates() {
+  local tag="$1" head_sha="$2" repo="$3" artifact_stem="$4" version_file="$5"
+  local stem version
+  gate_tag_format "$tag"
+  gate_annotated_tag "$tag"
+  gate_tag_commit_matches "$tag" "$head_sha"
+  gate_main_matches "$head_sha" "$repo"
+  gate_notes_header "$tag"
+  gate_clean_tree
+  gate_no_existing_release "$tag" "$repo"
+  { read -r stem; read -r version; } < <(derive_archive_metadata "$artifact_stem" "$version_file")
+  if [ "$tag" != "v$version" ]; then
+    echo "run_archive_release_gates: tag $tag != v$version from $version_file" >&2
+    return 1
+  fi
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    {
+      echo "tag=$tag"
+      echo "version=$version"
+      echo "stem=$stem"
+      echo "prefix=$stem-$version/"
       echo "commit=$head_sha"
     } >> "$GITHUB_OUTPUT"
   fi
