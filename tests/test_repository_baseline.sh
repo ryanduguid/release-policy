@@ -24,7 +24,7 @@ CANONICAL_SHA256 = {
     ".github/dependabot.yml": "fa18b8f1272681a83062c370d846ca8a96cc4bcc6ede6441f19ac34e97d9fd40",
     ".github/workflows/ci.yml": "e88544cfe5c0e4374f1f1ca6bad36b5fdd736100211445d24dba33a8c96cd09c",
     ".github/workflows/codeql.yml": "ba23c9dd6f19a3f10df08a0dff74cf5ab762120d0b5afa3dc4f88bd140079667",
-    ".github/workflows/release-archive.yml": "2fcef98bcb7d27960c6163e3646f846a4300040bd6e1da01967a168d5e2e5ada",
+    ".github/workflows/release-archive.yml": "8da2d2b19053939e1b3c060dd5fc7f827013dc674f1eed1be7b6a9deac71faa9",
     ".github/workflows/release-python.yml": "6556e688348ce90c8a9a7bdf65a11e5d036b06b929875fba132b96aac2f43144",
     "README.md": "5d6696a0678df698ebeb57b9bfb158891c7aac31b0ba9c1a0a2af264de3ab108",
     "SECURITY.md": "b364b6ace7947117d246501953a36c6cfdd4dc53343c7c56554744b6ec90f794",

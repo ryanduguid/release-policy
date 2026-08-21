@@ -17,9 +17,32 @@ permissions:
   contents: read
 
 jobs:
+  consumer-tests:
+    name: run consumer source-archive tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Tests execute consumer-controlled code. Keep their processes and
+      # GITHUB_ENV/GITHUB_PATH changes on this separate read-only runner.
+      - name: Check out the tagged consumer source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Run the standard source-archive regression suite
+        run: python -B -m unittest discover -s tests -v
+
   release:
     name: gate, build, attest and publish source archives
     runs-on: ubuntu-latest
+    needs: consumer-tests
     permissions:
       attestations: write
       contents: write
@@ -75,34 +98,6 @@ jobs:
             "$ARTIFACT_STEM" \
             "$VERSION_FILE"
 
-      - name: Run the standard source-archive regression suite
-        run: python -B -m unittest discover -s tests -v
-
-      - name: Clear the policy target controlled by consumer tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf -- .release-policy-verified
-
-      - name: Check out release-policy again after consumer tests
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ryanduguid/release-policy
-          ref: ${{ job.workflow_sha }}
-          path: .release-policy-verified
-          persist-credentials: false
-
-      - name: Verify the post-test policy checkout
-        env:
-          MODULE_SHA: ${{ job.workflow_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-            || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
-          actual="$(git -C .release-policy-verified rev-parse HEAD)"
-          test "$actual" = "$MODULE_SHA"
-
       - name: Build deterministic source archives
         env:
           TZ: UTC
@@ -111,7 +106,7 @@ jobs:
           set -euo pipefail
           stem="${{ steps.release.outputs.stem }}"
           version="${{ steps.release.outputs.version }}"
-          python .release-policy-verified/scripts/build_release_archives.py \
+          python .release-policy/scripts/build_release_archives.py \
             --commit "${{ steps.release.outputs.commit }}" \
             --prefix "${{ steps.release.outputs.prefix }}" \
             --output-base "dist/$stem-$version"
@@ -217,7 +212,7 @@ jobs:
           test -n "$remote_tag_commit"
           test "$remote_tag_commit" = "$expected_commit"
           test "$GITHUB_SHA" = "$expected_commit"
-          . .release-policy-verified/scripts/gates.sh
+          . .release-policy/scripts/gates.sh
           gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
           gate_no_existing_release "$tag" "$GITHUB_REPOSITORY"
 
@@ -246,7 +241,7 @@ jobs:
             "$sbom#SPDX 2.3 SBOM" \
             "dist/SHA256SUMS#SHA-256 checksums")"
 
-          release_id="$(python .release-policy-verified/scripts/find_created_draft_release.py \
+          release_id="$(python .release-policy/scripts/find_created_draft_release.py \
             --repository "$GITHUB_REPOSITORY" \
             --created-url "$created_release_url" \
             --expected-tag "$tag" \
@@ -280,6 +275,17 @@ jobs:
           jq -r '.assets[] | [.name, .digest] | @tsv' /tmp/draft-release.json \
             | LC_ALL=C sort > /tmp/draft-digests
           diff -u /tmp/expected-digests /tmp/draft-digests
+
+          # Leave the identified draft untouched if the release tag or main
+          # moved while the draft was being inspected.
+          final_tag_commit="$(git ls-remote \
+            "https://github.com/$GITHUB_REPOSITORY.git" \
+            "refs/tags/$tag^{}" | cut -f1)"
+          test -n "$final_tag_commit"
+          test "$final_tag_commit" = "$expected_commit"
+          test "$GITHUB_SHA" = "$expected_commit"
+          . .release-policy/scripts/gates.sh
+          gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
 
           gh api --method PATCH \
             -H "X-GitHub-Api-Version: 2026-03-10" \

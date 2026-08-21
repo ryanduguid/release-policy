@@ -168,33 +168,30 @@ class ReleaseArchiveWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/build_release_archives.py", workflow)
         self.assertIn("python -B -m unittest discover -s tests -v", workflow)
 
-    def test_post_test_policy_scripts_use_a_fresh_verified_checkout(self) -> None:
+    def test_consumer_tests_are_isolated_from_the_privileged_release_runner(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
             encoding="utf-8"
         )
 
         consumer_tests = "python -B -m unittest discover -s tests -v"
-        clear_consumer_path = "rm -rf -- .release-policy-verified"
-        fresh_checkout = "path: .release-policy-verified"
-        fresh_verification = (
-            'actual="$(git -C .release-policy-verified rev-parse HEAD)"'
-        )
-        self.assertIn(clear_consumer_path, workflow)
-        self.assertIn(fresh_checkout, workflow)
-        self.assertIn(fresh_verification, workflow)
-        self.assertGreater(workflow.index(clear_consumer_path), workflow.index(consumer_tests))
-        self.assertGreater(workflow.index(fresh_checkout), workflow.index(clear_consumer_path))
-        self.assertGreater(workflow.index(fresh_verification), workflow.index(fresh_checkout))
+        self.assertIn("  consumer-tests:", workflow)
+        self.assertIn("  release:", workflow)
+        consumer_start = workflow.find("  consumer-tests:")
+        release_start = workflow.find("  release:")
+        consumer_job = workflow[consumer_start:release_start]
+        release_job = workflow[workflow.index("  release:") :]
 
-        post_test_policy = workflow[workflow.index(fresh_checkout) :]
-        self.assertNotIn(".release-policy/scripts/", post_test_policy)
-        for policy_script in (
-            ".release-policy-verified/scripts/build_release_archives.py",
-            ".release-policy-verified/scripts/gates.sh",
-            ".release-policy-verified/scripts/find_created_draft_release.py",
-        ):
-            with self.subTest(policy_script=policy_script):
-                self.assertIn(policy_script, post_test_policy)
+        self.assertIn("contents: read", consumer_job)
+        self.assertIn(consumer_tests, consumer_job)
+        self.assertNotIn("contents: write", consumer_job)
+        self.assertNotIn("attestations: write", consumer_job)
+        self.assertNotIn("id-token: write", consumer_job)
+        self.assertIn("needs: consumer-tests", release_job)
+        self.assertNotIn(consumer_tests, release_job)
+        self.assertNotIn(".release-policy-verified", workflow)
+        self.assertNotIn("rm -rf -- .release-policy", workflow)
+        self.assertIn("Check out the tagged consumer source", release_job)
+        self.assertIn("Check out release-policy at the calling pin", release_job)
 
     def test_workflow_preserves_exact_asset_and_publication_gates(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
@@ -225,6 +222,20 @@ class ReleaseArchiveWorkflowTests(unittest.TestCase):
             workflow,
         )
         self.assertNotIn("github.repository_owner", workflow)
+
+    def test_workflow_rechecks_the_remote_tag_and_main_before_release_id_publish(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
+            encoding="utf-8"
+        )
+
+        final_recheck = 'final_tag_commit="$(git ls-remote'
+        publish = "gh api --method PATCH"
+        self.assertIn(final_recheck, workflow)
+        self.assertIn('gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"', workflow)
+        self.assertGreater(workflow.index(final_recheck), workflow.index("/tmp/draft-digests"))
+        self.assertGreater(workflow.index(publish), workflow.index(final_recheck))
+        publish_block = workflow[workflow.index(publish) : workflow.index(publish) + 300]
+        self.assertIn("repos/$GITHUB_REPOSITORY/releases/$release_id", publish_block)
 
 
 class CreatedDraftLookupTests(unittest.TestCase):
