@@ -25,6 +25,7 @@ permissions:
 
 jobs:
   release:
+    timeout-minutes: 15
     name: gate, build, attest and publish
     runs-on: ubuntu-latest
     outputs:
