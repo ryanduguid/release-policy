@@ -1,3 +1,11 @@
 .superpowers/
 __pycache__/
 *.py[cod]
+
+# Credentials must never be committed.
+.env
+.env.*
+!.env.example
+*.token
+*.tokens
+*.pem
