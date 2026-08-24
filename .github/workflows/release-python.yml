@@ -19,6 +19,15 @@ on:
         required: false
         type: boolean
         default: false
+    outputs:
+      stem:
+        description: >-
+          The normalised package stem used in the release asset filenames
+          (e.g. dist-<stem>-<version> as uploaded by upload-dist-artifact).
+        value: ${{ jobs.release.outputs.stem }}
+      version:
+        description: The released package version.
+        value: ${{ jobs.release.outputs.version }}
 
 permissions:
   contents: read
