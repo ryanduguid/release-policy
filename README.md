@@ -1,5 +1,19 @@
 # release-policy
 
+```
++----------------------------------------------------------------------+
+|                            release-policy                            |
++----------------------------------------------------------------------+
+|            Reusable release workflows and packaging gates            |
++----------------------------------+-----------------------------------+
+| DR  what it gives you            | CR  what it needs                 |
++----------------------------------+-----------------------------------+
+| reusable release GH workflows    | a pinned full commit SHA          |
+| SBOM build and attestation       | a Python pyproject.toml           |
+| provenance attestation gate      | -                                 |
++----------------------------------+-----------------------------------+
+```
+
 Shared release policy for ryanduguid repositories: reusable GitHub Actions
 workflows plus testable release-readiness gates. Governed by
 [ADR-0001](./docs/adr/0001-shared-release-policy.md); design in
