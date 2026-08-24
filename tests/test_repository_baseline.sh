@@ -25,7 +25,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/ci.yml": "6f44f454f49eec801b5d4361e4cd309230b7380c0ff97fbfbb8861a4fdc25dd8",
     ".github/workflows/codeql.yml": "0c2061acec159bb2d439412d42b0a0ec0030429f0c61c02b8455c4b20650f948",
     ".github/workflows/release-archive.yml": "82baa102d55bda861ad6bb97b19d9c606cfdc4b775196722e47f3bcd010f894a",
-    ".github/workflows/release-python.yml": "3600f77c57dd5c9b9019c5c17f655d8465b0edfa551bd6524a499ef70dd701df",
+    ".github/workflows/release-python.yml": "3bff47b0b873d132a7ef87e16a0ce0ffa52bf189662599bf0a3c5f7ddd8db0f2",
     "README.md": "219f0226240895dd2bed48f363c89a648fff2ccabc17ba4f459c8ea80c6ebea3",
     "SECURITY.md": "b364b6ace7947117d246501953a36c6cfdd4dc53343c7c56554744b6ec90f794",
 }
