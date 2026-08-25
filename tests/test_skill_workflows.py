@@ -19,6 +19,16 @@ class SkillWorkflowContractTests(unittest.TestCase):
         escaped = re.escape(name)
         return rf'(?:{escaped}|\'{escaped}\'|"{escaped}")'
 
+    def direct_core_consumer_call(self, text: str) -> re.Match[str] | None:
+        return re.search(
+            rf"(?mi)^\s*(?:-\s+)?{self.yaml_key('uses')}\s*:\s*"
+            r"(?P<quote>[\"']?)"
+            r"ryanduguid/release-policy/\.github/workflows/"
+            r"publish-archives\.yml@[^\"'#\s]+"
+            r"(?P=quote)\s*(?:#.*)?$",
+            text,
+        )
+
     def read_workflow(self, name: str) -> str:
         path = WORKFLOWS / name
         self.assertTrue(path.is_file(), f"required workflow is missing: {name}")
@@ -341,13 +351,32 @@ class SkillWorkflowContractTests(unittest.TestCase):
         skill_adapter = self.read_workflow("release-skills.yml")
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
+        forbidden_consumer_examples = (
+            "uses: ryanduguid/release-policy/.github/workflows/"
+            "publish-archives.yml@<full-40-char-commit-sha>",
+            "  'uses' : 'ryanduguid/release-policy/.github/workflows/"
+            "publish-archives.yml@<full-40-char-commit-sha>'",
+            '    "uses": "ryanduguid/release-policy/.github/workflows/'
+            'publish-archives.yml@<full-40-char-commit-sha>"',
+        )
+        for example in forbidden_consumer_examples:
+            with self.subTest(forbidden=example):
+                self.assertIsNotNone(self.direct_core_consumer_call(example))
+
+        supported_consumer_examples = (
+            "uses: ryanduguid/release-policy/.github/workflows/"
+            "verify-skills.yml@<full-40-char-commit-sha>",
+            "'uses': 'ryanduguid/release-policy/.github/workflows/"
+            "release-skills.yml@<full-40-char-commit-sha>'",
+        )
+        for example in supported_consumer_examples:
+            with self.subTest(supported=example):
+                self.assertIsNone(self.direct_core_consumer_call(example))
+
         relative_call = "uses: ./.github/workflows/publish-archives.yml"
         self.assertEqual(archive_adapter.count(relative_call), 1)
         self.assertEqual(skill_adapter.count(relative_call), 1)
-        self.assertNotIn(
-            "uses: ryanduguid/release-policy/.github/workflows/publish-archives.yml@",
-            readme,
-        )
+        self.assertIsNone(self.direct_core_consumer_call(readme))
 
 
 if __name__ == "__main__":
