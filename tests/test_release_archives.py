@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import build_release_archives as release_archives  # noqa: E402
 import find_created_draft_release as draft_release  # noqa: E402
+from tests.test_skill_workflows import YamlContractAssertions  # noqa: E402
 
 
 def _sha256(path: Path) -> str:
@@ -153,7 +154,72 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
             self.assertEqual([], list(outside.iterdir()))
 
 
-class ReleaseArchiveWorkflowTests(unittest.TestCase):
+class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
+    def assert_source_adapter_release_contract(self, adapter: str) -> None:
+        jobs = self.mapping_block(adapter, "jobs", indent=0)
+        self.assertEqual(
+            self.mapping_keys(jobs, indent=2),
+            ("consumer-tests", "release"),
+        )
+        release_job = self.mapping_block(jobs, "release", indent=2)
+        self.assertEqual(
+            self.mapping_keys(release_job, indent=4),
+            ("needs", "permissions", "uses", "with"),
+        )
+        self.assertEqual(
+            self.mapping_value(release_job, "needs", indent=4),
+            "consumer-tests",
+        )
+        self.assertEqual(
+            self.permission_map(release_job, indent=4),
+            {
+                "attestations": "write",
+                "contents": "write",
+                "id-token": "write",
+            },
+        )
+        self.assertEqual(
+            self.mapping_value(release_job, "uses", indent=4),
+            "./.github/workflows/publish-archives.yml",
+        )
+        inputs = self.mapping_block(release_job, "with", indent=4)
+        self.assertEqual(
+            self.mapping_keys(inputs, indent=6),
+            ("artifact-stem", "version-file"),
+        )
+        self.assertEqual(
+            self.mapping_value(inputs, "artifact-stem", indent=6),
+            "${{ inputs.artifact-stem }}",
+        )
+        self.assertEqual(
+            self.mapping_value(inputs, "version-file", indent=6),
+            "${{ inputs.version-file }}",
+        )
+
+    def assert_publication_core_permission_contract(self, core: str) -> None:
+        jobs = self.mapping_block(core, "jobs", indent=0)
+        self.assertEqual(self.mapping_keys(jobs, indent=2), ("publish",))
+        publish_job = self.mapping_block(jobs, "publish", indent=2)
+        self.assertEqual(
+            self.mapping_keys(publish_job, indent=4),
+            (
+                "timeout-minutes",
+                "name",
+                "runs-on",
+                "permissions",
+                "concurrency",
+                "steps",
+            ),
+        )
+        self.assertEqual(
+            self.permission_map(publish_job, indent=4),
+            {
+                "attestations": "write",
+                "contents": "write",
+                "id-token": "write",
+            },
+        )
+
     def test_source_adapter_preserves_its_two_input_and_fixed_test_contract(self) -> None:
         adapter = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
             encoding="utf-8"
@@ -200,15 +266,62 @@ class ReleaseArchiveWorkflowTests(unittest.TestCase):
         adapter = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
             encoding="utf-8"
         )
-        release_job = adapter[adapter.index("  release:") :]
 
-        self.assertIn("needs: consumer-tests", release_job)
-        self.assertIn("uses: ./.github/workflows/publish-archives.yml", release_job)
-        self.assertIn("artifact-stem: ${{ inputs.artifact-stem }}", release_job)
-        self.assertIn("version-file: ${{ inputs.version-file }}", release_job)
-        for forbidden in ("runs-on:", "steps:", "env:", "outputs:", "secrets:"):
-            with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, release_job)
+        self.assert_source_adapter_release_contract(adapter)
+
+    def test_source_adapter_contract_rejects_dependency_and_shape_bypasses(self) -> None:
+        adapter = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
+            encoding="utf-8"
+        )
+        dependency_bypass = adapter.replace(
+            "  release:\n    needs: consumer-tests\n",
+            "  bypass:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: true\n\n"
+            "  release:\n"
+            "    needs: bypass\n"
+            "    # needs: consumer-tests\n",
+            1,
+        )
+        flow_job = adapter[: adapter.index("  release:")] + (
+            "  release: {needs: consumer-tests, permissions: {attestations: write, "
+            "contents: write, id-token: write}, uses: "
+            "./.github/workflows/publish-archives.yml, with: {artifact-stem: "
+            '"${{ inputs.artifact-stem }}", version-file: '
+            '"${{ inputs.version-file }}"}}\n'
+        )
+        anchored_job = adapter.replace(
+            "  consumer-tests:\n",
+            "  consumer-tests: &consumer_tests\n",
+            1,
+        )
+        aliased_job = anchored_job[: anchored_job.index("  release:")] + (
+            "  release: *consumer_tests\n"
+        )
+        quoted_permission = adapter.replace(
+            "      id-token: write\n    uses: ",
+            '      id-token: write\n      "packages": write\n    uses: ',
+            1,
+        )
+
+        # Catches a release job that bypasses consumer-tests while retaining the
+        # old dependency only in a comment.
+        with self.subTest(mutation="dependency bypass"), self.assertRaises(
+            AssertionError
+        ):
+            self.assert_source_adapter_release_contract(dependency_bypass)
+        # Catches a contract-owned called job rewritten as an inline flow map.
+        with self.subTest(mutation="flow-map job"), self.assertRaises(AssertionError):
+            self.assert_source_adapter_release_contract(flow_job)
+        # Catches a contract-owned called job supplied through an alias.
+        with self.subTest(mutation="aliased job"), self.assertRaises(AssertionError):
+            self.assert_source_adapter_release_contract(aliased_job)
+        # Catches an extra write permission hidden behind a quoted YAML key.
+        with self.subTest(mutation="quoted permission"), self.assertRaises(
+            AssertionError
+        ):
+            self.assert_source_adapter_release_contract(quoted_permission)
 
     def test_publication_core_has_the_narrow_privileged_contract(self) -> None:
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
@@ -218,21 +331,58 @@ class ReleaseArchiveWorkflowTests(unittest.TestCase):
         input_names = set(
             re.findall(r"^      ([a-z][a-z0-9-]*):$", input_block, re.MULTILINE)
         )
-        publish_job = core[core.index("  publish:") :]
-        permission_block = publish_job[
-            publish_job.index("    permissions:") : publish_job.index("    concurrency:")
-        ]
-        write_permissions = set(
-            re.findall(r"^      ([a-z-]+): write$", permission_block, re.MULTILINE)
-        )
+        jobs = self.mapping_block(core, "jobs", indent=0)
+        publish_job = self.mapping_block(jobs, "publish", indent=2)
 
         self.assertEqual({"artifact-stem", "version-file"}, input_names)
-        self.assertEqual(
-            {"attestations", "contents", "id-token"},
-            write_permissions,
-        )
+        self.assert_publication_core_permission_contract(core)
         self.assertIn("group: release-${{ github.repository }}-${{ github.ref }}", publish_job)
         self.assertIn("cancel-in-progress: false", publish_job)
+
+    def test_publication_core_permission_contract_rejects_quoted_flow_and_alias(self) -> None:
+        core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
+            encoding="utf-8"
+        )
+        quoted_permission = core.replace(
+            "      id-token: write\n    concurrency:",
+            '      id-token: write\n      "packages": write\n    concurrency:',
+            1,
+        )
+        flow_permission = core.replace(
+            "    permissions:\n"
+            "      attestations: write\n"
+            "      contents: write\n"
+            "      id-token: write\n",
+            "    permissions: {attestations: write, contents: write, "
+            "id-token: write}\n",
+            1,
+        )
+        aliased_permission = core.replace(
+            "permissions:\n  contents: read\n",
+            "permissions: &privileged\n"
+            "  attestations: write\n"
+            "  contents: write\n"
+            "  id-token: write\n",
+            1,
+        ).replace(
+            "    permissions:\n"
+            "      attestations: write\n"
+            "      contents: write\n"
+            "      id-token: write\n",
+            "    permissions: *privileged\n",
+            1,
+        )
+
+        # Catches an extra privileged permission omitted by the former
+        # unquoted-key-only regular expression.
+        with self.assertRaises(AssertionError):
+            self.assert_publication_core_permission_contract(quoted_permission)
+        # Catches a privileged permission block supplied as an inline flow map.
+        with self.assertRaises(AssertionError):
+            self.assert_publication_core_permission_contract(flow_permission)
+        # Catches a privileged permission block supplied through an alias.
+        with self.assertRaises(AssertionError):
+            self.assert_publication_core_permission_contract(aliased_permission)
 
     def test_publication_core_uses_sibling_checkouts_and_only_policy_programs(self) -> None:
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(

@@ -14,18 +14,135 @@ SETUP_PYTHON_SHA = "5fda3b95a4ea91299a34e894583c3862153e4b97"
 YAML_KEY = r'(?:[A-Za-z0-9_-]+|\'[A-Za-z0-9_-]+\'|"[A-Za-z0-9_-]+")'
 
 
-class SkillWorkflowContractTests(unittest.TestCase):
+class YamlContractAssertions:
+    def uncomment_yaml_line(self, line: str) -> str:
+        single_quoted = False
+        double_quoted = False
+        escaped = False
+        index = 0
+        while index < len(line):
+            character = line[index]
+            if double_quoted:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == '"':
+                    double_quoted = False
+            elif single_quoted:
+                if character == "'":
+                    if index + 1 < len(line) and line[index + 1] == "'":
+                        index += 1
+                    else:
+                        single_quoted = False
+            elif character == '"':
+                double_quoted = True
+            elif character == "'":
+                single_quoted = True
+            elif character == "#" and (index == 0 or line[index - 1].isspace()):
+                return line[:index].rstrip()
+            index += 1
+        return line.rstrip()
+
+    def mapping_entries(
+        self,
+        text: str,
+        *,
+        indent: int,
+    ) -> tuple[tuple[str, str, int], ...]:
+        entries: list[tuple[str, str, int]] = []
+        pattern = re.compile(rf"^(?P<key>{YAML_KEY})\s*:\s*(?P<value>.*)$")
+        for line_number, raw_line in enumerate(text.splitlines()):
+            active = self.uncomment_yaml_line(raw_line)
+            if not active.strip():
+                continue
+            leading = len(active) - len(active.lstrip(" "))
+            if leading != indent:
+                continue
+            content = active[indent:]
+            match = pattern.fullmatch(content)
+            self.assertIsNotNone(
+                match,
+                f"unsupported mapping syntax at indentation {indent}: {content}",
+            )
+            key = match.group("key")
+            if key[:1] in {"'", '"'}:
+                key = key[1:-1]
+            entries.append((key, match.group("value").strip(), line_number))
+        return tuple(entries)
+
+    def mapping_keys(self, text: str, *, indent: int) -> tuple[str, ...]:
+        return tuple(key for key, _, _ in self.mapping_entries(text, indent=indent))
+
+    def mapping_block(self, text: str, name: str, *, indent: int) -> str:
+        matches = tuple(
+            (value, line_number)
+            for key, value, line_number in self.mapping_entries(text, indent=indent)
+            if key == name
+        )
+        self.assertEqual(1, len(matches), f"mapping block is not unique: {name}")
+        value, line_number = matches[0]
+        self.assertEqual(
+            "",
+            value,
+            f"mapping block must not use a flow map or alias: {name}",
+        )
+        lines = text.splitlines(keepends=True)
+        end = len(lines)
+        for index in range(line_number + 1, len(lines)):
+            active = self.uncomment_yaml_line(lines[index].rstrip("\r\n"))
+            if not active.strip():
+                continue
+            leading = len(active) - len(active.lstrip(" "))
+            if leading <= indent:
+                end = index
+                break
+        return "".join(lines[line_number + 1 : end])
+
+    def simple_scalar(self, raw: str, *, label: str) -> str:
+        self.assertTrue(raw, f"{label} must be a scalar")
+        self.assertNotIn(raw[0], "*&{[", f"{label} must not use an alias or flow value")
+        if raw[0] == "'":
+            self.assertTrue(raw.endswith("'"), f"unterminated scalar: {label}")
+            return raw[1:-1].replace("''", "'")
+        if raw[0] == '"':
+            self.assertTrue(raw.endswith('"'), f"unterminated scalar: {label}")
+            inner = raw[1:-1]
+            self.assertNotIn("\\", inner, f"escaped scalar is unsupported: {label}")
+            return inner
+        return raw
+
+    def mapping_value(self, text: str, name: str, *, indent: int) -> str:
+        matches = tuple(
+            value
+            for key, value, _ in self.mapping_entries(text, indent=indent)
+            if key == name
+        )
+        self.assertEqual(1, len(matches), f"mapping value is not unique: {name}")
+        return self.simple_scalar(matches[0], label=name)
+
+    def permission_map(self, text: str, *, indent: int) -> dict[str, str]:
+        body = self.mapping_block(text, "permissions", indent=indent)
+        entries = self.mapping_entries(body, indent=indent + 2)
+        keys = tuple(key for key, _, _ in entries)
+        self.assertEqual(len(keys), len(set(keys)), "duplicate permission key")
+        return {
+            key: self.simple_scalar(value, label=f"permission {key}")
+            for key, value, _ in entries
+        }
+
+
+class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
     def yaml_key(self, name: str) -> str:
         escaped = re.escape(name)
         return rf'(?:{escaped}|\'{escaped}\'|"{escaped}")'
 
     def direct_core_consumer_call(self, text: str) -> re.Match[str] | None:
         return re.search(
-            rf"(?mi)^\s*(?:-\s+)?{self.yaml_key('uses')}\s*:\s*"
-            r"(?P<quote>[\"']?)"
-            r"ryanduguid/release-policy/\.github/workflows/"
-            r"publish-archives\.yml@[^\"'#\s]+"
-            r"(?P=quote)\s*(?:#.*)?$",
+            re.escape(
+                "ryanduguid/release-policy/.github/workflows/"
+                "publish-archives.yml@"
+            ),
             text,
         )
 
@@ -34,31 +151,24 @@ class SkillWorkflowContractTests(unittest.TestCase):
         self.assertTrue(path.is_file(), f"required workflow is missing: {name}")
         return path.read_text(encoding="utf-8")
 
-    def mapping_keys(self, text: str, *, indent: int) -> tuple[str, ...]:
-        prefix = " " * indent
-        pattern = re.compile(
-            rf"(?m)^{prefix}(?:-\s+)?"
-            r'(?:(?P<plain>[A-Za-z0-9_-]+)|\'(?P<single>[A-Za-z0-9_-]+)\''
-            r'|"(?P<double>[A-Za-z0-9_-]+)")\s*:',
+    def needs_values(self, job: str) -> tuple[str, ...]:
+        matches = tuple(
+            value
+            for key, value, _ in self.mapping_entries(job, indent=4)
+            if key == "needs"
         )
-        return tuple(
-            next(
-                value
-                for value in match.group("plain", "single", "double")
-                if value is not None
+        self.assertEqual(1, len(matches), "needs value is not unique")
+        raw = matches[0]
+        if raw.startswith("["):
+            self.assertTrue(raw.endswith("]"), "unterminated needs flow sequence")
+            values = tuple(
+                self.simple_scalar(item.strip(), label="needs item")
+                for item in raw[1:-1].split(",")
+                if item.strip()
             )
-            for match in pattern.finditer(text)
-        )
-
-    def mapping_block(self, text: str, name: str, *, indent: int) -> str:
-        prefix = " " * indent
-        match = re.search(
-            rf"(?ms)^{prefix}(?:-\s+)?{self.yaml_key(name)}\s*:[^\n]*\n"
-            rf"(.*?)(?=^{prefix}(?:-\s+)?{YAML_KEY}\s*:|\Z)",
-            text,
-        )
-        self.assertIsNotNone(match, f"mapping block is missing: {name}")
-        return match.group(1)
+            self.assertTrue(values, "needs flow sequence must not be empty")
+            return values
+        return (self.simple_scalar(raw, label="needs"),)
 
     def assert_top_level_skeleton(self, workflow: str) -> None:
         self.assertEqual(
@@ -99,35 +209,61 @@ class SkillWorkflowContractTests(unittest.TestCase):
         trigger = self.mapping_block(workflow, "on", indent=0)
         workflow_call = self.mapping_block(trigger, "workflow_call", indent=2)
         body = self.mapping_block(workflow_call, "inputs", indent=4)
-        starts = list(re.finditer(r"(?m)^      ([a-z0-9-]+):\n", body))
         return tuple(
-            (
-                start.group(1),
-                body[start.end() : starts[index + 1].start()]
-                if index + 1 < len(starts)
-                else body[start.end() :],
-            )
-            for index, start in enumerate(starts)
-        )
-
-    def permission_map(self, text: str, *, indent: int) -> dict[str, str]:
-        prefix = " " * indent
-        match = re.search(
-            rf"(?m)^{prefix}permissions:\n((?:^{prefix}  [a-z-]+: [a-z]+\n)+)",
-            text,
-        )
-        self.assertIsNotNone(match, "permissions map is missing")
-        return dict(
-            re.findall(rf"(?m)^{prefix}  ([a-z-]+): ([a-z]+)$", match.group(1))
+            (name, self.mapping_block(body, name, indent=6))
+            for name in self.mapping_keys(body, indent=6)
         )
 
     def with_keys(self, job: str) -> tuple[str, ...]:
-        match = re.search(
-            r"(?m)^    with:\n((?:^      [a-z0-9-]+:.*\n?)+)",
-            job,
+        body = self.mapping_block(job, "with", indent=4)
+        return self.mapping_keys(body, indent=6)
+
+    def assert_release_dag_contract(self, workflow: str) -> None:
+        jobs = self.mapping_block(workflow, "jobs", indent=0)
+        self.assertEqual(
+            self.mapping_keys(jobs, indent=2),
+            ("guard", "verify", "publish"),
         )
-        self.assertIsNotNone(match, "called workflow inputs are missing")
-        return tuple(re.findall(r"(?m)^      ([a-z0-9-]+):", match.group(1)))
+        guard = self.job_block(workflow, "guard")
+        verify = self.job_block(workflow, "verify")
+        publish = self.job_block(workflow, "publish")
+
+        self.assertEqual(
+            self.mapping_keys(guard, indent=4),
+            ("timeout-minutes", "name", "runs-on", "permissions", "steps"),
+        )
+        self.assertEqual(
+            self.mapping_keys(verify, indent=4),
+            ("needs", "permissions", "uses", "with"),
+        )
+        self.assertEqual(
+            self.mapping_keys(publish, indent=4),
+            ("needs", "permissions", "uses", "with"),
+        )
+        self.assertEqual(self.needs_values(verify), ("guard",))
+        self.assertEqual(self.needs_values(publish), ("guard", "verify"))
+
+    def assert_release_publication_contract(self, workflow: str) -> None:
+        publish = self.job_block(workflow, "publish")
+
+        self.assertEqual(
+            self.mapping_keys(publish, indent=4),
+            ("needs", "permissions", "uses", "with"),
+        )
+        self.assertEqual(self.needs_values(publish), ("guard", "verify"))
+        self.assertEqual(
+            self.permission_map(publish, indent=4),
+            {
+                "attestations": "write",
+                "contents": "write",
+                "id-token": "write",
+            },
+        )
+        self.assertRegex(
+            publish,
+            r"(?m)^    uses: \./\.github/workflows/publish-archives\.yml$",
+        )
+        self.assertEqual(self.with_keys(publish), ("artifact-stem", "version-file"))
 
     def test_verification_workflow_has_closed_interface_and_permissions(self) -> None:
         workflow = self.read_workflow("verify-skills.yml")
@@ -264,15 +400,61 @@ class SkillWorkflowContractTests(unittest.TestCase):
 
     def test_release_dag_cannot_skip_a_failing_guard(self) -> None:
         workflow = self.read_workflow("release-skills.yml")
-        guard = self.job_block(workflow, "guard")
-        verify = self.job_block(workflow, "verify")
-        publish = self.job_block(workflow, "publish")
 
-        self.assertNotRegex(guard, r"(?m)^    if:")
-        self.assertRegex(verify, r"(?m)^    needs: guard$")
-        self.assertNotRegex(verify, r"(?m)^    if:")
-        self.assertRegex(publish, r"(?m)^    needs: \[guard, verify\]$")
-        self.assertNotRegex(publish, r"(?m)^    if:")
+        self.assert_release_dag_contract(workflow)
+
+    def test_release_dag_contract_rejects_extra_jobs_and_wrong_active_needs(self) -> None:
+        workflow = self.read_workflow("release-skills.yml")
+        extra_job = workflow.replace(
+            "jobs:\n  guard:",
+            "jobs:\n"
+            "  bypass:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: true\n\n"
+            "  guard:",
+            1,
+        )
+        wrong_needs = workflow.replace(
+            "    needs: [guard, verify]\n",
+            "    needs: bypass\n    # needs: [guard, verify]\n",
+            1,
+        )
+        flow_job = workflow.replace(
+            "  verify:\n"
+            "    needs: guard\n"
+            "    permissions:\n"
+            "      contents: read\n"
+            "    uses: ./.github/workflows/verify-skills.yml\n"
+            "    with:\n"
+            "      skills-verification-mode: ${{ inputs.skills-verification-mode }}\n"
+            "      version-file: ${{ inputs.version-file }}\n",
+            "  verify: {needs: guard, permissions: {contents: read}, uses: "
+            "./.github/workflows/verify-skills.yml, with: "
+            '{skills-verification-mode: "${{ inputs.skills-verification-mode }}", '
+            'version-file: "${{ inputs.version-file }}"}}\n',
+            1,
+        )
+        anchored_job = workflow.replace("  guard:\n", "  guard: &guard_job\n", 1)
+        aliased_job = anchored_job[: anchored_job.index("  publish:")] + (
+            "  publish: *guard_job\n"
+        )
+
+        # Catches an unapproved fourth job in the closed release DAG.
+        with self.subTest(mutation="extra job"), self.assertRaises(AssertionError):
+            self.assert_release_dag_contract(extra_job)
+        # Catches a publication job whose only active dependency bypasses the
+        # guard and verifier while the approved dependency survives as a comment.
+        with self.subTest(mutation="wrong active needs"), self.assertRaises(
+            AssertionError
+        ):
+            self.assert_release_dag_contract(wrong_needs)
+        # Catches a contract-owned called job supplied as an inline flow map.
+        with self.subTest(mutation="flow-map job"), self.assertRaises(AssertionError):
+            self.assert_release_dag_contract(flow_job)
+        # Catches a contract-owned called job supplied through an alias.
+        with self.subTest(mutation="aliased job"), self.assertRaises(AssertionError):
+            self.assert_release_dag_contract(aliased_job)
 
     def test_release_verification_job_has_only_read_permission_and_verifier_inputs(self) -> None:
         verify = self.job_block(self.read_workflow("release-skills.yml"), "verify")
@@ -292,26 +474,54 @@ class SkillWorkflowContractTests(unittest.TestCase):
         )
 
     def test_release_publication_job_has_exact_privileges_dependencies_and_inputs(self) -> None:
-        publish = self.job_block(self.read_workflow("release-skills.yml"), "publish")
+        workflow = self.read_workflow("release-skills.yml")
 
-        self.assertEqual(
-            self.mapping_keys(publish, indent=4),
-            ("needs", "permissions", "uses", "with"),
+        self.assert_release_publication_contract(workflow)
+
+    def test_release_publication_contract_rejects_quoted_flow_and_alias_permissions(
+        self,
+    ) -> None:
+        workflow = self.read_workflow("release-skills.yml")
+        quoted_permission = workflow.replace(
+            "      id-token: write\n    uses: ./.github/workflows/publish-archives.yml",
+            '      id-token: write\n      "packages": write\n'
+            "    uses: ./.github/workflows/publish-archives.yml",
+            1,
         )
-        self.assertRegex(publish, r"(?m)^    needs: \[guard, verify\]$")
-        self.assertEqual(
-            self.permission_map(publish, indent=4),
-            {
-                "attestations": "write",
-                "contents": "write",
-                "id-token": "write",
-            },
+        flow_permission = workflow.replace(
+            "    permissions:\n"
+            "      attestations: write\n"
+            "      contents: write\n"
+            "      id-token: write\n",
+            "    permissions: {attestations: write, contents: write, "
+            "id-token: write}\n",
+            1,
         )
-        self.assertRegex(
-            publish,
-            r"(?m)^    uses: \./\.github/workflows/publish-archives\.yml$",
+        aliased_permission = workflow.replace(
+            "permissions:\n  contents: read\n",
+            "permissions: &publish_permissions\n"
+            "  attestations: write\n"
+            "  contents: write\n"
+            "  id-token: write\n",
+            1,
+        ).replace(
+            "    permissions:\n"
+            "      attestations: write\n"
+            "      contents: write\n"
+            "      id-token: write\n",
+            "    permissions: *publish_permissions\n",
+            1,
         )
-        self.assertEqual(self.with_keys(publish), ("artifact-stem", "version-file"))
+
+        # Catches an extra write permission hidden behind a quoted YAML key.
+        with self.assertRaises(AssertionError):
+            self.assert_release_publication_contract(quoted_permission)
+        # Catches a privileged permission block supplied as an inline flow map.
+        with self.assertRaises(AssertionError):
+            self.assert_release_publication_contract(flow_permission)
+        # Catches a privileged permission block supplied through an alias.
+        with self.assertRaises(AssertionError):
+            self.assert_release_publication_contract(aliased_permission)
 
     def test_adapters_forbid_state_transfer_open_commands_and_custom_outputs(self) -> None:
         workflows = (
@@ -358,6 +568,13 @@ class SkillWorkflowContractTests(unittest.TestCase):
             "publish-archives.yml@<full-40-char-commit-sha>'",
             '    "uses": "ryanduguid/release-policy/.github/workflows/'
             'publish-archives.yml@<full-40-char-commit-sha>"',
+            'name: Flow example\non: push\njobs: {release: {uses: "'
+            'ryanduguid/release-policy/.github/workflows/'
+            'publish-archives.yml@<full-40-char-commit-sha>"}}',
+            'name: Alias example\non: push\nenv:\n  CORE: &core "'
+            'ryanduguid/release-policy/.github/workflows/'
+            'publish-archives.yml@<full-40-char-commit-sha>"\n'
+            "jobs:\n  release:\n    uses: *core",
         )
         for example in forbidden_consumer_examples:
             with self.subTest(forbidden=example):

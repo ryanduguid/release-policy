@@ -1002,9 +1002,17 @@ POLICY_CALL = re.compile(
 
 Assert `re.fullmatch(r"[0-9a-f]{40}", EXPECTED_POLICY_SHA)` before using it in comparisons.
 
+Treat the old local release job's `if: github.ref_name != 'v0.1.0'` only as
+pre-migration RED context. The migrated caller must not preserve that skip:
+every version tag must invoke `release-skills.yml`, whose always-running guard
+owns the frozen-v0.1.0 failure.
+
 Rename the first existing method to `test_workflows_use_the_exact_shared_skill_policy` and make it assert:
 
-- the frozen v0.1.0 condition and error remain;
+- the release job has no job-level `if`, while the existing `v*` tag trigger
+  remains so every version tag reaches the reusable adapter;
+- the frozen-v0.1.0 refusal is owned by the selected `release-skills.yml`
+  adapter, not duplicated as a caller-level skip;
 - `release-archive.yml` is absent;
 - release calls `release-skills.yml` and Verify calls `verify-skills.yml` at exactly `EXPECTED_POLICY_SHA`;
 - the two extracted pins are identical;
@@ -1026,7 +1034,9 @@ Do not add a third test method. The repository total must remain 43.
 python -B -m unittest discover -s tests -p "test_release_workflow.py" -v
 ```
 
-Expected: both existing tests fail because the workflows still call the source adapter and lack shared conformance.
+Expected: both existing tests fail because the workflows still call the source
+adapter, lack shared conformance and retain the pre-migration caller-level
+frozen-tag skip.
 
 - [ ] **Step 4: Patch the two workflows using the literal merged SHA**
 
@@ -1046,7 +1056,6 @@ Replace the release caller with the printed release line in this structure:
 
 ```yaml
   release:
-    if: github.ref_name != 'v0.1.0'
     permissions:
       attestations: write
       contents: write
@@ -1057,6 +1066,8 @@ Replace the release caller with the printed release line in this structure:
 ```
 
 Insert the printed `uses` line between `id-token` and `with`, preserving its indentation.
+Do not add a job-level `if`: `release-skills.yml` must run for every matching
+version tag and fail frozen v0.1.0 through its guard job.
 
 Leave the existing local `verify` job byte-for-byte unchanged and append:
 
@@ -1344,7 +1355,8 @@ Expected: frozen-content diff empty, worktree clean, and exactly the intended ca
 Give the reviewer the approved recovery spec, this plan, Hardhat base and head, and exact merged policy SHA. Require Standards and Spec findings covering:
 
 - identical literal policy pins and exact adapter paths;
-- preservation of the local Verify job and frozen v0.1.0 refusal;
+- preservation of the local Verify job, adapter-owned frozen-v0.1.0 refusal
+  and absence of a caller-level frozen-tag skip;
 - release privilege map and absence of local privileged steps or secrets;
 - exact v0.1.5 metadata and unversioned marketplaces;
 - truthfulness of incident, run and protected-tag documentation;
