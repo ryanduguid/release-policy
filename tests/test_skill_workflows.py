@@ -19,21 +19,60 @@ class SkillWorkflowContractTests(unittest.TestCase):
         self.assertTrue(path.is_file(), f"required workflow is missing: {name}")
         return path.read_text(encoding="utf-8")
 
-    def job_block(self, workflow: str, name: str) -> str:
-        match = re.search(
-            rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
-            workflow,
+    def mapping_keys(self, text: str, *, indent: int) -> tuple[str, ...]:
+        prefix = " " * indent
+        return tuple(
+            re.findall(rf"(?m)^{prefix}([A-Za-z0-9_-]+):", text)
         )
-        self.assertIsNotNone(match, f"job is missing: {name}")
+
+    def mapping_block(self, text: str, name: str, *, indent: int) -> str:
+        prefix = " " * indent
+        match = re.search(
+            rf"(?ms)^{prefix}{re.escape(name)}:[^\n]*\n"
+            rf"(.*?)(?=^{prefix}[A-Za-z0-9_-]+:|\Z)",
+            text,
+        )
+        self.assertIsNotNone(match, f"mapping block is missing: {name}")
         return match.group(1)
 
-    def workflow_inputs(self, workflow: str) -> tuple[tuple[str, str], ...]:
-        match = re.search(
-            r"(?ms)^    inputs:\n(.*?)(?=^permissions:)",
-            workflow,
+    def assert_top_level_skeleton(self, workflow: str) -> None:
+        self.assertEqual(
+            self.mapping_keys(workflow, indent=0),
+            ("name", "on", "permissions", "jobs"),
         )
-        self.assertIsNotNone(match, "workflow_call inputs are missing")
-        body = match.group(1)
+        trigger = self.mapping_block(workflow, "on", indent=0)
+        self.assertEqual(self.mapping_keys(trigger, indent=2), ("workflow_call",))
+        workflow_call = self.mapping_block(trigger, "workflow_call", indent=2)
+        self.assertEqual(self.mapping_keys(workflow_call, indent=4), ("inputs",))
+
+    def job_block(self, workflow: str, name: str) -> str:
+        self.assert_top_level_skeleton(workflow)
+        jobs = self.mapping_block(workflow, "jobs", indent=0)
+        return self.mapping_block(jobs, name, indent=2)
+
+    def step_block(self, job: str, name: str) -> str:
+        steps = self.mapping_block(job, "steps", indent=4)
+        match = re.search(
+            rf"(?ms)^      - name: {re.escape(name)}\n"
+            r"(.*?)(?=^      - name:|\Z)",
+            steps,
+        )
+        self.assertIsNotNone(match, f"step is missing: {name}")
+        return match.group(1)
+
+    def folded_run_lines(self, step: str) -> tuple[str, ...]:
+        match = re.search(
+            r"(?m)^        run: >-\n((?:^          .*\n?)+)",
+            step,
+        )
+        self.assertIsNotNone(match, "folded run command is missing")
+        return tuple(line[10:] for line in match.group(1).splitlines())
+
+    def workflow_inputs(self, workflow: str) -> tuple[tuple[str, str], ...]:
+        self.assert_top_level_skeleton(workflow)
+        trigger = self.mapping_block(workflow, "on", indent=0)
+        workflow_call = self.mapping_block(trigger, "workflow_call", indent=2)
+        body = self.mapping_block(workflow_call, "inputs", indent=4)
         starts = list(re.finditer(r"(?m)^      ([a-z0-9-]+):\n", body))
         return tuple(
             (
@@ -82,6 +121,13 @@ class SkillWorkflowContractTests(unittest.TestCase):
         verify = self.job_block(workflow, "verify")
         self.assertEqual(self.permission_map(verify, indent=4), {"contents": "read"})
         self.assertRegex(verify, r"(?m)^    timeout-minutes: 15$")
+
+    def test_reusable_workflows_keep_the_required_parent_skeleton(self) -> None:
+        for name in ("verify-skills.yml", "release-skills.yml"):
+            with self.subTest(workflow=name):
+                workflow = self.read_workflow(name)
+                self.assert_top_level_skeleton(workflow)
+                self.workflow_inputs(workflow)
 
     def test_verification_workflow_uses_isolated_sibling_checkouts_at_full_sha(self) -> None:
         workflow = self.read_workflow("verify-skills.yml")
@@ -136,15 +182,32 @@ class SkillWorkflowContractTests(unittest.TestCase):
     def test_release_guard_always_runs_and_fails_the_frozen_tag(self) -> None:
         workflow = self.read_workflow("release-skills.yml")
         guard = self.job_block(workflow, "guard")
+        guard_step = self.step_block(guard, "Guard the selected mode and frozen tag")
 
         self.assertNotRegex(guard, r"(?m)^    if:")
+        self.assertNotRegex(guard, r"(?m)^    continue-on-error:")
+        self.assertEqual(
+            self.mapping_keys(guard, indent=4),
+            ("timeout-minutes", "name", "runs-on", "permissions", "steps"),
+        )
         self.assertRegex(guard, r"(?m)^    timeout-minutes: 5$")
         self.assertEqual(self.permission_map(guard, indent=4), {"contents": "read"})
-        self.assertIn("python policy/scripts/verify_skills.py guard-release", guard)
-        self.assertIn('--mode "$SKILLS_VERIFICATION_MODE"', guard)
-        self.assertIn('--tag "$RELEASE_TAG"', guard)
-        self.assertIn("RELEASE_TAG: ${{ github.ref_name }}", guard)
-        self.assertIn("SKILLS_VERIFICATION_MODE: ${{ inputs.skills-verification-mode }}", guard)
+        self.assertEqual(self.mapping_keys(guard_step, indent=8), ("env", "run"))
+        self.assertNotRegex(guard_step, r"(?m)^        continue-on-error:")
+        self.assertNotIn("|| true", guard_step)
+        self.assertEqual(
+            self.folded_run_lines(guard_step),
+            (
+                "python policy/scripts/verify_skills.py guard-release",
+                '--mode "$SKILLS_VERIFICATION_MODE"',
+                '--tag "$RELEASE_TAG"',
+            ),
+        )
+        self.assertIn("RELEASE_TAG: ${{ github.ref_name }}", guard_step)
+        self.assertIn(
+            "SKILLS_VERIFICATION_MODE: ${{ inputs.skills-verification-mode }}",
+            guard_step,
+        )
         self.assertIn("ref: ${{ job.workflow_sha }}", guard)
         self.assertIn('[[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]]', guard)
         self.assertIn('test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"', guard)
@@ -182,6 +245,10 @@ class SkillWorkflowContractTests(unittest.TestCase):
     def test_release_verification_job_has_only_read_permission_and_verifier_inputs(self) -> None:
         verify = self.job_block(self.read_workflow("release-skills.yml"), "verify")
 
+        self.assertEqual(
+            self.mapping_keys(verify, indent=4),
+            ("needs", "permissions", "uses", "with"),
+        )
         self.assertEqual(self.permission_map(verify, indent=4), {"contents": "read"})
         self.assertRegex(
             verify,
@@ -195,6 +262,10 @@ class SkillWorkflowContractTests(unittest.TestCase):
     def test_release_publication_job_has_exact_privileges_dependencies_and_inputs(self) -> None:
         publish = self.job_block(self.read_workflow("release-skills.yml"), "publish")
 
+        self.assertEqual(
+            self.mapping_keys(publish, indent=4),
+            ("needs", "permissions", "uses", "with"),
+        )
         self.assertRegex(publish, r"(?m)^    needs: \[guard, verify\]$")
         self.assertEqual(
             self.permission_map(publish, indent=4),
@@ -219,9 +290,6 @@ class SkillWorkflowContractTests(unittest.TestCase):
             "secrets: inherit",
             "secrets:",
             "outputs:",
-            "actions/cache@",
-            "actions/download-artifact@",
-            "actions/upload-artifact@",
             "GITHUB_OUTPUT",
             "needs.guard.outputs",
             "needs.verify.outputs",
@@ -235,6 +303,12 @@ class SkillWorkflowContractTests(unittest.TestCase):
             for fragment in forbidden:
                 with self.subTest(fragment=fragment):
                     self.assertNotIn(fragment, workflow)
+            self.assertNotRegex(workflow, r"(?m)^\s*cache\s*:")
+            self.assertNotRegex(
+                workflow,
+                r"(?mi)^\s*uses:\s*actions/"
+                r"(?:cache|download-artifact|upload-artifact)(?:/[^@\s]+)?@",
+            )
 
     def test_supported_adapters_call_the_same_commit_core_without_direct_consumer_use(self) -> None:
         archive_adapter = self.read_workflow("release-archive.yml")
