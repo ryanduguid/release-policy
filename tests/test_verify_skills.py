@@ -13,6 +13,24 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+EXPECTED_COMMANDS = (
+    (
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--isolated",
+        "--disable-pip-version-check",
+        "--no-input",
+        "--no-deps",
+        "--requirement",
+        "requirements-test.txt",
+    ),
+    (sys.executable, "-B", "-m", "unittest", "discover", "-s", "tests", "-v"),
+    (sys.executable, "scripts/validate_validation.py"),
+    (sys.executable, "tests/verify_skills_cli.py"),
+)
+
 import verify_skills  # noqa: E402
 
 
@@ -63,7 +81,8 @@ class SkillVerifierTests(unittest.TestCase):
 
         verify_skills.verify_skill_pack(self.root, "subcontractor-accounting-v1", "VERSION", runner=runner)
 
-        self.assertEqual(list(verify_skills.commands_for_mode("subcontractor-accounting-v1")), [call[0] for call in calls])
+        # Catches commands_for_mode mutations that reorder commands or change a fixed argument.
+        self.assertEqual(EXPECTED_COMMANDS, tuple(call[0] for call in calls))
         self.assertEqual(4, len(calls))
         for _, cwd, check, shell in calls:
             self.assertEqual(self.root, cwd)
@@ -103,7 +122,14 @@ class SkillVerifierTests(unittest.TestCase):
         self._git("add", "link")
         with self.assertRaises(verify_skills.VerificationError):
             verify_skills.require_tracked_regular_file(self.root, "link", label="required")
+        self._write("symlink-mode", b"ordinary worktree file")
+        self._set_mode("symlink-mode", "120000")
+        # Catches a REGULAR_GIT_MODES mutation that permits symbolic-link index entries.
+        with self.assertRaises(verify_skills.VerificationError):
+            verify_skills.require_tracked_regular_file(self.root, "symlink-mode", label="required")
+        self._write("gitlink", b"ordinary worktree file")
         self._set_mode("gitlink", "160000")
+        # Catches a REGULAR_GIT_MODES mutation that permits Gitlink index entries.
         with self.assertRaises(verify_skills.VerificationError):
             verify_skills.require_tracked_regular_file(self.root, "gitlink", label="required")
         self._set_mode("executable", "100755")
