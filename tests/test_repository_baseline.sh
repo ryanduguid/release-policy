@@ -22,11 +22,13 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
     ".github/dependabot.yml": "fa18b8f1272681a83062c370d846ca8a96cc4bcc6ede6441f19ac34e97d9fd40",
-    ".github/workflows/ci.yml": "6f44f454f49eec801b5d4361e4cd309230b7380c0ff97fbfbb8861a4fdc25dd8",
+    ".github/workflows/ci.yml": "d8bba87d048b95555dc2d72ceda75f9e967a3927058028fce7fd9ced754ff68d",
     ".github/workflows/codeql.yml": "0c2061acec159bb2d439412d42b0a0ec0030429f0c61c02b8455c4b20650f948",
     ".github/workflows/publish-archives.yml": "dd1cb2569abf76d52885a20c907cf2bcb8d28cb791faf517608f4105305928e7",
     ".github/workflows/release-archive.yml": "80795715822c637b51ca6a8930dba4e22a64df0552c07672ce4fbeb5cbef7e64",
     ".github/workflows/release-python.yml": "3bff47b0b873d132a7ef87e16a0ce0ffa52bf189662599bf0a3c5f7ddd8db0f2",
+    ".github/workflows/release-skills.yml": "26246f4ad1575a90c776fcd71bcfbca3daa6e9604fc5601d974b40783fab7d7a",
+    ".github/workflows/verify-skills.yml": "f9fb4fa7560eb561b2cc34fd58acbfe2e52440e10ae25a9fde67dad997d18941",
     "README.md": "219f0226240895dd2bed48f363c89a648fff2ccabc17ba4f459c8ea80c6ebea3",
     "SECURITY.md": "b364b6ace7947117d246501953a36c6cfdd4dc53343c7c56554744b6ec90f794",
 }
@@ -394,7 +396,7 @@ if self_test_failures:
     raise SystemExit(1)
 
 print(
-    "repository baseline passed: 8 canonical documents; "
+    "repository baseline passed: 10 canonical documents; "
     "LF/CRLF controls and 25 adverse variants"
 )
 PY

@@ -46,9 +46,9 @@ jobs:
           echo "${ACTIONLINT_SHA256}  actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" | sha256sum --check
           tar -xzf "actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" actionlint
 
-      # actionlint's bundled `job` context type does not yet model `workflow_sha`
-      # (used twice in release-python.yml): rhysd/actionlint#707 is open to add
-      # it. Until that ships, ignore this one known false positive; remove the
+      # actionlint's bundled `job` context type does not yet model `workflow_sha`,
+      # which is used by the release workflows. rhysd/actionlint#707 is open to
+      # add it. Until that ships, ignore this one known false positive; remove the
       # -ignore flag once #707 lands in a release.
       - name: Actionlint the workflows
         run: |
