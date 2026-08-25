@@ -12,11 +12,11 @@ uploaded, checksummed module artefact and is not a verified distributable
 module release. It remains mutable, but must not be silently rewritten,
 replaced, or retrofitted with assets.
 
-The repository now contains a reviewed-in-code source-archive workflow design
-and implementation candidate. That does not retrofit `v0.1.0`, make the module
-itself distributable, or prove a live consumer release. A source-archive
-consumer migration remains a separate reviewed change pinned to a full policy
-commit.
+The repository now contains reviewed-in-code source-archive and initial
+skill-pack workflow implementations. That does not retrofit `v0.1.0`, make the
+module itself distributable, or prove either phase through this repository's
+own tag. Each consumer migration remains a separate reviewed change pinned to
+a full policy commit.
 
 ## Using the packaged-Python release workflow
 
@@ -122,6 +122,72 @@ builds deterministic ZIP and tar.gz source archives from the tagged commit,
 generates an SPDX SBOM, and publishes exactly those three files plus
 `SHA256SUMS` after inspecting the exact draft returned by GitHub.
 
+## Using the skill-pack verification and release workflows
+
+Run the shared conformance job on pull requests and `main`:
+
+    name: Verify
+    on:
+      pull_request:
+      push:
+        branches: [main]
+    permissions:
+      contents: read
+    jobs:
+      shared-conformance:
+        permissions:
+          contents: read
+        uses: ryanduguid/release-policy/.github/workflows/verify-skills.yml@<full-40-char-commit-sha>
+        with:
+          skills-verification-mode: subcontractor-accounting-v1
+
+Use the separate release adapter for annotated version tags:
+
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
+    jobs:
+      release:
+        permissions:
+          attestations: write
+          contents: write
+          id-token: write
+        uses: ryanduguid/release-policy/.github/workflows/release-skills.yml@<full-40-char-commit-sha>
+        with:
+          artifact-stem: subcontractor-accounting-skills
+          skills-verification-mode: subcontractor-accounting-v1
+
+Replace `<full-40-char-commit-sha>` with a reviewed literal 40-character
+commit before committing either consumer workflow.
+
+The `subcontractor-accounting-v1` verifier requires a tracked regular version
+file, `VERSION` by default, plus tracked regular files
+`requirements-test.txt`, `scripts/validate_validation.py`,
+`tests/verify_skills_cli.py` and at least one tracked regular `test*.py` file
+under `tests/`. It runs these fixed commands in order:
+
+1. `python -m pip install --isolated --disable-pip-version-check --no-input --no-deps --requirement requirements-test.txt`
+2. `python -B -m unittest discover -s tests -v`
+3. `python scripts/validate_validation.py`
+4. `python tests/verify_skills_cli.py`
+
+The verifier runs reviewed consumer code with only `contents: read`. It
+declares no secrets or outputs, uses no cache and transfers no artefact or
+other file to publication. A successful verifier is only a dependency gate.
+The release adapter then starts publication on a new runner with exactly
+`attestations: write`, `contents: write` and `id-token: write`.
+
+`publish-archives.yml` is the internal privileged core called by
+`release-archive.yml` and `release-skills.yml`; direct consumer calls are
+unsupported. Consumers that advance their policy pin must verify attestations
+against the new signer workflow,
+`ryanduguid/release-policy/.github/workflows/publish-archives.yml`. The
+source-archive family's inputs, fixed test command, assets and publication
+behaviour are unchanged apart from that intentional signer change.
+
 ## Prerequisites in the consumer
 
 - Annotated tags only; the human-created annotated tag is the release
@@ -163,6 +229,7 @@ Source-archive callers additionally require:
   pull request (ADR-0001).
 
 Phase 2 and phase 3 designs are recorded under
-[`docs/superpowers/specs/`](./docs/superpowers/specs/). Skill packs remain a
-separate future adapter so their inventory and stronger validation controls are
-not reduced to the source-archive contract.
+[`docs/superpowers/specs/`](./docs/superpowers/specs/). Skill packs use a
+separate adapter so their inventory and stronger validation controls are not
+reduced to the source-archive contract. The historical notes-only `v0.1.0`
+marker proves neither release phase.

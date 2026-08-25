@@ -1,8 +1,12 @@
 # Skill-pack release family: phase 3 design
 
 - Date: 2026-08-21
-- Status: approved design; implementation deferred until phase 2 is proven
+- Status: superseded for the initial interface and migration order by the
+  [approved 25 August recovery design](./2026-08-25-skill-pack-release-recovery-design.md)
 - Governing decision: [ADR-0001](../../adr/0001-shared-release-policy.md)
+
+The observed-consumer analysis and broader future migration controls remain in
+force.
 
 ## Why this is a separate family
 

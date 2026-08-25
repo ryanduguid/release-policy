@@ -1,14 +1,14 @@
-name: Reusable source archive release
+name: Reusable skill-pack verification
 
 on:
   workflow_call:
     inputs:
-      artifact-stem:
-        description: Lower-case hyphenated stem used for all release assets.
+      skills-verification-mode:
+        description: Closed policy-owned skill-pack verification mode.
         required: true
         type: string
       version-file:
-        description: Safe relative path containing one canonical MAJOR.MINOR.PATCH line.
+        description: Safe relative tracked version file.
         required: false
         type: string
         default: VERSION
@@ -17,22 +17,18 @@ permissions:
   contents: read
 
 jobs:
-  consumer-tests:
+  verify:
     timeout-minutes: 15
-    name: run consumer source-archive tests
+    name: verify skill-pack consumer
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      # Tests execute consumer-controlled code. Keep their processes and
-      # GITHUB_ENV/GITHUB_PATH changes on this separate read-only runner.
-      - name: Check out the tagged consumer source
+      - name: Check out consumer source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           path: consumer
           persist-credentials: false
-
       - name: Check out release-policy at the calling pin
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,12 +36,10 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: policy
           persist-credentials: false
-
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-
       - name: Require an immutable policy pin
         env:
           MODULE_SHA: ${{ job.workflow_sha }}
@@ -55,18 +49,12 @@ jobs:
           [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
             || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
           test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
-
-      - name: Run the standard source-archive regression suite
+      - name: Run fixed skill-pack verification
         working-directory: consumer
-        run: python -B -m unittest discover -s tests -v
-
-  release:
-    needs: consumer-tests
-    permissions:
-      attestations: write
-      contents: write
-      id-token: write
-    uses: ./.github/workflows/publish-archives.yml
-    with:
-      artifact-stem: ${{ inputs.artifact-stem }}
-      version-file: ${{ inputs.version-file }}
+        env:
+          SKILLS_VERIFICATION_MODE: ${{ inputs.skills-verification-mode }}
+          VERSION_FILE: ${{ inputs.version-file }}
+        run: >-
+          python ../policy/scripts/verify_skills.py verify
+          --mode "$SKILLS_VERIFICATION_MODE"
+          --version-file "$VERSION_FILE"

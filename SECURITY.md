@@ -34,3 +34,10 @@ even when the shell scripts themselves look small.
 The workflows mint GitHub attestations and read the GitHub API. They do not
 hold package-registry tokens; consumers that publish to PyPI do so with
 OIDC trusted publishing in the caller.
+
+The verifier jobs execute reviewed consumer code with only `contents: read`.
+They declare no secrets or outputs, use no cache and pass no artefacts to
+publication. `publish-archives.yml` is the privileged core and receives exactly
+`attestations: write`, `contents: write` and `id-token: write`. It starts with
+fresh consumer and policy checkouts in sibling directories and never executes
+consumer tests.

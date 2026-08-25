@@ -1,4 +1,4 @@
-name: Reusable source archive release
+name: Reusable skill-pack release
 
 on:
   workflow_call:
@@ -8,31 +8,26 @@ on:
         required: true
         type: string
       version-file:
-        description: Safe relative path containing one canonical MAJOR.MINOR.PATCH line.
+        description: Safe relative tracked version file.
         required: false
         type: string
         default: VERSION
+      skills-verification-mode:
+        description: Closed policy-owned skill-pack verification mode.
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
-  consumer-tests:
-    timeout-minutes: 15
-    name: run consumer source-archive tests
+  guard:
+    timeout-minutes: 5
+    name: guard skill-pack release mode
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      # Tests execute consumer-controlled code. Keep their processes and
-      # GITHUB_ENV/GITHUB_PATH changes on this separate read-only runner.
-      - name: Check out the tagged consumer source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          path: consumer
-          persist-credentials: false
-
       - name: Check out release-policy at the calling pin
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,12 +35,6 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: policy
           persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-
       - name: Require an immutable policy pin
         env:
           MODULE_SHA: ${{ job.workflow_sha }}
@@ -55,13 +44,30 @@ jobs:
           [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
             || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
           test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Guard the selected mode and frozen tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          SKILLS_VERIFICATION_MODE: ${{ inputs.skills-verification-mode }}
+        run: >-
+          python policy/scripts/verify_skills.py guard-release
+          --mode "$SKILLS_VERIFICATION_MODE"
+          --tag "$RELEASE_TAG"
 
-      - name: Run the standard source-archive regression suite
-        working-directory: consumer
-        run: python -B -m unittest discover -s tests -v
+  verify:
+    needs: guard
+    permissions:
+      contents: read
+    uses: ./.github/workflows/verify-skills.yml
+    with:
+      skills-verification-mode: ${{ inputs.skills-verification-mode }}
+      version-file: ${{ inputs.version-file }}
 
-  release:
-    needs: consumer-tests
+  publish:
+    needs: [guard, verify]
     permissions:
       attestations: write
       contents: write
