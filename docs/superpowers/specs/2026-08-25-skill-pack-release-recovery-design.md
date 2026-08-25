@@ -1,7 +1,7 @@
 # Skill-pack release recovery: initial phase 3 adapter design
 
 - Date: 2026-08-25
-- Status: approved in chat on 2026-08-25; written specification awaiting review
+- Status: approved in chat on 2026-08-25
 - Governing decision: [ADR-0001](../../adr/0001-shared-release-policy.md)
 - Related designs:
   [source-archive phase 2](./2026-08-21-source-archive-release-design.md)
