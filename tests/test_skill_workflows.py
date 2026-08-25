@@ -11,9 +11,14 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 CHECKOUT_SHA = "3d3c42e5aac5ba805825da76410c181273ba90b1"
 SETUP_PYTHON_SHA = "5fda3b95a4ea91299a34e894583c3862153e4b97"
+YAML_KEY = r'(?:[A-Za-z0-9_-]+|\'[A-Za-z0-9_-]+\'|"[A-Za-z0-9_-]+")'
 
 
 class SkillWorkflowContractTests(unittest.TestCase):
+    def yaml_key(self, name: str) -> str:
+        escaped = re.escape(name)
+        return rf'(?:{escaped}|\'{escaped}\'|"{escaped}")'
+
     def read_workflow(self, name: str) -> str:
         path = WORKFLOWS / name
         self.assertTrue(path.is_file(), f"required workflow is missing: {name}")
@@ -21,15 +26,25 @@ class SkillWorkflowContractTests(unittest.TestCase):
 
     def mapping_keys(self, text: str, *, indent: int) -> tuple[str, ...]:
         prefix = " " * indent
+        pattern = re.compile(
+            rf"(?m)^{prefix}(?:-\s+)?"
+            r'(?:(?P<plain>[A-Za-z0-9_-]+)|\'(?P<single>[A-Za-z0-9_-]+)\''
+            r'|"(?P<double>[A-Za-z0-9_-]+)")\s*:',
+        )
         return tuple(
-            re.findall(rf"(?m)^{prefix}([A-Za-z0-9_-]+):", text)
+            next(
+                value
+                for value in match.group("plain", "single", "double")
+                if value is not None
+            )
+            for match in pattern.finditer(text)
         )
 
     def mapping_block(self, text: str, name: str, *, indent: int) -> str:
         prefix = " " * indent
         match = re.search(
-            rf"(?ms)^{prefix}{re.escape(name)}:[^\n]*\n"
-            rf"(.*?)(?=^{prefix}[A-Za-z0-9_-]+:|\Z)",
+            rf"(?ms)^{prefix}(?:-\s+)?{self.yaml_key(name)}\s*:[^\n]*\n"
+            rf"(.*?)(?=^{prefix}(?:-\s+)?{YAML_KEY}\s*:|\Z)",
             text,
         )
         self.assertIsNotNone(match, f"mapping block is missing: {name}")
@@ -53,8 +68,9 @@ class SkillWorkflowContractTests(unittest.TestCase):
     def step_block(self, job: str, name: str) -> str:
         steps = self.mapping_block(job, "steps", indent=4)
         match = re.search(
-            rf"(?ms)^      - name: {re.escape(name)}\n"
-            r"(.*?)(?=^      - name:|\Z)",
+            rf"(?ms)^      -\s+{self.yaml_key('name')}\s*: "
+            rf"{re.escape(name)}\n"
+            rf"(.*?)(?=^      -\s+{YAML_KEY}\s*:|\Z)",
             steps,
         )
         self.assertIsNotNone(match, f"step is missing: {name}")
@@ -185,7 +201,10 @@ class SkillWorkflowContractTests(unittest.TestCase):
         guard_step = self.step_block(guard, "Guard the selected mode and frozen tag")
 
         self.assertNotRegex(guard, r"(?m)^    if:")
-        self.assertNotRegex(guard, r"(?m)^    continue-on-error:")
+        self.assertNotRegex(
+            guard,
+            rf"(?m)^    {self.yaml_key('continue-on-error')}\s*:",
+        )
         self.assertEqual(
             self.mapping_keys(guard, indent=4),
             ("timeout-minutes", "name", "runs-on", "permissions", "steps"),
@@ -193,7 +212,10 @@ class SkillWorkflowContractTests(unittest.TestCase):
         self.assertRegex(guard, r"(?m)^    timeout-minutes: 5$")
         self.assertEqual(self.permission_map(guard, indent=4), {"contents": "read"})
         self.assertEqual(self.mapping_keys(guard_step, indent=8), ("env", "run"))
-        self.assertNotRegex(guard_step, r"(?m)^        continue-on-error:")
+        self.assertNotRegex(
+            guard_step,
+            rf"(?m)^        {self.yaml_key('continue-on-error')}\s*:",
+        )
         self.assertNotIn("|| true", guard_step)
         self.assertEqual(
             self.folded_run_lines(guard_step),
@@ -303,10 +325,14 @@ class SkillWorkflowContractTests(unittest.TestCase):
             for fragment in forbidden:
                 with self.subTest(fragment=fragment):
                     self.assertNotIn(fragment, workflow)
-            self.assertNotRegex(workflow, r"(?m)^\s*cache\s*:")
             self.assertNotRegex(
                 workflow,
-                r"(?mi)^\s*uses:\s*actions/"
+                rf"(?m)^\s*(?:-\s+)?{self.yaml_key('cache')}\s*:",
+            )
+            self.assertNotRegex(
+                workflow,
+                rf"(?mi)^\s*(?:-\s+)?{self.yaml_key('uses')}\s*:\s*"
+                r"[\"']?actions/"
                 r"(?:cache|download-artifact|upload-artifact)(?:/[^@\s]+)?@",
             )
 
