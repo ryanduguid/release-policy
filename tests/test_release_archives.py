@@ -14,11 +14,12 @@ from unittest import mock
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import build_release_archives as release_archives  # noqa: E402
 import find_created_draft_release as draft_release  # noqa: E402
-from tests.test_skill_workflows import YamlContractAssertions  # noqa: E402
+from tests.test_skill_workflows import YAML_KEY, YamlContractAssertions  # noqa: E402
 
 
 def _sha256(path: Path) -> str:
@@ -155,6 +156,94 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
 
 
 class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
+    def sequence_mapping_keys(self, text: str, *, indent: int) -> tuple[str, ...]:
+        keys: list[str] = []
+        pattern = re.compile(rf"^-\s+(?P<key>{YAML_KEY})\s*:")
+        for raw_line in text.splitlines():
+            active = self.uncomment_yaml_line(raw_line)
+            if not active.strip():
+                continue
+            leading = len(active) - len(active.lstrip(" "))
+            if leading != indent or not active[indent:].startswith("-"):
+                continue
+            content = active[indent:]
+            match = pattern.match(content)
+            self.assertIsNotNone(
+                match,
+                f"unsupported sequence mapping syntax at indentation {indent}: "
+                f"{content}",
+            )
+            key = match.group("key")
+            if key[:1] in {"'", '"'}:
+                key = key[1:-1]
+            keys.append(key)
+        return tuple(keys)
+
+    def assert_source_consumer_contract(self, adapter: str) -> None:
+        jobs = self.mapping_block(adapter, "jobs", indent=0)
+        consumer_job = self.mapping_block(jobs, "consumer-tests", indent=2)
+        job_keys = self.mapping_keys(consumer_job, indent=4)
+        step_keys = self.sequence_mapping_keys(
+            consumer_job,
+            indent=6,
+        ) + self.mapping_keys(consumer_job, indent=8)
+
+        self.assertEqual(
+            (
+                "timeout-minutes",
+                "name",
+                "runs-on",
+                "permissions",
+                "steps",
+            ),
+            job_keys,
+        )
+        self.assertNotIn("continue-on-error", job_keys)
+        self.assertNotIn("continue-on-error", step_keys)
+        self.assertEqual(
+            {"contents": "read"},
+            self.permission_map(consumer_job, indent=4),
+        )
+        self.assertIn("fetch-depth: 0", consumer_job)
+        self.assertRegex(
+            consumer_job,
+            r"(?s)Check out the tagged consumer source.*?path: consumer",
+        )
+        self.assertRegex(
+            consumer_job,
+            r"(?s)Check out release-policy at the calling pin.*?"
+            r"repository: ryanduguid/release-policy.*?"
+            r"ref: \$\{\{ job\.workflow_sha \}\}.*?path: policy",
+        )
+        self.assertRegex(consumer_job, r"\^\[0-9a-f\]\{40\}\$")
+        self.assertIn(
+            'test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"',
+            consumer_job,
+        )
+        consumer_checkout = consumer_job.index("Check out the tagged consumer source")
+        policy_checkout = consumer_job.index(
+            "Check out release-policy at the calling pin"
+        )
+        python_setup = consumer_job.index("Set up Python")
+        pin_check = consumer_job.index("Require an immutable policy pin")
+        test_command = "python -B -m unittest discover -s tests -v"
+        self.assertLess(consumer_checkout, policy_checkout)
+        self.assertLess(policy_checkout, python_setup)
+        self.assertLess(python_setup, pin_check)
+        self.assertIn('python-version: "3.12"', consumer_job)
+        self.assertIn("working-directory: consumer", consumer_job)
+        self.assertEqual(1, consumer_job.count(test_command))
+
+    def assert_workflow_call_input_contract(self, workflow: str) -> None:
+        trigger = self.mapping_block(workflow, "on", indent=0)
+        workflow_call = self.mapping_block(trigger, "workflow_call", indent=2)
+        inputs = self.mapping_block(workflow_call, "inputs", indent=4)
+
+        self.assertEqual(
+            ("artifact-stem", "version-file"),
+            self.mapping_keys(inputs, indent=6),
+        )
+
     def assert_source_adapter_release_contract(self, adapter: str) -> None:
         jobs = self.mapping_block(adapter, "jobs", indent=0)
         self.assertEqual(
@@ -224,43 +313,69 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         adapter = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
             encoding="utf-8"
         )
-        input_block = adapter[adapter.index("    inputs:") : adapter.index("\n\npermissions:")]
-        input_names = set(
-            re.findall(r"^      ([a-z][a-z0-9-]*):$", input_block, re.MULTILINE)
-        )
-        consumer_job = adapter[
-            adapter.index("  consumer-tests:") : adapter.index("  release:")
-        ]
 
-        self.assertEqual({"artifact-stem", "version-file"}, input_names)
-        self.assertIn("contents: read", consumer_job)
-        self.assertNotIn("contents: write", consumer_job)
-        self.assertNotIn("attestations: write", consumer_job)
-        self.assertNotIn("id-token: write", consumer_job)
-        self.assertIn("fetch-depth: 0", consumer_job)
-        self.assertRegex(
-            consumer_job,
-            r"(?s)Check out the tagged consumer source.*?path: consumer",
+        self.assert_workflow_call_input_contract(adapter)
+        self.assert_source_consumer_contract(adapter)
+
+    def test_source_consumer_contract_rejects_privilege_and_failure_masking(
+        self,
+    ) -> None:
+        adapter = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
+            encoding="utf-8"
         )
-        self.assertRegex(
-            consumer_job,
-            r"(?s)Check out release-policy at the calling pin.*?"
-            r"repository: ryanduguid/release-policy.*?"
-            r"ref: \$\{\{ job\.workflow_sha \}\}.*?path: policy",
+        quoted_permission = adapter.replace(
+            "    permissions:\n      contents: read\n    steps:\n",
+            '    permissions:\n      contents: read\n      "id-token": write\n'
+            "    steps:\n",
+            1,
         )
-        self.assertRegex(consumer_job, r"\^\[0-9a-f\]\{40\}\$")
-        self.assertIn('test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"', consumer_job)
-        consumer_checkout = consumer_job.index("Check out the tagged consumer source")
-        policy_checkout = consumer_job.index("Check out release-policy at the calling pin")
-        python_setup = consumer_job.index("Set up Python")
-        pin_check = consumer_job.index("Require an immutable policy pin")
-        test_command = "python -B -m unittest discover -s tests -v"
-        self.assertLess(consumer_checkout, policy_checkout)
-        self.assertLess(policy_checkout, python_setup)
-        self.assertLess(python_setup, pin_check)
-        self.assertIn('python-version: "3.12"', consumer_job)
-        self.assertIn("working-directory: consumer", consumer_job)
-        self.assertEqual(1, consumer_job.count(test_command))
+        job_failure_mask = adapter.replace(
+            "    runs-on: ubuntu-latest\n    permissions:\n",
+            "    runs-on: ubuntu-latest\n"
+            "    continue-on-error: true\n"
+            "    permissions:\n",
+            1,
+        )
+        step_failure_mask = adapter.replace(
+            "        working-directory: consumer\n"
+            "        run: python -B -m unittest discover -s tests -v\n",
+            "        working-directory: consumer\n"
+            '        "continue-on-error": true\n'
+            "        run: python -B -m unittest discover -s tests -v\n",
+            1,
+        )
+        commented_failure_mask = adapter.replace(
+            "    runs-on: ubuntu-latest\n    permissions:\n",
+            "    runs-on: ubuntu-latest\n"
+            "    # continue-on-error: true\n"
+            "    permissions:\n",
+            1,
+        ).replace(
+            "        working-directory: consumer\n"
+            "        run: python -B -m unittest discover -s tests -v\n",
+            "        working-directory: consumer\n"
+            '        # "continue-on-error": true\n'
+            "        run: python -B -m unittest discover -s tests -v\n",
+            1,
+        )
+
+        # Catches consumer code gaining an extra write-capable token permission.
+        with self.subTest(mutation="quoted permission"), self.assertRaises(
+            AssertionError
+        ):
+            self.assert_source_consumer_contract(quoted_permission)
+        # Catches a consumer job that converts any fixed-step failure to success.
+        with self.subTest(mutation="job failure mask"), self.assertRaises(
+            AssertionError
+        ):
+            self.assert_source_consumer_contract(job_failure_mask)
+        # Catches the fixed test step converting a failed suite to success.
+        with self.subTest(mutation="step failure mask"), self.assertRaises(
+            AssertionError
+        ):
+            self.assert_source_consumer_contract(step_failure_mask)
+        # Comments do not change the active job or step contract.
+        self.assert_source_consumer_contract(commented_failure_mask)
 
     def test_source_adapter_delegates_release_without_an_execution_surface(self) -> None:
         adapter = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
@@ -327,17 +442,90 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
             encoding="utf-8"
         )
-        input_block = core[core.index("    inputs:") : core.index("\n\npermissions:")]
-        input_names = set(
-            re.findall(r"^      ([a-z][a-z0-9-]*):$", input_block, re.MULTILINE)
-        )
         jobs = self.mapping_block(core, "jobs", indent=0)
         publish_job = self.mapping_block(jobs, "publish", indent=2)
 
-        self.assertEqual({"artifact-stem", "version-file"}, input_names)
+        self.assert_workflow_call_input_contract(core)
         self.assert_publication_core_permission_contract(core)
         self.assertIn("group: release-${{ github.repository }}-${{ github.ref }}", publish_job)
         self.assertIn("cancel-in-progress: false", publish_job)
+
+    def test_source_and_core_interfaces_reject_quoted_flow_and_alias_inputs(
+        self,
+    ) -> None:
+        workflows = tuple(
+            (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+            for name in ("release-archive.yml", "publish-archives.yml")
+        )
+        block = (
+            "    inputs:\n"
+            "      artifact-stem:\n"
+            "        description: Lower-case hyphenated stem used for all release assets.\n"
+            "        required: true\n"
+            "        type: string\n"
+            "      version-file:\n"
+            "        description: Safe relative path containing one canonical "
+            "MAJOR.MINOR.PATCH line.\n"
+            "        required: false\n"
+            "        type: string\n"
+            "        default: VERSION\n"
+        )
+        quoted_extra = (
+            block
+            + '      "command":\n'
+            "        description: Unsupported custom command.\n"
+            "        required: false\n"
+            "        type: string\n"
+        )
+        flow_inputs = (
+            "    inputs: {artifact-stem: {description: Artifact stem, required: true, "
+            "type: string}, version-file: {description: Version file, required: false, "
+            "type: string, default: VERSION}}\n"
+        )
+        anchored_inputs = block.replace(
+            "    inputs:\n",
+            "    inputs: &archive_inputs\n",
+            1,
+        )
+        aliased_triggers = (
+            "  workflow_dispatch:\n"
+            + anchored_inputs
+            + "  workflow_call:\n"
+            + "    inputs: *archive_inputs\n"
+        )
+
+        for workflow in workflows:
+            mutations = {
+                "quoted extra": workflow.replace(block, quoted_extra, 1),
+                "flow map": workflow.replace(block, flow_inputs, 1),
+                "alias": workflow.replace(
+                    "  workflow_call:\n" + block,
+                    aliased_triggers,
+                    1,
+                ),
+            }
+            for mutation_name, mutation in mutations.items():
+                self.assertNotEqual(workflow, mutation)
+                # Catches a source or core reusable interface that accepts an
+                # unsupported third input or hides its input map syntax.
+                with self.subTest(
+                    workflow=workflow.splitlines()[0],
+                    mutation=mutation_name,
+                ), self.assertRaises(AssertionError):
+                    self.assert_workflow_call_input_contract(mutation)
+
+    def test_direct_test_entry_point_loads(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-B", str(Path(__file__).resolve()), "--help"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("usage:", result.stdout)
+        self.assertNotIn("ModuleNotFoundError", result.stderr)
 
     def test_publication_core_permission_contract_rejects_quoted_flow_and_alias(self) -> None:
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
