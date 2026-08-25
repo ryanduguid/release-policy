@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
@@ -153,48 +154,151 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
 
 
 class ReleaseArchiveWorkflowTests(unittest.TestCase):
-    def test_workflow_has_a_small_pinned_source_archive_contract(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
+    def test_source_adapter_preserves_its_two_input_and_fixed_test_contract(self) -> None:
+        adapter = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
             encoding="utf-8"
         )
-
-        self.assertIn("workflow_call:", workflow)
-        self.assertIn("artifact-stem:", workflow)
-        self.assertIn("version-file:", workflow)
-        self.assertNotIn("test-command:", workflow)
-        self.assertNotIn("archive-glob:", workflow)
-        self.assertIn("${{ job.workflow_sha }}", workflow)
-        self.assertNotIn(r"\${", workflow)
-        self.assertIn("scripts/build_release_archives.py", workflow)
-        self.assertIn("python -B -m unittest discover -s tests -v", workflow)
-
-    def test_consumer_tests_are_isolated_from_the_privileged_release_runner(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
-            encoding="utf-8"
+        input_block = adapter[adapter.index("    inputs:") : adapter.index("\n\npermissions:")]
+        input_names = set(
+            re.findall(r"^      ([a-z][a-z0-9-]*):$", input_block, re.MULTILINE)
         )
+        consumer_job = adapter[
+            adapter.index("  consumer-tests:") : adapter.index("  release:")
+        ]
 
-        consumer_tests = "python -B -m unittest discover -s tests -v"
-        self.assertIn("  consumer-tests:", workflow)
-        self.assertIn("  release:", workflow)
-        consumer_start = workflow.find("  consumer-tests:")
-        release_start = workflow.find("  release:")
-        consumer_job = workflow[consumer_start:release_start]
-        release_job = workflow[workflow.index("  release:") :]
-
+        self.assertEqual({"artifact-stem", "version-file"}, input_names)
         self.assertIn("contents: read", consumer_job)
-        self.assertIn(consumer_tests, consumer_job)
         self.assertNotIn("contents: write", consumer_job)
         self.assertNotIn("attestations: write", consumer_job)
         self.assertNotIn("id-token: write", consumer_job)
-        self.assertIn("needs: consumer-tests", release_job)
-        self.assertNotIn(consumer_tests, release_job)
-        self.assertNotIn(".release-policy-verified", workflow)
-        self.assertNotIn("rm -rf -- .release-policy", workflow)
-        self.assertIn("Check out the tagged consumer source", release_job)
-        self.assertIn("Check out release-policy at the calling pin", release_job)
+        self.assertIn("fetch-depth: 0", consumer_job)
+        self.assertRegex(
+            consumer_job,
+            r"(?s)Check out the tagged consumer source.*?path: consumer",
+        )
+        self.assertRegex(
+            consumer_job,
+            r"(?s)Check out release-policy at the calling pin.*?"
+            r"repository: ryanduguid/release-policy.*?"
+            r"ref: \$\{\{ job\.workflow_sha \}\}.*?path: policy",
+        )
+        self.assertRegex(consumer_job, r"\^\[0-9a-f\]\{40\}\$")
+        self.assertIn('test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"', consumer_job)
+        consumer_checkout = consumer_job.index("Check out the tagged consumer source")
+        policy_checkout = consumer_job.index("Check out release-policy at the calling pin")
+        python_setup = consumer_job.index("Set up Python")
+        pin_check = consumer_job.index("Require an immutable policy pin")
+        test_command = "python -B -m unittest discover -s tests -v"
+        self.assertLess(consumer_checkout, policy_checkout)
+        self.assertLess(policy_checkout, python_setup)
+        self.assertLess(python_setup, pin_check)
+        self.assertIn('python-version: "3.12"', consumer_job)
+        self.assertIn("working-directory: consumer", consumer_job)
+        self.assertEqual(1, consumer_job.count(test_command))
 
-    def test_workflow_preserves_exact_asset_and_publication_gates(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
+    def test_source_adapter_delegates_release_without_an_execution_surface(self) -> None:
+        adapter = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
+            encoding="utf-8"
+        )
+        release_job = adapter[adapter.index("  release:") :]
+
+        self.assertIn("needs: consumer-tests", release_job)
+        self.assertIn("uses: ./.github/workflows/publish-archives.yml", release_job)
+        self.assertIn("artifact-stem: ${{ inputs.artifact-stem }}", release_job)
+        self.assertIn("version-file: ${{ inputs.version-file }}", release_job)
+        for forbidden in ("runs-on:", "steps:", "env:", "outputs:", "secrets:"):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, release_job)
+
+    def test_publication_core_has_the_narrow_privileged_contract(self) -> None:
+        core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
+            encoding="utf-8"
+        )
+        input_block = core[core.index("    inputs:") : core.index("\n\npermissions:")]
+        input_names = set(
+            re.findall(r"^      ([a-z][a-z0-9-]*):$", input_block, re.MULTILINE)
+        )
+        publish_job = core[core.index("  publish:") :]
+        permission_block = publish_job[
+            publish_job.index("    permissions:") : publish_job.index("    concurrency:")
+        ]
+        write_permissions = set(
+            re.findall(r"^      ([a-z-]+): write$", permission_block, re.MULTILINE)
+        )
+
+        self.assertEqual({"artifact-stem", "version-file"}, input_names)
+        self.assertEqual(
+            {"attestations", "contents", "id-token"},
+            write_permissions,
+        )
+        self.assertIn("group: release-${{ github.repository }}-${{ github.ref }}", publish_job)
+        self.assertIn("cancel-in-progress: false", publish_job)
+
+    def test_publication_core_uses_sibling_checkouts_and_only_policy_programs(self) -> None:
+        core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertRegex(
+            core,
+            r"(?s)Check out the tagged consumer source.*?path: consumer",
+        )
+        self.assertRegex(
+            core,
+            r"(?s)Check out release-policy at the calling pin.*?"
+            r"repository: ryanduguid/release-policy.*?"
+            r"ref: \$\{\{ job\.workflow_sha \}\}.*?path: policy",
+        )
+        self.assertRegex(core, r"\^\[0-9a-f\]\{40\}\$")
+        self.assertIn('test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"', core)
+        self.assertIn(". ../policy/scripts/gates.sh", core)
+        self.assertIn("python ../policy/scripts/build_release_archives.py", core)
+        self.assertIn("python ../policy/scripts/find_created_draft_release.py", core)
+        self.assertGreaterEqual(core.count("working-directory: consumer"), 6)
+        for forbidden in (
+            "pip install",
+            "unittest discover",
+            "scripts/validate_validation.py",
+            "tests/verify_skills_cli.py",
+            "python scripts/",
+            "python tests/",
+            "./scripts/",
+            "./tests/",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, core)
+
+    def test_publication_core_preserves_candidates_assets_and_signer_identity(self) -> None:
+        core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
+            encoding="utf-8"
+        )
+        upload_start = core.index("uses: actions/upload-artifact@")
+        upload_end = core.index("      - name:", upload_start)
+        upload = core[upload_start:upload_end]
+        action_asset_paths = re.findall(
+            r"^            (consumer/dist/[^\r\n]+)$",
+            core,
+            re.MULTILINE,
+        )
+
+        self.assertIn(
+            "name: ${{ steps.release.outputs.tag }}-${{ github.run_id }}-"
+            "${{ github.run_attempt }}-candidate-assets",
+            upload,
+        )
+        self.assertIn("overwrite: false", upload)
+        self.assertEqual(4, len(set(action_asset_paths)))
+        self.assertNotRegex(core, r"^            dist/", msg="action paths must include consumer/")
+        self.assertIn("working-directory: consumer", core)
+        self.assertIn("--notes-file RELEASE_NOTES.md", core)
+        self.assertIn(
+            'signer="ryanduguid/release-policy/.github/workflows/publish-archives.yml"',
+            core,
+        )
+        self.assertNotIn("github.repository_owner", core)
+
+    def test_publication_core_preserves_exact_asset_and_publication_gates(self) -> None:
+        core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
             encoding="utf-8"
         )
 
@@ -212,30 +316,33 @@ class ReleaseArchiveWorkflowTests(unittest.TestCase):
             "gate_no_existing_release",
         ):
             with self.subTest(required=required):
-                self.assertIn(required, workflow)
+                self.assertIn(required, core)
 
-        self.assertNotIn("gh release upload", workflow)
-        self.assertIn("--draft", workflow)
-        self.assertIn("-F draft=false", workflow)
-        self.assertIn(
-            'signer="ryanduguid/release-policy/.github/workflows/release-archive.yml"',
-            workflow,
-        )
-        self.assertNotIn("github.repository_owner", workflow)
-
-    def test_workflow_rechecks_the_remote_tag_and_main_before_release_id_publish(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
-            encoding="utf-8"
-        )
-
+        self.assertIn("--draft", core)
+        self.assertIn("-F draft=false", core)
         final_recheck = 'final_tag_commit="$(git ls-remote'
         publish = "gh api --method PATCH"
-        self.assertIn(final_recheck, workflow)
-        self.assertIn('gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"', workflow)
-        self.assertGreater(workflow.index(final_recheck), workflow.index("/tmp/draft-digests"))
-        self.assertGreater(workflow.index(publish), workflow.index(final_recheck))
-        publish_block = workflow[workflow.index(publish) : workflow.index(publish) + 300]
+        self.assertIn(final_recheck, core)
+        self.assertIn('gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"', core)
+        self.assertGreater(core.index(final_recheck), core.index("/tmp/draft-digests"))
+        self.assertGreater(core.index(publish), core.index(final_recheck))
+        publish_block = core[core.index(publish) : core.index(publish) + 300]
         self.assertIn("repos/$GITHUB_REPOSITORY/releases/$release_id", publish_block)
+
+    def test_neither_archive_workflow_uses_forbidden_handoff_or_upload_paths(self) -> None:
+        workflows = tuple(
+            (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+            for name in ("release-archive.yml", "publish-archives.yml")
+        )
+
+        for workflow in workflows:
+            for forbidden in (
+                ".release-policy-verified",
+                "secrets: inherit",
+                "gh release upload",
+            ):
+                with self.subTest(forbidden=forbidden):
+                    self.assertNotIn(forbidden, workflow)
 
 
 class CreatedDraftLookupTests(unittest.TestCase):

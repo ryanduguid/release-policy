@@ -30,33 +30,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-
-      - name: Run the standard source-archive regression suite
-        run: python -B -m unittest discover -s tests -v
-
-  release:
-    timeout-minutes: 15
-    name: gate, build, attest and publish source archives
-    runs-on: ubuntu-latest
-    needs: consumer-tests
-    permissions:
-      attestations: write
-      contents: write
-      id-token: write
-    concurrency:
-      group: release-${{ github.repository }}-${{ github.ref }}
-      cancel-in-progress: false
-    steps:
-      - name: Check out the tagged consumer source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
+          path: consumer
           persist-credentials: false
 
       - name: Check out release-policy at the calling pin
@@ -64,7 +38,7 @@ jobs:
         with:
           repository: ryanduguid/release-policy
           ref: ${{ job.workflow_sha }}
-          path: .release-policy
+          path: policy
           persist-credentials: false
 
       - name: Set up Python
@@ -80,279 +54,19 @@ jobs:
           set -euo pipefail
           [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
             || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
-          actual="$(git -C .release-policy rev-parse HEAD)"
-          test "$actual" = "$MODULE_SHA"
+          test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
 
-      - name: Require a release-ready tag, repository and archive contract
-        id: release
-        env:
-          ARTIFACT_STEM: ${{ inputs.artifact-stem }}
-          GH_TOKEN: ${{ github.token }}
-          VERSION_FILE: ${{ inputs.version-file }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          . .release-policy/scripts/gates.sh
-          run_archive_release_gates \
-            "$GITHUB_REF_NAME" \
-            "$GITHUB_SHA" \
-            "$GITHUB_REPOSITORY" \
-            "$ARTIFACT_STEM" \
-            "$VERSION_FILE"
+      - name: Run the standard source-archive regression suite
+        working-directory: consumer
+        run: python -B -m unittest discover -s tests -v
 
-      - name: Build deterministic source archives
-        env:
-          TZ: UTC
-        shell: bash
-        run: |
-          set -euo pipefail
-          stem="${{ steps.release.outputs.stem }}"
-          version="${{ steps.release.outputs.version }}"
-          python .release-policy/scripts/build_release_archives.py \
-            --commit "${{ steps.release.outputs.commit }}" \
-            --prefix "${{ steps.release.outputs.prefix }}" \
-            --output-base "dist/$stem-$version"
-
-      - name: Generate an SPDX SBOM for the ZIP archive
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          file: dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
-          format: spdx-json
-          syft-version: v1.51.0
-          output-file: dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-
-      - name: Write and verify the exact release asset inventory
-        shell: bash
-        run: |
-          set -euo pipefail
-          base="${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}"
-          assets=("$base.zip" "$base.tar.gz" "$base.spdx.json")
-          expected_before="$(printf '%s\n' "${assets[@]}" | LC_ALL=C sort)"
-          actual_before="$(find dist -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
-          test "$actual_before" = "$expected_before"
-          (
-            cd dist
-            sha256sum -- "${assets[@]}" > SHA256SUMS
-            sha256sum --check SHA256SUMS
-          )
-          expected_after="$(printf '%s\n' SHA256SUMS "${assets[@]}" | LC_ALL=C sort)"
-          actual_after="$(find dist -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
-          test "$actual_after" = "$expected_after"
-
-      - name: Preserve the exact candidate assets
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ steps.release.outputs.tag }}-candidate-assets
-          path: |
-            dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
-            dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
-            dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
-            dist/SHA256SUMS
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Attest release asset provenance
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: |
-            dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
-            dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
-            dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
-            dist/SHA256SUMS
-
-      - name: Attest the SPDX SBOM for both source archives
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: |
-            dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
-            dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
-          sbom-path: dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
-
-      - name: Verify provenance and SBOM attestations before publication
-        env:
-          GH_TOKEN: ${{ github.token }}
-          MODULE_SHA: ${{ job.workflow_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          base="dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}"
-          tag="${{ steps.release.outputs.tag }}"
-          commit="${{ steps.release.outputs.commit }}"
-          signer="ryanduguid/release-policy/.github/workflows/release-archive.yml"
-          assets=("$base.zip" "$base.tar.gz" "$base.spdx.json" "dist/SHA256SUMS")
-          for file in "${assets[@]}"; do
-            gh attestation verify "$file" \
-              --repo "$GITHUB_REPOSITORY" \
-              --source-digest "$commit" \
-              --source-ref "refs/tags/$tag" \
-              --signer-workflow "$signer" \
-              --signer-digest "$MODULE_SHA"
-          done
-          for archive in "$base.zip" "$base.tar.gz"; do
-            gh attestation verify "$archive" \
-              --repo "$GITHUB_REPOSITORY" \
-              --source-digest "$commit" \
-              --source-ref "refs/tags/$tag" \
-              --signer-workflow "$signer" \
-              --signer-digest "$MODULE_SHA" \
-              --predicate-type https://spdx.dev/Document/v2.3
-          done
-
-      - name: Re-check the remote tag, main and release absence
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ steps.release.outputs.tag }}"
-          expected_commit="${{ steps.release.outputs.commit }}"
-          remote_tag_commit="$(git ls-remote \
-            "https://github.com/$GITHUB_REPOSITORY.git" \
-            "refs/tags/$tag^{}" | cut -f1)"
-          test -n "$remote_tag_commit"
-          test "$remote_tag_commit" = "$expected_commit"
-          test "$GITHUB_SHA" = "$expected_commit"
-          . .release-policy/scripts/gates.sh
-          gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
-          gate_no_existing_release "$tag" "$GITHUB_REPOSITORY"
-
-      - name: Create, inspect and publish the immutable release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="${{ steps.release.outputs.tag }}"
-          expected_commit="${{ steps.release.outputs.commit }}"
-          base="${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}"
-          zip="dist/$base.zip"
-          tar="dist/$base.tar.gz"
-          sbom="dist/$base.spdx.json"
-          assets=("$zip" "$tar" "$sbom" "dist/SHA256SUMS")
-
-          created_release_url="$(gh release create "$tag" \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --draft \
-            --title "$tag" \
-            --notes-file RELEASE_NOTES.md \
-            "$zip#Deterministic source ZIP" \
-            "$tar#Deterministic source tar archive" \
-            "$sbom#SPDX 2.3 SBOM" \
-            "dist/SHA256SUMS#SHA-256 checksums")"
-
-          release_id="$(python .release-policy/scripts/find_created_draft_release.py \
-            --repository "$GITHUB_REPOSITORY" \
-            --created-url "$created_release_url" \
-            --expected-tag "$tag" \
-            --attempts 5 \
-            --delay-seconds 5)"
-
-          gh api \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-            > /tmp/draft-release.json
-          jq -e --arg tag "$tag" \
-            '.draft == true and .prerelease == false
-             and .tag_name == $tag and .name == $tag' \
-            /tmp/draft-release.json >/dev/null
-          jq -j '.body' /tmp/draft-release.json > /tmp/draft-release-notes.md
-          diff -u RELEASE_NOTES.md /tmp/draft-release-notes.md
-
-          expected_assets="$(printf '%s\n' \
-            "SHA256SUMS" \
-            "$base.spdx.json" \
-            "$base.tar.gz" \
-            "$base.zip" | LC_ALL=C sort)"
-          draft_assets="$(jq -r '.assets[].name' /tmp/draft-release.json | LC_ALL=C sort)"
-          test "$draft_assets" = "$expected_assets"
-          (
-            cd dist
-            for file in "SHA256SUMS" "$base.spdx.json" "$base.tar.gz" "$base.zip"; do
-              printf '%s\tsha256:%s\n' "$file" "$(sha256sum "$file" | cut -d' ' -f1)"
-            done
-          ) | LC_ALL=C sort > /tmp/expected-digests
-          jq -r '.assets[] | [.name, .digest] | @tsv' /tmp/draft-release.json \
-            | LC_ALL=C sort > /tmp/draft-digests
-          diff -u /tmp/expected-digests /tmp/draft-digests
-
-          # Leave the identified draft untouched if the release tag or main
-          # moved while the draft was being inspected.
-          final_tag_commit="$(git ls-remote \
-            "https://github.com/$GITHUB_REPOSITORY.git" \
-            "refs/tags/$tag^{}" | cut -f1)"
-          test -n "$final_tag_commit"
-          test "$final_tag_commit" = "$expected_commit"
-          test "$GITHUB_SHA" = "$expected_commit"
-          . .release-policy/scripts/gates.sh
-          gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
-
-          gh api --method PATCH \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-            -F draft=false \
-            -f make_latest=true \
-            >/dev/null
-
-          published_ready=false
-          for _ in 1 2 3 4 5; do
-            gh api \
-              -H "X-GitHub-Api-Version: 2026-03-10" \
-              "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-              > /tmp/published-release.json
-            if jq -e --arg tag "$tag" \
-              '.draft == false and .prerelease == false and .immutable == true
-               and .tag_name == $tag and .name == $tag' \
-              /tmp/published-release.json >/dev/null; then
-              published_ready=true
-              break
-            fi
-            sleep 5
-          done
-          test "$published_ready" = true
-          test "$(git ls-remote \
-            "https://github.com/$GITHUB_REPOSITORY.git" \
-            "refs/tags/$tag^{}" | cut -f1)" = "$expected_commit"
-          jq -j '.body' /tmp/published-release.json > /tmp/published-release-notes.md
-          diff -u RELEASE_NOTES.md /tmp/published-release-notes.md
-          published_assets="$(jq -r '.assets[].name' /tmp/published-release.json | LC_ALL=C sort)"
-          test "$published_assets" = "$expected_assets"
-          jq -r '.assets[] | [.name, .digest] | @tsv' /tmp/published-release.json \
-            | LC_ALL=C sort > /tmp/published-digests
-          diff -u /tmp/expected-digests /tmp/published-digests
-
-          latest_ready=false
-          for _ in 1 2 3 4 5; do
-            if gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
-              --json tagName,isLatest \
-              | jq -e --arg tag "$tag" \
-                'any(.[]; .tagName == $tag and .isLatest == true)' >/dev/null; then
-              latest_ready=true
-              break
-            fi
-            sleep 5
-          done
-          test "$latest_ready" = true
-
-          release_verified=false
-          for _ in 1 2 3 4 5; do
-            if gh release verify "$tag" --repo "$GITHUB_REPOSITORY"; then
-              release_verified=true
-              break
-            fi
-            sleep 5
-          done
-          test "$release_verified" = true
-          for file in "${assets[@]}"; do
-            asset_verified=false
-            for _ in 1 2 3 4 5; do
-              if gh release verify-asset "$tag" "$file" --repo "$GITHUB_REPOSITORY"; then
-                asset_verified=true
-                break
-              fi
-              sleep 5
-            done
-            test "$asset_verified" = true
-          done
+  release:
+    needs: consumer-tests
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    uses: ./.github/workflows/publish-archives.yml
+    with:
+      artifact-stem: ${{ inputs.artifact-stem }}
+      version-file: ${{ inputs.version-file }}
