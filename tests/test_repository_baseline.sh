@@ -29,8 +29,8 @@ CANONICAL_SHA256 = {
     ".github/workflows/release-python.yml": "3bff47b0b873d132a7ef87e16a0ce0ffa52bf189662599bf0a3c5f7ddd8db0f2",
     ".github/workflows/release-skills.yml": "26246f4ad1575a90c776fcd71bcfbca3daa6e9604fc5601d974b40783fab7d7a",
     ".github/workflows/verify-skills.yml": "f9fb4fa7560eb561b2cc34fd58acbfe2e52440e10ae25a9fde67dad997d18941",
-    "README.md": "219f0226240895dd2bed48f363c89a648fff2ccabc17ba4f459c8ea80c6ebea3",
-    "SECURITY.md": "b364b6ace7947117d246501953a36c6cfdd4dc53343c7c56554744b6ec90f794",
+    "README.md": "5f84684a1509a7f6951df58cbef60aadb5e0c66879d9a0460d59d336c6ff1fee",
+    "SECURITY.md": "9e7f9e17cf7c23e350ff08fbf25ff14a2e17071fad9b1b1d57c91a4a2e834594",
 }
 
 
@@ -195,6 +195,16 @@ def mutate(canonical: dict[str, bytes], name: str) -> dict[str, bytes]:
             + "    runs-on: ubuntu-latest\n"
             + "    steps:\n"
             + "      - run: echo quoted permission key\n",
+        )
+    elif name == "workflow-documentation-sha-marker":
+        set_text(
+            ci,
+            replace_once(
+                text(ci),
+                "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                "uses: actions/checkout@<full-40-char-commit-sha>",
+                name,
+            ),
         )
     elif name == "workflow-extra-file":
         documents[".github/workflows/extra.yml"] = (
@@ -365,6 +375,7 @@ adverse = (
     "ci-extra-quoted-uses",
     "ci-extra-flow-uses",
     "ci-extra-job-quoted-write-all",
+    "workflow-documentation-sha-marker",
     "workflow-extra-file",
     "codeql-language-hidden-in-comment",
     "codeql-schedule-hidden-in-comment",
@@ -397,6 +408,6 @@ if self_test_failures:
 
 print(
     "repository baseline passed: 10 canonical documents; "
-    "LF/CRLF controls and 25 adverse variants"
+    f"LF/CRLF controls and {len(adverse)} adverse variants"
 )
 PY
