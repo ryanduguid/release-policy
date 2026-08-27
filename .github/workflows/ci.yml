@@ -27,6 +27,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Download and verify shellcheck
@@ -65,6 +66,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install pinned Python tools
+        run: >-
+          python -m pip install
+          "build==1.2.2"
+          "coverage==7.15.4"
+          "diff-cover==10.5.1"
+
       - name: Validate the release-family canary manifest
         run: python scripts/check_canaries.py
 
@@ -80,11 +88,15 @@ jobs:
       - name: Run gate tests
         run: bash tests/test_gates.sh
 
-      - name: Run source-archive policy tests
-        run: python -B -m unittest discover -s tests -p "test_*.py" -v
+      - name: Run policy tests with scoped branch coverage
+        run: >-
+          python -m coverage run --branch --source=scripts
+          -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Require complete changed-line coverage in Python policy scripts
+        run: |
+          python -m coverage xml --include="scripts/*.py" -o coverage.xml
+          diff-cover coverage.xml --compare-branch=origin/main --branch-coverage --fail-under=100
 
       - name: Run determinism test
-        run: |
-          set -euo pipefail
-          python -m pip install "build==1.2.2"
-          bash tests/test_determinism.sh
+        run: bash tests/test_determinism.sh
