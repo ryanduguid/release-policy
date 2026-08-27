@@ -22,6 +22,7 @@ make_repo() {
   cd "$dir"
   git init --quiet -b main
   git config user.name "Test" && git config user.email "test@example.invalid"
+  git config tag.gpgSign false
   printf '# v1.2.3\n\nNotes.\n' > RELEASE_NOTES.md
   git add -A && git commit --quiet -m "init"
 }
@@ -99,16 +100,27 @@ cat > pyproject.toml <<'EOF'
 name = "demo-pkg"
 version = "1.2.3"
 EOF
-run_case "derive static version" test "$(derive_name_version | tr '\n' ' ')" = "demo_pkg 1.2.3 "
+git add pyproject.toml && git commit --quiet -m "static metadata"
+run_case "derive static version" \
+  test "$(derive_name_version "pyproject" "pyproject.toml" | tr '\n' ' ')" = "demo_pkg 1.2.3 "
 
 cat > pyproject.toml <<'EOF'
 [project]
 name = "dyn-pkg"
 dynamic = ["version"]
 EOF
-run_case "derive dynamic version via command" \
-  test "$(derive_name_version "echo 9.8.7" | tr '\n' ' ')" = "dyn_pkg 9.8.7 "
-expect_fail "dynamic without command fails" derive_name_version
+cat > version.py <<'EOF'
+raise RuntimeError("the release gate must not import this file")
+__version__ = "9.8.7"
+EOF
+git add pyproject.toml version.py && git commit --quiet -m "dynamic metadata"
+run_case "derive dynamic version via literal parser" \
+  test "$(derive_name_version "python-literal" "version.py" | tr '\n' ' ')" = "dyn_pkg 9.8.7 "
+expect_fail "unknown parser fails closed" derive_name_version "shell" "version.py"
+expect_fail "untracked version file fails closed" derive_name_version "python-literal" "missing.py"
+expect_fail "shell metacharacters are data, never commands" \
+  derive_name_version "python-literal" "version.py; touch executed"
+run_case "metacharacter fixture did not execute" test ! -e executed
 
 # --- entrypoint ---
 make_repo
@@ -123,13 +135,13 @@ head_sha="$(git rev-parse HEAD)"
 export GH="$stub_dir/gh" STUB_MAIN_SHA="$head_sha" STUB_RELEASE_IDS=""
 out_file="$(mktemp)"
 GITHUB_OUTPUT="$out_file" run_case "entrypoint passes and writes outputs" \
-  run_release_gates "v1.2.3" "$head_sha" "ryanduguid/example"
+  run_release_gates "v1.2.3" "$head_sha" "ryanduguid/example" "pyproject" "pyproject.toml"
 run_case "outputs contain stem" grep -q '^stem=demo_pkg$' "$out_file"
 run_case "outputs contain version" grep -q '^version=1.2.3$' "$out_file"
 
 git tag -a v1.2.4 -m "mismatched"   # tag does not match pyproject version
 expect_fail "version/tag mismatch rejected" \
-  run_release_gates "v1.2.4" "$head_sha" "ryanduguid/example"
+  run_release_gates "v1.2.4" "$head_sha" "ryanduguid/example" "pyproject" "pyproject.toml"
 unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
 
 # --- source-archive metadata ---
