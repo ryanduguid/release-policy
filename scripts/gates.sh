@@ -5,6 +5,7 @@ set -euo pipefail
 
 PYTHON="${PYTHON:-python3}"
 GH="${GH:-gh}"
+GATES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 gate_tag_format() {
   local tag="$1"
@@ -76,18 +77,13 @@ gate_no_existing_release() {
 }
 
 derive_name_version() {
-  local version_command="${1:-}" name stem version
-  name="$("$PYTHON" -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["name"])')"
-  stem="$("$PYTHON" -c 'import re,sys; print(re.sub(r"[^A-Za-z0-9.]+","_",sys.argv[1]))' "$name")"
-  version="$("$PYTHON" -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"].get("version",""))')"
-  if [ -z "$version" ]; then
-    if [ -z "$version_command" ]; then
-      echo "derive_name_version: version is dynamic and no version-command was provided" >&2
-      return 1
-    fi
-    version="$(bash -c "$version_command")"
-  fi
-  printf '%s\n%s\n' "$stem" "$version"
+  local version_parser="$1" version_file="$2"
+  "$PYTHON" "$GATES_DIR/python_release.py" metadata \
+    --root . \
+    --version-parser "$version_parser" \
+    --version-file "$version_file" \
+    --format lines \
+    | tr -d '\r'
 }
 
 derive_archive_metadata() {
@@ -138,7 +134,8 @@ PY
 }
 
 run_release_gates() {
-  local tag="$1" head_sha="$2" repo="$3" version_command="${4:-}" stem version
+  local tag="$1" head_sha="$2" repo="$3" version_parser="$4" version_file="$5"
+  local stem version
   gate_tag_format "$tag"
   gate_annotated_tag "$tag"
   gate_tag_commit_matches "$tag" "$head_sha"
@@ -146,7 +143,9 @@ run_release_gates() {
   gate_notes_header "$tag"
   gate_clean_tree
   gate_no_existing_release "$tag" "$repo"
-  { read -r stem; read -r version; } < <(derive_name_version "$version_command")
+  { read -r stem; read -r version; } < <(
+    derive_name_version "$version_parser" "$version_file"
+  )
   if [ "$tag" != "v$version" ]; then
     echo "run_release_gates: tag $tag != v$version from project metadata" >&2
     return 1

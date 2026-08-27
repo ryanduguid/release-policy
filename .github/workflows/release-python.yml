@@ -3,67 +3,59 @@ name: Reusable Python release
 on:
   workflow_call:
     inputs:
-      version-command:
-        description: >-
-          Optional shell command printing the package version, for projects
-          whose pyproject.toml declares version as dynamic.
+      version-parser:
+        description: "Closed version parser: pyproject or python-literal."
         required: false
         type: string
-        default: ""
+        default: pyproject
+      version-file:
+        description: Safe relative tracked file read by the selected parser.
+        required: false
+        type: string
+        default: pyproject.toml
       upload-dist-artifact:
         description: >-
-          Upload the built wheel and source distribution as a run artifact so a
-          caller-side job can publish them. PyPI cannot name a reusable workflow
-          as a Trusted Publisher (pypi/warehouse#11096), so the publish step has
-          to run in the calling repository's own workflow.
+          Upload the exact built wheel and source distribution for a caller-side
+          PyPI Trusted Publisher job.
         required: false
         type: boolean
         default: false
     outputs:
       stem:
-        description: >-
-          The normalised package stem used in the release asset filenames
-          (e.g. dist-<stem>-<version> as uploaded by upload-dist-artifact).
-        value: ${{ jobs.release.outputs.stem }}
+        description: Normalised package stem used in release asset filenames.
+        value: ${{ jobs.build.outputs.stem }}
       version:
-        description: The released package version.
-        value: ${{ jobs.release.outputs.version }}
+        description: Released package version.
+        value: ${{ jobs.build.outputs.version }}
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  release:
+  test:
     timeout-minutes: 15
-    name: gate, build, attest and publish
+    name: gate and run consumer tests
     runs-on: ubuntu-latest
-    outputs:
-      stem: ${{ steps.release.outputs.stem }}
-      version: ${{ steps.release.outputs.version }}
     permissions:
-      attestations: write # Record provenance and SBOM attestations for release assets.
-      contents: write # Create the draft release, upload assets and publish it.
-      id-token: write # Obtain the OIDC identity required to sign attestations.
-    concurrency:
-      group: release-${{ github.repository }}-${{ github.ref }}
-      cancel-in-progress: false
+      contents: read
     steps:
       - name: Check out the tagged consumer source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          path: source
           persist-credentials: false
 
       - name: Check out release-policy at the calling pin
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ryanduguid/release-policy
-          # job.workflow_sha is the resolved SHA of this reusable workflow
-          # (the reusable-workflow analogue of the OIDC job_workflow_sha
-          # claim; GHES-unavailable; actionlint false positive tracked in
-          # rhysd/actionlint#707).
           ref: ${{ job.workflow_sha }}
-          path: .release-policy
+          path: policy
           persist-credentials: false
 
       - name: Set up Python
@@ -74,44 +66,110 @@ jobs:
       - name: Install the locked toolchain
         run: python -m pip install "uv==0.12.0"
 
-      - name: Require an immutable module pin
+      - name: Require an immutable policy pin
         env:
-          # job.workflow_sha is the resolved SHA of this reusable workflow
-          # (the reusable-workflow analogue of the OIDC job_workflow_sha
-          # claim; GHES-unavailable; actionlint false positive tracked in
-          # rhysd/actionlint#707).
           MODULE_SHA: ${{ job.workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
           [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-            || { echo "job.workflow_sha is empty or not a 40-hex SHA; refusing to run with an unverifiable policy checkout" >&2; exit 1; }
-          actual="$(git -C .release-policy rev-parse HEAD)"
-          [ "$actual" = "$MODULE_SHA" ] \
-            || { echo "release-policy checkout is $actual, expected $MODULE_SHA" >&2; exit 1; }
+            || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
+          test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
+
+      - name: Require a release-ready tag and repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_FILE: ${{ inputs.version-file }}
+          VERSION_PARSER: ${{ inputs.version-parser }}
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          . ../policy/scripts/gates.sh
+          run_release_gates \
+            "$GITHUB_REF_NAME" \
+            "$GITHUB_SHA" \
+            "$GITHUB_REPOSITORY" \
+            "$VERSION_PARSER" \
+            "$VERSION_FILE"
+
+      - name: Run the locked test suite
+        working-directory: source
+        run: uv run --locked --extra dev --python 3.12 pytest
+
+  build:
+    timeout-minutes: 20
+    name: gate and build exact candidate
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      candidate-digest: ${{ steps.candidate.outputs.artifact-digest }}
+      candidate-id: ${{ steps.candidate.outputs.artifact-id }}
+      commit: ${{ steps.release.outputs.commit }}
+      stem: ${{ steps.release.outputs.stem }}
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the tagged consumer source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+
+      - name: Check out release-policy at the calling pin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ryanduguid/release-policy
+          ref: ${{ job.workflow_sha }}
+          path: policy
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the locked toolchain
+        run: python -m pip install "uv==0.12.0"
+
+      - name: Require an immutable policy pin
+        env:
+          MODULE_SHA: ${{ job.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
+          test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
 
       - name: Require a release-ready tag and repository
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION_COMMAND: ${{ inputs.version-command }}
+          VERSION_FILE: ${{ inputs.version-file }}
+          VERSION_PARSER: ${{ inputs.version-parser }}
         shell: bash
+        working-directory: source
         run: |
           set -euo pipefail
-          . .release-policy/scripts/gates.sh
-          run_release_gates "$GITHUB_REF_NAME" "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$VERSION_COMMAND"
-
-      - name: Run the locked test suite
-        run: uv run --locked --extra dev --python 3.12 pytest
+          . ../policy/scripts/gates.sh
+          run_release_gates \
+            "$GITHUB_REF_NAME" \
+            "$GITHUB_SHA" \
+            "$GITHUB_REPOSITORY" \
+            "$VERSION_PARSER" \
+            "$VERSION_FILE"
 
       - name: Build wheel and source distribution
         env:
           PYTHONHASHSEED: "0"
         shell: bash
+        working-directory: source
         run: |
           set -euo pipefail
-          # Pin the same determinism inputs tests/test_determinism.sh proves,
-          # so the shipped wheel carries the reproducibility the test asserts.
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           export SOURCE_DATE_EPOCH
           uv run --locked --extra dev --python 3.12 python -m build
@@ -119,34 +177,49 @@ jobs:
       - name: Generate SPDX SBOM for the wheel
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          file: dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
+          file: source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
           format: spdx-json
           syft-version: v1.51.0
-          output-file: dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+          output-file: source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
           upload-artifact: false
           upload-release-assets: false
 
-      - name: Write and verify SHA-256 checksums
+      - name: Write and verify the exact candidate inventory
+        env:
+          MODULE_SHA: ${{ job.workflow_sha }}
         shell: bash
+        working-directory: source
         run: |
           set -euo pipefail
-          (cd dist && sha256sum -- *.whl *.tar.gz *.spdx.json > SHA256SUMS)
-          (cd dist && sha256sum --check SHA256SUMS)
+          common=(
+            --directory dist
+            --stem "${{ steps.release.outputs.stem }}"
+            --version "${{ steps.release.outputs.version }}"
+            --tag "${{ steps.release.outputs.tag }}"
+            --repository "$GITHUB_REPOSITORY"
+            --commit "${{ steps.release.outputs.commit }}"
+            --policy-sha "$MODULE_SHA"
+            --run-id "$GITHUB_RUN_ID"
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+          )
+          python ../policy/scripts/python_release.py create-candidate "${common[@]}"
+          python ../policy/scripts/python_release.py verify-candidate "${common[@]}"
 
-      - name: Attest release asset provenance
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+      - name: Preserve the immutable candidate
+        id: candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          subject-path: |
-            dist/*.whl
-            dist/*.tar.gz
-            dist/*.spdx.json
-            dist/SHA256SUMS
-
-      - name: Attest the wheel SBOM
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
-          sbom-path: dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+          name: python-${{ steps.release.outputs.tag }}-${{ github.run_id }}-${{ github.run_attempt }}-candidate
+          path: |
+            source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
+            source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
+            source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+            source/dist/release-manifest.json
+            source/dist/SHA256SUMS
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 14
+          compression-level: 0
 
       - name: Upload the distribution for a caller-side publish
         if: inputs.upload-dist-artifact
@@ -154,17 +227,380 @@ jobs:
         with:
           name: dist-${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}
           path: |
-            dist/*.whl
-            dist/*.tar.gz
+            source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
+            source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
           if-no-files-found: error
+          overwrite: false
           retention-days: 1
 
-      - name: Publish the complete release
+  publish:
+    timeout-minutes: 20
+    name: verify, attest and publish exact candidate
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read # Inspect and download only the exact candidate artefact ID.
+      attestations: write # Record provenance and the wheel SBOM attestation.
+      contents: write # Create and publish only the inspected GitHub Release.
+      id-token: write # Obtain the OIDC identity used to sign attestations.
+    steps:
+      - name: Check out the tagged consumer source without executing it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+
+      - name: Check out release-policy at the calling pin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ryanduguid/release-policy
+          ref: ${{ job.workflow_sha }}
+          path: policy
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Require an immutable policy pin
+        env:
+          MODULE_SHA: ${{ job.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
+          test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
+
+      - name: Bind the candidate artefact to this run and source commit
+        env:
+          CANDIDATE_DIGEST: ${{ needs.build.outputs.candidate-digest }}
+          CANDIDATE_ID: ${{ needs.build.outputs.candidate-id }}
+          CANDIDATE_NAME: python-${{ needs.build.outputs.tag }}-${{ github.run_id }}-${{ github.run_attempt }}-candidate
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.build.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CANDIDATE_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          test "$SOURCE_SHA" = "$GITHUB_SHA"
+          gh api \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/$GITHUB_REPOSITORY/actions/artifacts/$CANDIDATE_ID" \
+            > /tmp/candidate-artifact.json
+          jq -e \
+            --argjson artifact_id "$CANDIDATE_ID" \
+            --arg name "$CANDIDATE_NAME" \
+            --arg digest "sha256:$CANDIDATE_DIGEST" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --arg source_sha "$SOURCE_SHA" \
+            '.id == $artifact_id and .name == $name and .expired == false
+             and .digest == $digest and .workflow_run.id == $run_id
+             and .workflow_run.head_sha == $source_sha' \
+            /tmp/candidate-artifact.json >/dev/null
+
+      - name: Download only the bound candidate artefact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.build.outputs.candidate-id }}
+          path: candidate
+
+      - name: Verify the downloaded candidate inventory
+        env:
+          MODULE_SHA: ${{ job.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python policy/scripts/python_release.py verify-candidate \
+            --directory candidate \
+            --stem "${{ needs.build.outputs.stem }}" \
+            --version "${{ needs.build.outputs.version }}" \
+            --tag "${{ needs.build.outputs.tag }}" \
+            --repository "$GITHUB_REPOSITORY" \
+            --commit "${{ needs.build.outputs.commit }}" \
+            --policy-sha "$MODULE_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT"
+
+      - name: Attest exact release asset provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            candidate/${{ needs.build.outputs.stem }}-${{ needs.build.outputs.version }}-py3-none-any.whl
+            candidate/${{ needs.build.outputs.stem }}-${{ needs.build.outputs.version }}.tar.gz
+            candidate/${{ needs.build.outputs.stem }}-${{ needs.build.outputs.version }}.spdx.json
+            candidate/release-manifest.json
+            candidate/SHA256SUMS
+
+      - name: Attest the wheel SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: candidate/${{ needs.build.outputs.stem }}-${{ needs.build.outputs.version }}-py3-none-any.whl
+          sbom-path: candidate/${{ needs.build.outputs.stem }}-${{ needs.build.outputs.version }}.spdx.json
+
+      - name: Verify signer, source, ref and SBOM attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODULE_SHA: ${{ job.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="candidate/${{ needs.build.outputs.stem }}-${{ needs.build.outputs.version }}"
+          tag="${{ needs.build.outputs.tag }}"
+          commit="${{ needs.build.outputs.commit }}"
+          signer="ryanduguid/release-policy/.github/workflows/release-python.yml"
+          assets=(
+            "$base-py3-none-any.whl"
+            "$base.tar.gz"
+            "$base.spdx.json"
+            "candidate/release-manifest.json"
+            "candidate/SHA256SUMS"
+          )
+          for file in "${assets[@]}"; do
+            gh attestation verify "$file" \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-digest "$commit" \
+              --source-ref "refs/tags/$tag" \
+              --signer-workflow "$signer" \
+              --signer-digest "$MODULE_SHA"
+          done
+          gh attestation verify "$base-py3-none-any.whl" \
+            --repo "$GITHUB_REPOSITORY" \
+            --source-digest "$commit" \
+            --source-ref "refs/tags/$tag" \
+            --signer-workflow "$signer" \
+            --signer-digest "$MODULE_SHA" \
+            --predicate-type https://spdx.dev/Document/v2.3
+
+      - name: Re-check the remote tag, main and release absence
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --title "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md
-          gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY"
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          tag="${{ needs.build.outputs.tag }}"
+          expected_commit="${{ needs.build.outputs.commit }}"
+          remote_tag_commit="$(git ls-remote \
+            "https://github.com/$GITHUB_REPOSITORY.git" \
+            "refs/tags/$tag^{}" | cut -f1)"
+          test -n "$remote_tag_commit"
+          test "$remote_tag_commit" = "$expected_commit"
+          test "$GITHUB_SHA" = "$expected_commit"
+          . policy/scripts/gates.sh
+          gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
+          gate_no_existing_release "$tag" "$GITHUB_REPOSITORY"
+
+      - name: Create, inspect and publish the immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.build.outputs.tag }}"
+          expected_commit="${{ needs.build.outputs.commit }}"
+          base="${{ needs.build.outputs.stem }}-${{ needs.build.outputs.version }}"
+          wheel="candidate/$base-py3-none-any.whl"
+          sdist="candidate/$base.tar.gz"
+          sbom="candidate/$base.spdx.json"
+          manifest="candidate/release-manifest.json"
+          checksums="candidate/SHA256SUMS"
+          assets=("$wheel" "$sdist" "$sbom" "$manifest" "$checksums")
+          release_id=""
+          published=false
+
+          cleanup_current_draft() {
+            status="$?"
+            trap - EXIT
+            if [ "$status" -ne 0 ] && [ -n "$release_id" ] && [ "$published" != true ]; then
+              if gh api \
+                  -H "X-GitHub-Api-Version: 2026-03-10" \
+                  "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+                  > /tmp/cleanup-release.json \
+                && jq -e \
+                  --argjson release_id "$release_id" \
+                  --arg tag "$tag" \
+                  '.id == $release_id and .draft == true and .prerelease == false
+                   and .tag_name == $tag and .name == $tag' \
+                  /tmp/cleanup-release.json >/dev/null; then
+                gh api --method DELETE \
+                  -H "X-GitHub-Api-Version: 2026-03-10" \
+                  "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+                  >/dev/null
+              else
+                echo "refusing cleanup because the exact current draft identity was not proven" >&2
+              fi
+            fi
+            exit "$status"
+          }
+          trap cleanup_current_draft EXIT
+
+          jq -n \
+            --arg tag "$tag" \
+            --rawfile body source/RELEASE_NOTES.md \
+            '{tag_name: $tag, name: $tag, body: $body,
+              draft: true, prerelease: false}' \
+            > /tmp/create-release.json
+          gh api --method POST \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/$GITHUB_REPOSITORY/releases" \
+            --input /tmp/create-release.json \
+            > /tmp/created-release.json
+          release_id="$(jq -er '.id | select(type == "number") | tostring' \
+            /tmp/created-release.json)"
+          upload_url="https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets"
+          jq -e \
+            --argjson release_id "$release_id" \
+            --arg tag "$tag" \
+            '.id == $release_id and .draft == true and .prerelease == false
+             and .tag_name == $tag and .name == $tag' \
+            /tmp/created-release.json >/dev/null
+          jq -j '.body' /tmp/created-release.json > /tmp/created-release-notes.md
+          diff -u source/RELEASE_NOTES.md /tmp/created-release-notes.md
+
+          upload_asset() {
+            file="$1"
+            media_type="$2"
+            name="$(basename "$file")"
+            [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]
+            gh api --method POST \
+              -H "Content-Type: $media_type" \
+              "$upload_url?name=$name" \
+              --input "$file" \
+              >/dev/null
+          }
+          upload_asset "$wheel" application/zip
+          upload_asset "$sdist" application/gzip
+          upload_asset "$sbom" application/spdx+json
+          upload_asset "$manifest" application/json
+          upload_asset "$checksums" text/plain
+
+          expected_assets="$(printf '%s\n' \
+            "$base-py3-none-any.whl" \
+            "$base.spdx.json" \
+            "$base.tar.gz" \
+            "release-manifest.json" \
+            "SHA256SUMS" | LC_ALL=C sort)"
+          for file in "${assets[@]}"; do
+            printf '%s\tsha256:%s\n' \
+              "$(basename "$file")" \
+              "$(sha256sum "$file" | cut -d' ' -f1)"
+          done | LC_ALL=C sort > /tmp/expected-digests
+
+          draft_ready=false
+          for _ in 1 2 3 4 5; do
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+              > /tmp/draft-release.json
+            jq -r '.assets[] | [.name, .digest] | @tsv' \
+              /tmp/draft-release.json | LC_ALL=C sort > /tmp/draft-digests
+            if jq -e \
+                --argjson release_id "$release_id" \
+                --arg tag "$tag" \
+                '.id == $release_id and .draft == true and .prerelease == false
+                 and .tag_name == $tag and .name == $tag
+                 and (.assets | length) == 5
+                 and all(.assets[]; (.digest | type) == "string")' \
+                /tmp/draft-release.json >/dev/null \
+              && diff -u /tmp/expected-digests /tmp/draft-digests; then
+              draft_ready=true
+              break
+            fi
+            sleep 5
+          done
+          test "$draft_ready" = true
+          draft_assets="$(jq -r '.assets[].name' /tmp/draft-release.json | LC_ALL=C sort)"
+          test "$draft_assets" = "$expected_assets"
+          jq -j '.body' /tmp/draft-release.json > /tmp/draft-release-notes.md
+          diff -u source/RELEASE_NOTES.md /tmp/draft-release-notes.md
+
+          final_tag_commit="$(git ls-remote \
+            "https://github.com/$GITHUB_REPOSITORY.git" \
+            "refs/tags/$tag^{}" | cut -f1)"
+          test -n "$final_tag_commit"
+          test "$final_tag_commit" = "$expected_commit"
+          test "$GITHUB_SHA" = "$expected_commit"
+          . policy/scripts/gates.sh
+          gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
+          release_ids="$(gh api --paginate \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$tag\") | .id")"
+          test "$release_ids" = "$release_id"
+
+          gh api --method PATCH \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false \
+            -f make_latest=true \
+            >/dev/null
+          published=true
+
+          published_ready=false
+          for _ in 1 2 3 4 5; do
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+              > /tmp/published-release.json
+            jq -r '.assets[] | [.name, .digest] | @tsv' \
+              /tmp/published-release.json | LC_ALL=C sort > /tmp/published-digests
+            if jq -e \
+                --argjson release_id "$release_id" \
+                --arg tag "$tag" \
+                '.id == $release_id and .draft == false and .prerelease == false
+                 and .immutable == true and .tag_name == $tag and .name == $tag
+                 and (.assets | length) == 5' \
+                /tmp/published-release.json >/dev/null \
+              && diff -u /tmp/expected-digests /tmp/published-digests; then
+              published_ready=true
+              break
+            fi
+            sleep 5
+          done
+          test "$published_ready" = true
+          test "$(git ls-remote \
+            "https://github.com/$GITHUB_REPOSITORY.git" \
+            "refs/tags/$tag^{}" | cut -f1)" = "$expected_commit"
+          published_assets="$(jq -r '.assets[].name' \
+            /tmp/published-release.json | LC_ALL=C sort)"
+          test "$published_assets" = "$expected_assets"
+          jq -j '.body' /tmp/published-release.json > /tmp/published-release-notes.md
+          diff -u source/RELEASE_NOTES.md /tmp/published-release-notes.md
+
+          latest_ready=false
+          for _ in 1 2 3 4 5; do
+            if gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
+              --json tagName,isLatest \
+              | jq -e --arg tag "$tag" \
+                'any(.[]; .tagName == $tag and .isLatest == true)' >/dev/null; then
+              latest_ready=true
+              break
+            fi
+            sleep 5
+          done
+          test "$latest_ready" = true
+
+          release_verified=false
+          for _ in 1 2 3 4 5; do
+            if gh release verify "$tag" --repo "$GITHUB_REPOSITORY"; then
+              release_verified=true
+              break
+            fi
+            sleep 5
+          done
+          test "$release_verified" = true
+          for file in "${assets[@]}"; do
+            asset_verified=false
+            for _ in 1 2 3 4 5; do
+              if gh release verify-asset "$tag" "$file" --repo "$GITHUB_REPOSITORY"; then
+                asset_verified=true
+                break
+              fi
+              sleep 5
+            done
+            test "$asset_verified" = true
+          done
+          trap - EXIT

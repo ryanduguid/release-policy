@@ -31,6 +31,7 @@ Caller workflow (`.github/workflows/release.yml` in the consumer):
     jobs:
       release:
         permissions:
+          actions: read
           attestations: write
           contents: write
           id-token: write
@@ -39,7 +40,12 @@ Caller workflow (`.github/workflows/release.yml` in the consumer):
 Projects whose `pyproject.toml` declares `dynamic = ["version"]` add:
 
         with:
-          version-command: "python -c 'from your_package.version import __version__; print(__version__)'"
+          version-parser: python-literal
+          version-file: your_package/version.py
+
+The `python-literal` parser reads exactly one top-level literal string assigned
+to `__version__`. It parses the tracked file as data and never imports or
+executes consumer code. Arbitrary version commands are not supported.
 
 ## Publishing the same distribution to PyPI
 
@@ -54,6 +60,7 @@ Set the input, then add a second job:
     jobs:
       release:
         permissions:
+          actions: read
           attestations: write
           contents: write
           id-token: write
@@ -80,7 +87,12 @@ Set the input, then add a second job:
             uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
 
 The `release` job exposes `stem` and `version` outputs so the caller can name
-the artifact without repeating the version logic.
+the artifact without repeating the version logic. Consumer tests and the build
+run on separate `contents: read` jobs with sibling source and policy checkouts.
+The publication job keeps source, policy and candidate data in three sibling
+directories, downloads by immutable Actions artefact ID, verifies the API
+digest, run and source identity, then verifies the policy-owned candidate
+manifest before using write authority.
 
 ### One-time PyPI setup, per distribution
 
@@ -194,8 +206,9 @@ behaviour are unchanged apart from that intentional signer change.
   approval act. The module never creates tags.
 - `RELEASE_NOTES.md` whose first line is `# vX.Y.Z` for the tag.
 - `uv.lock` committed; the workflow runs `uv run --locked`.
-- `pyproject.toml` with a static `[project] version`, or the
-  `version-command` input.
+- `pyproject.toml` with a static `[project] version`; or a safe relative,
+  tracked Python file containing exactly one literal `__version__` assignment,
+  selected with `version-parser: python-literal` and `version-file`.
 - A `dev` extra in `pyproject.toml` providing `pytest` and `build`; the
   workflow runs `uv run --locked --extra dev`.
 - A pure-Python wheel; the `py3-none-any` wheel name is expected by the
@@ -217,10 +230,18 @@ Source-archive callers additionally require:
 - Fail closed: canonical semver tag, annotated tag object, tag commit equal
   to `main` via the GitHub API, clean tree, matching notes header, and no
   existing release for the tag, all verified before any build.
-- Wheel and sdist built from the locked environment after the locked test
-  suite passes.
-- SPDX SBOM, verified `SHA256SUMS`, provenance attestation on every asset
-  and an SBOM attestation on the wheel, draft-then-publish lifecycle.
+- Consumer tests, wheel and sdist build run without repository write, OIDC or
+  attestation authority. Publication receives only the immutable candidate
+  artefact ID produced by that job.
+- Exact wheel, sdist and SPDX SBOM inventory, canonical release manifest,
+  verified `SHA256SUMS`, Actions artefact API digest and run/source binding.
+- Provenance attestation on every release asset and an SBOM attestation on the
+  wheel, verified against source commit, tag ref, signer workflow and policy
+  commit before release creation.
+- Draft creation and asset upload are bound to the returned numeric release ID.
+  A pre-publication failure deletes only that exact current-run draft; a
+  published release is never rolled back by mutation. Immutable/latest state,
+  notes and asset digests are rechecked after publication.
 - The source-archive family preserves the exact candidate artefacts, verifies
   provenance and both archive SBOM attestations before publication, rechecks
   remote tag/main/release absence, binds inspection to the draft create URL and
@@ -233,3 +254,17 @@ Phase 2 and phase 3 designs are recorded under
 separate adapter so their inventory and stronger validation controls are not
 reduced to the source-archive contract. The historical notes-only `v0.1.0`
 marker proves neither release phase.
+
+## Release-family canaries
+
+[`canaries.json`](./canaries.json) names one active Python, archive, skill and
+verification consumer. Each entry binds the consumer's current literal policy
+pin to the latest successful production-shaped run and the reusable workflow
+SHA GitHub recorded for that run. `python scripts/check_canaries.py` validates
+the manifest offline; the scheduled CI run adds `--live` to detect pin drift or
+newer unrecorded successes.
+
+A current pin can temporarily be newer than the latest release evidence. The
+live audit reports that state explicitly without inventing a privileged dry
+run. It becomes current evidence only when that consumer completes its next
+authorised release through the pinned workflow.

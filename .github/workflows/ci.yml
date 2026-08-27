@@ -1,6 +1,9 @@
 name: CI
 
 on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 7 * * 2"
   push:
     branches: [main]
   pull_request:
@@ -52,12 +55,24 @@ jobs:
       # -ignore flag once #707 lands in a release.
       - name: Actionlint the workflows
         run: |
-          ./actionlint -ignore 'property "workflow_sha" is not defined in object type \{check_run_id: number; container: \{id: string; network: string\}; services: \{string => \{id: string; network: string; ports: \{string => string\}\}\}; status: string\}' .github/workflows/*.yml
+          ./actionlint \
+            -shellcheck "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" \
+            -ignore 'property "workflow_sha" is not defined in object type \{check_run_id: number; container: \{id: string; network: string\}; services: \{string => \{id: string; network: string; ports: \{string => string\}\}\}; status: string\}' \
+            .github/workflows/*.yml
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+
+      - name: Validate the release-family canary manifest
+        run: python scripts/check_canaries.py
+
+      - name: Audit live canary pins and successful-run evidence
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/check_canaries.py --live
 
       - name: Check repository baseline
         run: bash tests/test_repository_baseline.sh

@@ -4,6 +4,11 @@
 - Status: approved 2026-08-16
 - Governing decision: [ADR-0001](../../adr/0001-shared-release-policy.md)
 
+> Update, 27 August 2026: the arbitrary `version-command` described in this
+> historical phase-1 design is superseded by the closed `pyproject` and
+> `python-literal` parsers in
+> [the boundary-hardening design](2026-08-27-python-release-boundary-hardening-design.md).
+
 ## Problem
 
 Release policy is implemented ten times across the account at three maturity levels. Evidence at current heads:
