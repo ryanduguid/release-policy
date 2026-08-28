@@ -21,8 +21,9 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents. Keeping action pins and permission maps inside the exact
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
+    ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
     ".github/dependabot.yml": "fa18b8f1272681a83062c370d846ca8a96cc4bcc6ede6441f19ac34e97d9fd40",
-    ".github/workflows/ci.yml": "2b01fab9d0c75cb9c8513480a27fcb35356c816adaf4b4868dfd962f901fbfb6",
+    ".github/workflows/ci.yml": "bb77b6e9415393e3e67f100395e696024c853eff76caecf4ce715368b97c36ed",
     ".github/workflows/codeql.yml": "0c2061acec159bb2d439412d42b0a0ec0030429f0c61c02b8455c4b20650f948",
     ".github/workflows/publish-archives.yml": "dd1cb2569abf76d52885a20c907cf2bcb8d28cb791faf517608f4105305928e7",
     ".github/workflows/release-archive.yml": "80795715822c637b51ca6a8930dba4e22a64df0552c07672ce4fbeb5cbef7e64",
@@ -407,7 +408,7 @@ if self_test_failures:
     raise SystemExit(1)
 
 print(
-    "repository baseline passed: 10 canonical documents; "
+    f"repository baseline passed: {len(CANONICAL_SHA256)} canonical documents; "
     f"LF/CRLF controls and {len(adverse)} adverse variants"
 )
 PY
