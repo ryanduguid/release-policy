@@ -1,6 +1,9 @@
 name: CI
 
 on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 7 * * 2"
   push:
     branches: [main]
   pull_request:
@@ -24,6 +27,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Download and verify shellcheck
@@ -52,12 +56,31 @@ jobs:
       # -ignore flag once #707 lands in a release.
       - name: Actionlint the workflows
         run: |
-          ./actionlint -ignore 'property "workflow_sha" is not defined in object type \{check_run_id: number; container: \{id: string; network: string\}; services: \{string => \{id: string; network: string; ports: \{string => string\}\}\}; status: string\}' .github/workflows/*.yml
+          ./actionlint \
+            -shellcheck "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" \
+            -ignore 'property "workflow_sha" is not defined in object type \{check_run_id: number; container: \{id: string; network: string\}; services: \{string => \{id: string; network: string; ports: \{string => string\}\}\}; status: string\}' \
+            .github/workflows/*.yml
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+
+      - name: Install pinned Python tools
+        run: >-
+          python -m pip install
+          "build==1.2.2"
+          "coverage==7.15.4"
+          "diff-cover==10.5.1"
+
+      - name: Validate the release-family canary manifest
+        run: python scripts/check_canaries.py
+
+      - name: Audit live canary pins and successful-run evidence
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/check_canaries.py --live
 
       - name: Check repository baseline
         run: bash tests/test_repository_baseline.sh
@@ -65,11 +88,15 @@ jobs:
       - name: Run gate tests
         run: bash tests/test_gates.sh
 
-      - name: Run source-archive policy tests
-        run: python -B -m unittest discover -s tests -p "test_*.py" -v
+      - name: Run policy tests with scoped branch coverage
+        run: >-
+          python -m coverage run --branch --source=scripts
+          -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Require complete changed-line coverage in Python policy scripts
+        run: |
+          python -m coverage xml --include="scripts/*.py" -o coverage.xml
+          diff-cover coverage.xml --compare-branch=origin/main --branch-coverage --fail-under=100
 
       - name: Run determinism test
-        run: |
-          set -euo pipefail
-          python -m pip install "build==1.2.2"
-          bash tests/test_determinism.sh
+        run: bash tests/test_determinism.sh
