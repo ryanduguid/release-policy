@@ -1,6 +1,8 @@
 .superpowers/
 __pycache__/
 *.py[cod]
+.coverage
+coverage.xml
 
 # Credentials must never be committed.
 .env
