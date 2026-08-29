@@ -2,8 +2,7 @@
 
 Shared release policy for ryanduguid repositories: reusable GitHub Actions
 workflows plus testable release-readiness gates. Governed by
-[ADR-0001](./docs/adr/0001-shared-release-policy.md); design in
-[docs/superpowers/specs/](./docs/superpowers/specs/).
+[ADR-0001](./docs/adr/0001-shared-release-policy.md).
 
 ## Release status
 
@@ -249,8 +248,8 @@ Source-archive callers additionally require:
 - Consumers pin this repository by full commit SHA and upgrade by reviewed
   pull request (ADR-0001).
 
-Phase 2 and phase 3 designs are recorded under
-[`docs/superpowers/specs/`](./docs/superpowers/specs/). Skill packs use a
+Phase 2 and phase 3 designs are recorded in
+[ADR-0001](./docs/adr/0001-shared-release-policy.md). Skill packs use a
 separate adapter so their inventory and stronger validation controls are not
 reduced to the source-archive contract. The historical notes-only `v0.1.0`
 marker proves neither release phase.
