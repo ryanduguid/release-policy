@@ -231,7 +231,9 @@ jobs:
             source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
           if-no-files-found: error
           overwrite: false
-          retention-days: 1
+          # Must outlive a required-reviewer approval window on the caller's
+          # `pypi` environment; the release cannot be re-run to rebuild it.
+          retention-days: 14
 
   publish:
     timeout-minutes: 20
