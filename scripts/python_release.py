@@ -19,7 +19,7 @@ _CANONICAL_VERSION = re.compile(
 )
 _FULL_SHA = re.compile(r"[0-9a-f]{40}\Z")
 _REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
-_STEM = re.compile(r"[A-Za-z0-9.]+(?:_[A-Za-z0-9.]+)*\Z")
+_STEM = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*\Z")
 _MAX_METADATA_BYTES = 1024 * 1024
 _MAX_ASSET_BYTES = 512 * 1024 * 1024
 _MANIFEST = "release-manifest.json"
@@ -233,7 +233,9 @@ def derive_metadata(
     if _CANONICAL_VERSION.fullmatch(version) is None:
         raise ValueError("version must be canonical MAJOR.MINOR.PATCH")
 
-    stem = re.sub(r"[^A-Za-z0-9.]+", "_", name)
+    # PEP 503 / binary-distribution filename normalisation: every modern build
+    # backend emits this exact stem, so the release must look for that name.
+    stem = re.sub(r"[-_.]+", "_", name).lower()
     if _STEM.fullmatch(stem) is None:
         raise ValueError("project name does not produce a safe wheel stem")
     return ReleaseMetadata(name=name, stem=stem, version=version)

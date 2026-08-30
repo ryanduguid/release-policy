@@ -66,6 +66,32 @@ version = "1.2.3"
         self.assertEqual(metadata.stem, "demo_package")
         self.assertEqual(metadata.version, "1.2.3")
 
+    def test_normalises_dotted_and_mixed_case_names_to_the_built_wheel_stem(self) -> None:
+        self.write(
+            "pyproject.toml",
+            """[project]
+name = "Demo.Pkg"
+version = "1.2.3"
+""",
+        )
+        self.commit()
+
+        metadata = python_release.derive_metadata(
+            self.root,
+            version_parser="pyproject",
+            version_file="pyproject.toml",
+        )
+
+        self.assertEqual(metadata.name, "Demo.Pkg")
+        self.assertEqual(metadata.stem, "demo_pkg")
+        self.assertEqual(metadata.version, "1.2.3")
+        # The stem must name the file the build backend actually writes, which
+        # is what the SBOM, candidate inventory and release steps look for.
+        self.assertEqual(
+            "demo_pkg-1.2.3-py3-none-any.whl",
+            python_release._payload_contract(metadata.stem, metadata.version)[0][0],
+        )
+
     def test_reads_one_literal_version_assignment_without_importing_module(self) -> None:
         self.write(
             "pyproject.toml",
