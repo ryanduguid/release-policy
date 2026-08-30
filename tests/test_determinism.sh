@@ -2,7 +2,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${PYTHON:-python3}"
-command -v python3 >/dev/null 2>&1 || PYTHON=python
+command -v "$PYTHON" >/dev/null 2>&1 || PYTHON=python
 
 cd "$HERE/../fixtures/demo-pkg"
 rm -rf dist-a dist-b
