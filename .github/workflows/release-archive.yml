@@ -56,6 +56,17 @@ jobs:
             || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
           test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
 
+      # Consumers declare their own pinned test dependencies. Install exactly
+      # what is listed and nothing else, so a consumer cannot pull an
+      # unreviewed transitive package onto this runner.
+      - name: Install pinned consumer test dependencies
+        working-directory: consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f requirements-test.txt || exit 0
+          python -m pip install --disable-pip-version-check --no-deps --requirement requirements-test.txt
+
       - name: Run the standard source-archive regression suite
         working-directory: consumer
         run: python -B -m unittest discover -s tests -v
