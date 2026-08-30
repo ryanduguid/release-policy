@@ -57,15 +57,18 @@ jobs:
           test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
 
       # Consumers declare their own pinned test dependencies. Install exactly
-      # what is listed and nothing else, so a consumer cannot pull an
-      # unreviewed transitive package onto this runner.
+      # what is listed and nothing else: --no-deps drops transitive runtime
+      # requirements, and --only-binary refuses sdists, so pip never builds a
+      # package and never resolves unpinned PEP 518 build requirements onto
+      # this runner. A pinned line with no wheel fails the step rather than
+      # widening what it installs.
       - name: Install pinned consumer test dependencies
         working-directory: consumer
         shell: bash
         run: |
           set -euo pipefail
           test -f requirements-test.txt || exit 0
-          python -m pip install --disable-pip-version-check --no-deps --requirement requirements-test.txt
+          python -m pip install --disable-pip-version-check --no-deps --only-binary :all: --requirement requirements-test.txt
 
       - name: Run the standard source-archive regression suite
         working-directory: consumer
