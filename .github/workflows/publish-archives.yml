@@ -220,8 +220,26 @@ jobs:
           cleanup_current_draft() {
             status="$?"
             trap - EXIT
-            if [ "$status" -ne 0 ] && [ -n "$release_id" ] && [ "$published" != true ]; then
-              if gh api \
+            if [ "$status" -ne 0 ] && [ "$published" != true ]; then
+              # `gh release create` uploads the assets in the same call, so it
+              # can leave a draft behind and still fail before its id reached
+              # release_id. gate_no_existing_release ran in the immediately
+              # preceding step, so a draft carrying this tag can only be the
+              # one this run created. Anything other than exactly one match
+              # leaves the id empty and the refusal below stands.
+              if [ -z "$release_id" ] \
+                && gh api --paginate \
+                  -H "X-GitHub-Api-Version: 2026-03-10" \
+                  "repos/$GITHUB_REPOSITORY/releases" \
+                  > /tmp/cleanup-releases.json; then
+                release_id="$(jq -rs --arg tag "$tag" \
+                  '[add[] | select(.draft == true and .prerelease == false
+                                   and .tag_name == $tag and .name == $tag)]
+                   | if length == 1 then (.[0].id | tostring) else "" end' \
+                  /tmp/cleanup-releases.json)"
+              fi
+              if [ -n "$release_id" ] \
+                && gh api \
                   -H "X-GitHub-Api-Version: 2026-03-10" \
                   "repos/$GITHUB_REPOSITORY/releases/$release_id" \
                   > /tmp/cleanup-release.json \
