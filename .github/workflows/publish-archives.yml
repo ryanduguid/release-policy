@@ -223,20 +223,34 @@ jobs:
             if [ "$status" -ne 0 ] && [ "$published" != true ]; then
               # `gh release create` uploads the assets in the same call, so it
               # can leave a draft behind and still fail before its id reached
-              # release_id. gate_no_existing_release ran in the immediately
-              # preceding step, so a draft carrying this tag can only be the
-              # one this run created. Anything other than exactly one match
-              # leaves the id empty and the refusal below stands.
+              # release_id. Recovering the id from the tag alone carries a
+              # residual risk: if `gh release create` fails before creating
+              # anything and a draft with this tag_name, name, draft and
+              # prerelease already exists, this deletes a draft the run did not
+              # create. gate_no_existing_release enumerates drafts in the
+              # immediately preceding step and the `concurrency` group
+              # serialises same-tag runs, so that window is seconds wide, but it
+              # is not closed. The sibling trap in release-python.yml avoids the
+              # window by gating on a captured id. Adopting the create-then-
+              # upload sequence that makes that possible here retires
+              # find_created_draft_release.py, so the PR raises it as a
+              # follow-up. A second window stays open in the other direction: a
+              # draft whose requested tag has not settled still reports a
+              # tag_name carrying the `untagged-` prefix, which matches nothing
+              # below, so the trap refuses and leaves that draft to block the
+              # retries this recovery exists to unblock. Anything other than
+              # exactly one match, including an empty or unparseable listing,
+              # leaves the id empty and the refusal stands.
               if [ -z "$release_id" ] \
                 && gh api --paginate \
                   -H "X-GitHub-Api-Version: 2026-03-10" \
                   "repos/$GITHUB_REPOSITORY/releases" \
                   > /tmp/cleanup-releases.json; then
                 release_id="$(jq -rs --arg tag "$tag" \
-                  '[add[] | select(.draft == true and .prerelease == false
-                                   and .tag_name == $tag and .name == $tag)]
+                  '[(add // [])[] | select(.draft == true and .prerelease == false
+                                           and .tag_name == $tag and .name == $tag)]
                    | if length == 1 then (.[0].id | tostring) else "" end' \
-                  /tmp/cleanup-releases.json)"
+                  /tmp/cleanup-releases.json)" || release_id=""
               fi
               if [ -n "$release_id" ] \
                 && gh api \
