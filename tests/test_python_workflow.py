@@ -69,6 +69,10 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
             r"\$\{\{ github\.ref \}\}\n  cancel-in-progress: false$",
         )
 
+    def test_release_dependencies_never_restore_shared_caches(self) -> None:
+        self.assertNotIn("enable-cache: true", self.workflow)
+        self.assertEqual(self.workflow.count("enable-cache: false"), 2)
+
     def test_candidate_is_bound_by_immutable_artifact_id_digest_run_and_source(self) -> None:
         build = job_block(self.workflow, "build")
         publish = job_block(self.workflow, "publish")
