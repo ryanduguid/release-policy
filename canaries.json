@@ -1,7 +1,7 @@
 {
   "families": [
     {
-      "current_policy_sha": "8b4de1ed339f1358b5f3e850b63412d8717d01da",
+      "current_policy_sha": "fca32335275ee264799644ccd659b025358dd23c",
       "evidence": {
         "head_sha": "f880d7aa348e3f9051a09ea94494cf04f0da16da",
         "policy_sha": "47480b782926179b621ec1c6643ef88c80fc8fd4",
@@ -45,11 +45,11 @@
     {
       "current_policy_sha": "d08de09646fc46b43d3e59394105005c123496bb",
       "evidence": {
-        "head_sha": "8f3031f8f4e3e37a41b76f15d7a6f8d50d38297a",
+        "head_sha": "15693f01becfb4ca3d0d1af2ef7390b18852a3cd",
         "policy_sha": "d08de09646fc46b43d3e59394105005c123496bb",
         "ref": "main",
-        "run_id": 33297538540,
-        "started_at": "2026-08-30T06:43:03Z"
+        "run_id": 33300598278,
+        "started_at": "2026-08-30T08:02:17Z"
       },
       "family": "verify",
       "policy_workflow": ".github/workflows/verify-skills.yml",
