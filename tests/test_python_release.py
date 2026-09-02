@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts import python_release
 
@@ -205,6 +207,163 @@ dynamic = ["version"]
             )
 
 
+class ReleaseInputTests(RepositoryFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        self.write("packages/example/source.txt", "tracked\n")
+        self.write("tracked-file.txt", "tracked\n")
+        self.commit()
+
+    def invoke(self, *arguments: str) -> str:
+        output = io.StringIO()
+        with mock.patch("sys.stdout", output):
+            self.assertEqual(0, python_release.main(list(arguments)))
+        return output.getvalue()
+
+    def test_validates_component_and_derives_all_tag_forms(self) -> None:
+        self.assertEqual(
+            python_release.ReleaseInputs("packages/example", "example"),
+            python_release.validate_release_inputs(
+                self.root,
+                source_directory="packages/example",
+                tag_prefix="example",
+            ),
+        )
+        self.assertEqual(".", python_release.validate_source_directory(self.root, "."))
+        self.assertEqual(
+            python_release.ReleaseTag(
+                version="1.2.3",
+                version_tag="v1.2.3",
+                full_tag="example/v1.2.3",
+                artifact_tag="example-v1.2.3",
+                tag_prefix="example",
+            ),
+            python_release.parse_release_tag("example/v1.2.3", "example"),
+        )
+        self.assertEqual(
+            "v1.2.3",
+            python_release.derive_release_tag("1.2.3", "").full_tag,
+        )
+
+    def test_cli_emits_json_and_line_protocols(self) -> None:
+        inputs_json = json.loads(
+            self.invoke(
+                "validate-inputs",
+                "--root",
+                str(self.root),
+                "--source-directory",
+                "packages/example",
+                "--tag-prefix",
+                "example",
+            )
+        )
+        self.assertEqual(
+            {"source_directory": "packages/example", "tag_prefix": "example"},
+            inputs_json,
+        )
+        self.assertEqual(
+            "packages/example\nexample\n",
+            self.invoke(
+                "validate-inputs",
+                "--root",
+                str(self.root),
+                "--source-directory",
+                "packages/example",
+                "--tag-prefix",
+                "example",
+                "--format",
+                "lines",
+            ),
+        )
+
+        tag_json = json.loads(
+            self.invoke("tag", "--tag", "example/v1.2.3", "--tag-prefix", "example")
+        )
+        self.assertEqual("example-v1.2.3", tag_json["artifact_tag"])
+        self.assertEqual(
+            "1.2.3\nv1.2.3\nexample/v1.2.3\nexample-v1.2.3\n",
+            self.invoke(
+                "tag",
+                "--tag",
+                "example/v1.2.3",
+                "--tag-prefix",
+                "example",
+                "--format",
+                "lines",
+            ),
+        )
+
+    def test_rejects_unsafe_component_paths_and_tag_forms(self) -> None:
+        (self.root / "packages" / "untracked").mkdir()
+        unsafe = (
+            "",
+            "packages\\example",
+            "C:/packages/example",
+            "packages/control\x1f",
+            "/packages/example",
+            "packages//example",
+            "packages/./example",
+            "packages/../example",
+            "packages/[example]",
+            "packages/missing",
+            "packages/untracked",
+            "tracked-file.txt",
+        )
+        for supplied in unsafe:
+            with self.subTest(supplied=supplied), self.assertRaises(ValueError):
+                python_release.validate_source_directory(self.root, supplied)
+
+        with mock.patch.object(Path, "is_symlink", return_value=True), self.assertRaisesRegex(
+            ValueError, "symbolic link"
+        ):
+            python_release.validate_source_directory(self.root, "packages/example")
+        with mock.patch.object(
+            python_release,
+            "_git_index_entries",
+            return_value=(("160000", b"packages"),),
+        ), self.assertRaisesRegex(ValueError, "gitlink"):
+            python_release.validate_source_directory(self.root, "packages/example")
+
+        failed = subprocess.CompletedProcess(["git"], 1, stdout=b"", stderr=b"failure")
+        with mock.patch.object(python_release.subprocess, "run", return_value=failed), self.assertRaisesRegex(
+            ValueError, "Git index"
+        ):
+            python_release._git_index_entries(self.root, "packages/example")
+        malformed = subprocess.CompletedProcess(
+            ["git"], 0, stdout=b"malformed\0", stderr=b""
+        )
+        with mock.patch.object(
+            python_release.subprocess, "run", return_value=malformed
+        ), self.assertRaisesRegex(ValueError, "malformed"):
+            python_release._git_index_entries(self.root, "packages/example")
+
+        for prefix in ("Example", "example--tool", "example/tool"):
+            with self.subTest(prefix=prefix), self.assertRaises(ValueError):
+                python_release.validate_release_inputs(
+                    self.root,
+                    source_directory=".",
+                    tag_prefix=prefix,
+                )
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            python_release.derive_release_tag("01.2.3", "")
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            python_release.parse_release_tag("other/v1.2.3", "example")
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            python_release.parse_release_tag("example/v1.2", "example")
+
+        mismatched = python_release.ReleaseTag(
+            version="1.2.3",
+            version_tag="v1.2.3",
+            full_tag="different/v1.2.3",
+            artifact_tag="different-v1.2.3",
+            tag_prefix="different",
+        )
+        with mock.patch.object(
+            python_release, "derive_release_tag", return_value=mismatched
+        ), self.assertRaisesRegex(ValueError, "not canonical"):
+            python_release.parse_release_tag("example/v1.2.3", "example")
+
+
 class CandidateInventoryTests(unittest.TestCase):
     STEM = "demo_pkg"
     VERSION = "1.2.3"
@@ -278,6 +437,76 @@ class CandidateInventoryTests(unittest.TestCase):
         self.assertEqual(manifest["run"], {"attempt": self.RUN_ATTEMPT, "id": self.RUN_ID})
         self.assertEqual(len(manifest["assets"]), 3)
         self.assertEqual(len((self.dist / "SHA256SUMS").read_text().splitlines()), 4)
+
+    def test_round_trips_namespaced_source_tag_without_slash_bearing_assets(self) -> None:
+        tag = "payday-super-checker/v1.2.3"
+        created = python_release.write_candidate_inventory(
+            self.dist,
+            stem=self.STEM,
+            version=self.VERSION,
+            tag=tag,
+            repository=self.REPOSITORY,
+            commit=self.COMMIT,
+            policy_sha=self.POLICY_SHA,
+            run_id=self.RUN_ID,
+            run_attempt=self.RUN_ATTEMPT,
+        )
+        verified = python_release.verify_candidate_inventory(
+            self.dist,
+            expected_stem=self.STEM,
+            expected_version=self.VERSION,
+            expected_tag=tag,
+            expected_repository=self.REPOSITORY,
+            expected_commit=self.COMMIT,
+            expected_policy_sha=self.POLICY_SHA,
+            expected_run_id=self.RUN_ID,
+            expected_run_attempt=self.RUN_ATTEMPT,
+        )
+
+        self.assertEqual(created, verified)
+        manifest = json.loads((self.dist / "release-manifest.json").read_text())
+        self.assertEqual("refs/tags/payday-super-checker/v1.2.3", manifest["source"]["ref"])
+        self.assertTrue(all("/" not in path.name for path in self.dist.iterdir()))
+
+    def test_rejects_noncanonical_context_and_non_tag_manifest_ref(self) -> None:
+        with self.assertRaisesRegex(ValueError, "canonical version"):
+            python_release._validate_context(
+                stem=self.STEM,
+                version="01.2.3",
+                tag="v01.2.3",
+                repository=self.REPOSITORY,
+                commit=self.COMMIT,
+                policy_sha=self.POLICY_SHA,
+                run_id=self.RUN_ID,
+                run_attempt=self.RUN_ATTEMPT,
+            )
+
+        mismatched = python_release.ReleaseTag(
+            version=self.VERSION,
+            version_tag=f"v{self.VERSION}",
+            full_tag="different/v1.2.3",
+            artifact_tag="different-v1.2.3",
+            tag_prefix="different",
+        )
+        with mock.patch.object(
+            python_release, "derive_release_tag", return_value=mismatched
+        ), self.assertRaisesRegex(ValueError, "do not match"):
+            python_release._validate_context(
+                stem=self.STEM,
+                version=self.VERSION,
+                tag=self.TAG,
+                repository=self.REPOSITORY,
+                commit=self.COMMIT,
+                policy_sha=self.POLICY_SHA,
+                run_id=self.RUN_ID,
+                run_attempt=self.RUN_ATTEMPT,
+            )
+
+        self.create()
+        manifest = json.loads((self.dist / "release-manifest.json").read_text())
+        manifest["source"]["ref"] = "refs/heads/main"
+        with self.assertRaisesRegex(ValueError, "source ref"):
+            python_release._inventory_from_manifest(manifest)
 
     def test_rejects_tamper_extra_file_and_context_mismatch(self) -> None:
         self.create()

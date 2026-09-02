@@ -3,6 +3,16 @@ name: Reusable Python release
 on:
   workflow_call:
     inputs:
+      source-directory:
+        description: Tracked component directory containing the Python package.
+        required: false
+        type: string
+        default: .
+      tag-prefix:
+        description: Optional lower-case hyphenated namespace for the release tag.
+        required: false
+        type: string
+        default: ""
       version-parser:
         description: "Closed version parser: pyproject or python-literal."
         required: false
@@ -79,25 +89,41 @@ jobs:
             || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
           test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
 
+      - name: Validate the component release inputs
+        id: inputs
+        env:
+          SOURCE_DIRECTORY: ${{ inputs.source-directory }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
+          write_release_input_outputs "$SOURCE_DIRECTORY" "$TAG_PREFIX" source
+
       - name: Require a release-ready tag and repository
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_DIRECTORY: ${{ steps.inputs.outputs.source-directory }}
+          TAG_PREFIX: ${{ steps.inputs.outputs.tag-prefix }}
           VERSION_FILE: ${{ inputs.version-file }}
           VERSION_PARSER: ${{ inputs.version-parser }}
         shell: bash
         working-directory: source
         run: |
           set -euo pipefail
-          . ../policy/scripts/gates.sh
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
           run_release_gates \
             "$GITHUB_REF_NAME" \
             "$GITHUB_SHA" \
             "$GITHUB_REPOSITORY" \
             "$VERSION_PARSER" \
-            "$VERSION_FILE"
+            "$VERSION_FILE" \
+            "$SOURCE_DIRECTORY" \
+            "$TAG_PREFIX"
 
       - name: Run the locked test suite
-        working-directory: source
+        working-directory: ${{ steps.inputs.outputs.source-path }}
         run: uv run --locked --extra dev --python 3.12 pytest
 
   build:
@@ -106,12 +132,16 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     outputs:
+      artifact-tag: ${{ steps.release.outputs.artifact-tag }}
       candidate-digest: ${{ steps.candidate.outputs.artifact-digest }}
       candidate-id: ${{ steps.candidate.outputs.artifact-id }}
       commit: ${{ steps.release.outputs.commit }}
       stem: ${{ steps.release.outputs.stem }}
+      source-directory: ${{ steps.release.outputs.source-directory }}
       tag: ${{ steps.release.outputs.tag }}
+      tag-prefix: ${{ steps.release.outputs.tag-prefix }}
       version: ${{ steps.release.outputs.version }}
+      version-tag: ${{ steps.release.outputs.version-tag }}
     permissions:
       contents: read
     steps:
@@ -151,29 +181,45 @@ jobs:
             || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
           test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
 
+      - name: Validate the component release inputs
+        id: inputs
+        env:
+          SOURCE_DIRECTORY: ${{ inputs.source-directory }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
+          write_release_input_outputs "$SOURCE_DIRECTORY" "$TAG_PREFIX" source
+
       - name: Require a release-ready tag and repository
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_DIRECTORY: ${{ steps.inputs.outputs.source-directory }}
+          TAG_PREFIX: ${{ steps.inputs.outputs.tag-prefix }}
           VERSION_FILE: ${{ inputs.version-file }}
           VERSION_PARSER: ${{ inputs.version-parser }}
         shell: bash
         working-directory: source
         run: |
           set -euo pipefail
-          . ../policy/scripts/gates.sh
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
           run_release_gates \
             "$GITHUB_REF_NAME" \
             "$GITHUB_SHA" \
             "$GITHUB_REPOSITORY" \
             "$VERSION_PARSER" \
-            "$VERSION_FILE"
+            "$VERSION_FILE" \
+            "$SOURCE_DIRECTORY" \
+            "$TAG_PREFIX"
 
       - name: Build wheel and source distribution
         env:
           PYTHONHASHSEED: "0"
         shell: bash
-        working-directory: source
+        working-directory: ${{ steps.inputs.outputs.source-path }}
         run: |
           set -euo pipefail
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
@@ -183,10 +229,10 @@ jobs:
       - name: Generate SPDX SBOM for the wheel
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          file: source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
+          file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
           format: spdx-json
           syft-version: v1.51.0
-          output-file: source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+          output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
           upload-artifact: false
           upload-release-assets: false
 
@@ -194,7 +240,7 @@ jobs:
         env:
           MODULE_SHA: ${{ job.workflow_sha }}
         shell: bash
-        working-directory: source
+        working-directory: ${{ steps.inputs.outputs.source-path }}
         run: |
           set -euo pipefail
           common=(
@@ -208,20 +254,20 @@ jobs:
             --run-id "$GITHUB_RUN_ID"
             --run-attempt "$GITHUB_RUN_ATTEMPT"
           )
-          python ../policy/scripts/python_release.py create-candidate "${common[@]}"
-          python ../policy/scripts/python_release.py verify-candidate "${common[@]}"
+          python "$GITHUB_WORKSPACE/policy/scripts/python_release.py" create-candidate "${common[@]}"
+          python "$GITHUB_WORKSPACE/policy/scripts/python_release.py" verify-candidate "${common[@]}"
 
       - name: Preserve the immutable candidate
         id: candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: python-${{ steps.release.outputs.tag }}-${{ github.run_id }}-${{ github.run_attempt }}-candidate
+          name: python-${{ steps.release.outputs.artifact-tag }}-${{ github.run_id }}-${{ github.run_attempt }}-candidate
           path: |
-            source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
-            source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
-            source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
-            source/dist/release-manifest.json
-            source/dist/SHA256SUMS
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+            ${{ steps.inputs.outputs.source-root }}/dist/release-manifest.json
+            ${{ steps.inputs.outputs.source-root }}/dist/SHA256SUMS
           if-no-files-found: error
           overwrite: false
           retention-days: 14
@@ -233,8 +279,8 @@ jobs:
         with:
           name: dist-${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}
           path: |
-            source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
-            source/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
           if-no-files-found: error
           overwrite: false
           # Must outlive a required-reviewer approval window on the caller's
@@ -282,11 +328,23 @@ jobs:
             || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
           test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
 
+      - name: Validate the component release inputs
+        id: inputs
+        env:
+          SOURCE_DIRECTORY: ${{ inputs.source-directory }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
+          write_release_input_outputs "$SOURCE_DIRECTORY" "$TAG_PREFIX" source
+
       - name: Bind the candidate artefact to this run and source commit
         env:
           CANDIDATE_DIGEST: ${{ needs.build.outputs.candidate-digest }}
           CANDIDATE_ID: ${{ needs.build.outputs.candidate-id }}
-          CANDIDATE_NAME: python-${{ needs.build.outputs.tag }}-${{ github.run_id }}-${{ github.run_attempt }}-candidate
+          CANDIDATE_NAME: python-${{ needs.build.outputs.artifact-tag }}-${{ github.run_id }}-${{ github.run_attempt }}-candidate
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ needs.build.outputs.commit }}
         shell: bash
@@ -322,7 +380,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python policy/scripts/python_release.py verify-candidate \
+          python "$GITHUB_WORKSPACE/policy/scripts/python_release.py" verify-candidate \
             --directory candidate \
             --stem "${{ needs.build.outputs.stem }}" \
             --version "${{ needs.build.outputs.version }}" \
@@ -403,212 +461,18 @@ jobs:
 
       - name: Create, inspect and publish the immutable release
         env:
+          ARTIFACT_STEM: ${{ needs.build.outputs.stem }}
+          EXPECTED_COMMIT: ${{ needs.build.outputs.commit }}
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
         shell: bash
         run: |
           set -euo pipefail
-          tag="${{ needs.build.outputs.tag }}"
-          expected_commit="${{ needs.build.outputs.commit }}"
-          base="${{ needs.build.outputs.stem }}-${{ needs.build.outputs.version }}"
-          wheel="candidate/$base-py3-none-any.whl"
-          sdist="candidate/$base.tar.gz"
-          sbom="candidate/$base.spdx.json"
-          manifest="candidate/release-manifest.json"
-          checksums="candidate/SHA256SUMS"
-          assets=("$wheel" "$sdist" "$sbom" "$manifest" "$checksums")
-          release_id=""
-          published=false
-
-          cleanup_current_draft() {
-            status="$?"
-            trap - EXIT
-            if [ "$status" -ne 0 ] && [ -n "$release_id" ] && [ "$published" != true ]; then
-              if gh api \
-                  -H "X-GitHub-Api-Version: 2026-03-10" \
-                  "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-                  > /tmp/cleanup-release.json \
-                && jq -e \
-                  --argjson release_id "$release_id" \
-                  --arg tag "$tag" \
-                  '.id == $release_id and .draft == true and .prerelease == false
-                   and .tag_name == $tag and .name == $tag' \
-                  /tmp/cleanup-release.json >/dev/null; then
-                gh api --method DELETE \
-                  -H "X-GitHub-Api-Version: 2026-03-10" \
-                  "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-                  >/dev/null
-              else
-                echo "refusing cleanup because the exact current draft identity was not proven" >&2
-              fi
-            fi
-            exit "$status"
-          }
-          trap cleanup_current_draft EXIT
-
-          jq -n \
-            --arg tag "$tag" \
-            --rawfile body source/RELEASE_NOTES.md \
-            '{tag_name: $tag, name: $tag, body: $body,
-              draft: true, prerelease: false}' \
-            > /tmp/create-release.json
-          gh api --method POST \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "repos/$GITHUB_REPOSITORY/releases" \
-            --input /tmp/create-release.json \
-            > /tmp/created-release.json
-          release_id="$(jq -er '.id | select(type == "number") | tostring' \
-            /tmp/created-release.json)"
-          upload_url="https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets"
-          jq -e \
-            --argjson release_id "$release_id" \
-            --arg tag "$tag" \
-            '.id == $release_id and .draft == true and .prerelease == false
-             and .tag_name == $tag and .name == $tag' \
-            /tmp/created-release.json >/dev/null
-          jq -j '.body' /tmp/created-release.json > /tmp/created-release-notes.md
-          diff -u source/RELEASE_NOTES.md /tmp/created-release-notes.md
-
-          upload_asset() {
-            file="$1"
-            media_type="$2"
-            name="$(basename "$file")"
-            [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]
-            gh api --method POST \
-              -H "Content-Type: $media_type" \
-              "$upload_url?name=$name" \
-              --input "$file" \
-              >/dev/null
-          }
-          upload_asset "$wheel" application/zip
-          upload_asset "$sdist" application/gzip
-          upload_asset "$sbom" application/spdx+json
-          upload_asset "$manifest" application/json
-          upload_asset "$checksums" text/plain
-
-          expected_assets="$(printf '%s\n' \
-            "$base-py3-none-any.whl" \
-            "$base.spdx.json" \
-            "$base.tar.gz" \
-            "release-manifest.json" \
-            "SHA256SUMS" | LC_ALL=C sort)"
-          for file in "${assets[@]}"; do
-            printf '%s\tsha256:%s\n' \
-              "$(basename "$file")" \
-              "$(sha256sum "$file" | cut -d' ' -f1)"
-          done | LC_ALL=C sort > /tmp/expected-digests
-
-          draft_ready=false
-          for _ in 1 2 3 4 5; do
-            gh api \
-              -H "X-GitHub-Api-Version: 2026-03-10" \
-              "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-              > /tmp/draft-release.json
-            jq -r '.assets[] | [.name, .digest] | @tsv' \
-              /tmp/draft-release.json | LC_ALL=C sort > /tmp/draft-digests
-            if jq -e \
-                --argjson release_id "$release_id" \
-                --arg tag "$tag" \
-                '.id == $release_id and .draft == true and .prerelease == false
-                 and .tag_name == $tag and .name == $tag
-                 and (.assets | length) == 5
-                 and all(.assets[]; (.digest | type) == "string")' \
-                /tmp/draft-release.json >/dev/null \
-              && diff -u /tmp/expected-digests /tmp/draft-digests; then
-              draft_ready=true
-              break
-            fi
-            sleep 5
-          done
-          test "$draft_ready" = true
-          draft_assets="$(jq -r '.assets[].name' /tmp/draft-release.json | LC_ALL=C sort)"
-          test "$draft_assets" = "$expected_assets"
-          jq -j '.body' /tmp/draft-release.json > /tmp/draft-release-notes.md
-          diff -u source/RELEASE_NOTES.md /tmp/draft-release-notes.md
-
-          final_tag_commit="$(git ls-remote \
-            "https://github.com/$GITHUB_REPOSITORY.git" \
-            "refs/tags/$tag^{}" | cut -f1)"
-          test -n "$final_tag_commit"
-          test "$final_tag_commit" = "$expected_commit"
-          test "$GITHUB_SHA" = "$expected_commit"
-          . policy/scripts/gates.sh
-          gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
-          release_ids="$(gh api --paginate \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq ".[] | select(.tag_name == \"$tag\") | .id")"
-          test "$release_ids" = "$release_id"
-
-          gh api --method PATCH \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-            -F draft=false \
-            -f make_latest=true \
-            >/dev/null
-          published=true
-
-          published_ready=false
-          for _ in 1 2 3 4 5; do
-            gh api \
-              -H "X-GitHub-Api-Version: 2026-03-10" \
-              "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-              > /tmp/published-release.json
-            jq -r '.assets[] | [.name, .digest] | @tsv' \
-              /tmp/published-release.json | LC_ALL=C sort > /tmp/published-digests
-            if jq -e \
-                --argjson release_id "$release_id" \
-                --arg tag "$tag" \
-                '.id == $release_id and .draft == false and .prerelease == false
-                 and .immutable == true and .tag_name == $tag and .name == $tag
-                 and (.assets | length) == 5' \
-                /tmp/published-release.json >/dev/null \
-              && diff -u /tmp/expected-digests /tmp/published-digests; then
-              published_ready=true
-              break
-            fi
-            sleep 5
-          done
-          test "$published_ready" = true
-          test "$(git ls-remote \
-            "https://github.com/$GITHUB_REPOSITORY.git" \
-            "refs/tags/$tag^{}" | cut -f1)" = "$expected_commit"
-          published_assets="$(jq -r '.assets[].name' \
-            /tmp/published-release.json | LC_ALL=C sort)"
-          test "$published_assets" = "$expected_assets"
-          jq -j '.body' /tmp/published-release.json > /tmp/published-release-notes.md
-          diff -u source/RELEASE_NOTES.md /tmp/published-release-notes.md
-
-          latest_ready=false
-          for _ in 1 2 3 4 5; do
-            if gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
-              --json tagName,isLatest \
-              | jq -e --arg tag "$tag" \
-                'any(.[]; .tagName == $tag and .isLatest == true)' >/dev/null; then
-              latest_ready=true
-              break
-            fi
-            sleep 5
-          done
-          test "$latest_ready" = true
-
-          release_verified=false
-          for _ in 1 2 3 4 5; do
-            if gh release verify "$tag" --repo "$GITHUB_REPOSITORY"; then
-              release_verified=true
-              break
-            fi
-            sleep 5
-          done
-          test "$release_verified" = true
-          for file in "${assets[@]}"; do
-            asset_verified=false
-            for _ in 1 2 3 4 5; do
-              if gh release verify-asset "$tag" "$file" --repo "$GITHUB_REPOSITORY"; then
-                asset_verified=true
-                break
-              fi
-              sleep 5
-            done
-            test "$asset_verified" = true
-          done
-          trap - EXIT
+          bash "$GITHUB_WORKSPACE/policy/scripts/publish_python.sh" \
+            "$RELEASE_TAG" \
+            "$EXPECTED_COMMIT" \
+            "$ARTIFACT_STEM" \
+            "$RELEASE_VERSION" \
+            "$SOURCE_PATH"
