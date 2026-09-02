@@ -7,6 +7,7 @@ import ast
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -19,7 +20,9 @@ _CANONICAL_VERSION = re.compile(
 )
 _FULL_SHA = re.compile(r"[0-9a-f]{40}\Z")
 _REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
+_SOURCE_PART = re.compile(r"[A-Za-z0-9._-]+\Z")
 _STEM = re.compile(r"[a-z0-9]+(?:_[a-z0-9]+)*\Z")
+_TAG_PREFIX = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _MAX_METADATA_BYTES = 1024 * 1024
 _MAX_ASSET_BYTES = 512 * 1024 * 1024
 _MANIFEST = "release-manifest.json"
@@ -35,6 +38,25 @@ class ReleaseMetadata:
     name: str
     stem: str
     version: str
+
+
+@dataclass(frozen=True)
+class ReleaseInputs:
+    """Validated caller-controlled component selectors."""
+
+    source_directory: str
+    tag_prefix: str
+
+
+@dataclass(frozen=True)
+class ReleaseTag:
+    """Package version and its Git and slash-free artefact tag forms."""
+
+    version: str
+    version_tag: str
+    full_tag: str
+    artifact_tag: str
+    tag_prefix: str
 
 
 @dataclass(frozen=True)
@@ -99,6 +121,132 @@ def _safe_relative_path(supplied: str) -> PurePosixPath:
     ):
         raise ValueError("version-file must be a safe relative POSIX path")
     return relative
+
+
+def _git_index_entries(root: Path, relative: str) -> tuple[tuple[str, bytes], ...]:
+    result = subprocess.run(
+        ["git", "ls-files", "--stage", "-z", "--", relative],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise ValueError("source-directory could not be checked against the Git index")
+    entries: list[tuple[str, bytes]] = []
+    for record in result.stdout.split(b"\0"):
+        if not record:
+            continue
+        metadata, separator, path = record.partition(b"\t")
+        if not separator:
+            raise ValueError("source-directory Git index data is malformed")
+        mode = metadata.split(b" ", 1)[0].decode("ascii")
+        entries.append((mode, path))
+    return tuple(entries)
+
+
+def validate_source_directory(root: Path, supplied: str) -> str:
+    """Return a tracked, non-symlinked component directory relative to root."""
+
+    root = root.resolve()
+    if supplied == ".":
+        return "."
+    if (
+        not supplied
+        or "\\" in supplied
+        or re.match(r"^[A-Za-z]:/", supplied)
+        or any(ord(character) < 32 or ord(character) == 127 for character in supplied)
+    ):
+        raise ValueError("source-directory must be a relative POSIX directory")
+    relative = PurePosixPath(supplied)
+    parts = supplied.split("/")
+    if relative.is_absolute() or any(
+        part in {"", ".", ".."} or _SOURCE_PART.fullmatch(part) is None
+        for part in parts
+    ):
+        raise ValueError("source-directory must be a relative POSIX directory")
+
+    current = root
+    relative_parts: list[str] = []
+    for part in parts:
+        current /= part
+        relative_parts.append(part)
+        component = "/".join(relative_parts)
+        if current.is_symlink():
+            raise ValueError(
+                f"source-directory must not traverse a symbolic link: {supplied}"
+            )
+        component_bytes = os.fsencode(component)
+        for mode, path in _git_index_entries(root, component):
+            if path == component_bytes and mode in {"120000", "160000"}:
+                raise ValueError(
+                    f"source-directory must not traverse a symbolic link or gitlink: {supplied}"
+                )
+
+    try:
+        resolved = current.resolve(strict=True)
+    except FileNotFoundError as error:
+        raise ValueError(f"source-directory is missing: {supplied}") from error
+    if resolved == root or root not in resolved.parents or not resolved.is_dir():
+        raise ValueError("source-directory must be a directory inside the checkout")
+
+    normalised = relative.as_posix()
+    prefix = os.fsencode(f"{normalised}/")
+    entries = _git_index_entries(root, normalised)
+    if not any(path.startswith(prefix) for _, path in entries):
+        raise ValueError(f"source-directory must contain tracked Git files: {supplied}")
+    return normalised
+
+
+def _validate_tag_prefix(tag_prefix: str) -> str:
+    if tag_prefix and _TAG_PREFIX.fullmatch(tag_prefix) is None:
+        raise ValueError("tag-prefix must be empty or lower-case and hyphenated")
+    return tag_prefix
+
+
+def validate_release_inputs(
+    root: Path,
+    *,
+    source_directory: str,
+    tag_prefix: str,
+) -> ReleaseInputs:
+    """Validate both reusable-workflow component selectors."""
+
+    return ReleaseInputs(
+        source_directory=validate_source_directory(root, source_directory),
+        tag_prefix=_validate_tag_prefix(tag_prefix),
+    )
+
+
+def derive_release_tag(version: str, tag_prefix: str) -> ReleaseTag:
+    """Derive the package, Git and slash-free artefact tag forms."""
+
+    if _CANONICAL_VERSION.fullmatch(version) is None:
+        raise ValueError("version must be canonical MAJOR.MINOR.PATCH")
+    tag_prefix = _validate_tag_prefix(tag_prefix)
+    version_tag = f"v{version}"
+    full_tag = f"{tag_prefix}/{version_tag}" if tag_prefix else version_tag
+    artifact_tag = f"{tag_prefix}-{version_tag}" if tag_prefix else version_tag
+    return ReleaseTag(
+        version=version,
+        version_tag=version_tag,
+        full_tag=full_tag,
+        artifact_tag=artifact_tag,
+        tag_prefix=tag_prefix,
+    )
+
+
+def parse_release_tag(tag: str, tag_prefix: str) -> ReleaseTag:
+    """Parse a full Git tag only when it exactly matches the supplied namespace."""
+
+    tag_prefix = _validate_tag_prefix(tag_prefix)
+    expected_start = f"{tag_prefix}/v" if tag_prefix else "v"
+    if not tag.startswith(expected_start):
+        raise ValueError("tag does not match the supplied tag-prefix")
+    version = tag[len(expected_start) :]
+    parsed = derive_release_tag(version, tag_prefix)
+    if parsed.full_tag != tag:
+        raise ValueError("tag is not canonical vMAJOR.MINOR.PATCH")
+    return parsed
 
 
 def _tracked_regular_file(root: Path, supplied: str) -> Path:
@@ -254,7 +402,12 @@ def _validate_context(
 ) -> None:
     if _STEM.fullmatch(stem) is None:
         raise ValueError("candidate stem is not safe")
-    if _CANONICAL_VERSION.fullmatch(version) is None or tag != f"v{version}":
+    tag_prefix = tag.rpartition("/")[0] if "/" in tag else ""
+    try:
+        expected_tag = derive_release_tag(version, tag_prefix).full_tag
+    except ValueError as error:
+        raise ValueError("candidate tag and canonical version do not match") from error
+    if tag != expected_tag:
         raise ValueError("candidate tag and canonical version do not match")
     if _REPOSITORY.fullmatch(repository) is None:
         raise ValueError("candidate repository must be owner/name")
@@ -408,7 +561,7 @@ def _inventory_from_manifest(document: Any) -> CandidateInventory:
     )
     if policy["repository"] != _POLICY_REPOSITORY or policy["workflow"] != _POLICY_WORKFLOW:
         raise ValueError("candidate manifest policy signer is not release-python.yml")
-    if not isinstance(source["ref"], str) or not source["ref"].startswith("refs/tags/v"):
+    if not isinstance(source["ref"], str) or not source["ref"].startswith("refs/tags/"):
         raise ValueError("candidate manifest source ref is invalid")
 
     raw_assets = root["assets"]
@@ -554,6 +707,51 @@ def _metadata_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _validate_inputs_command(arguments: argparse.Namespace) -> int:
+    inputs = validate_release_inputs(
+        Path(arguments.root),
+        source_directory=arguments.source_directory,
+        tag_prefix=arguments.tag_prefix,
+    )
+    if arguments.format == "lines":
+        print(inputs.source_directory)
+        print(inputs.tag_prefix)
+    else:
+        print(
+            json.dumps(
+                {
+                    "source_directory": inputs.source_directory,
+                    "tag_prefix": inputs.tag_prefix,
+                },
+                sort_keys=True,
+            )
+        )
+    return 0
+
+
+def _tag_command(arguments: argparse.Namespace) -> int:
+    tag = parse_release_tag(arguments.tag, arguments.tag_prefix)
+    if arguments.format == "lines":
+        print(tag.version)
+        print(tag.version_tag)
+        print(tag.full_tag)
+        print(tag.artifact_tag)
+    else:
+        print(
+            json.dumps(
+                {
+                    "artifact_tag": tag.artifact_tag,
+                    "full_tag": tag.full_tag,
+                    "tag_prefix": tag.tag_prefix,
+                    "version": tag.version,
+                    "version_tag": tag.version_tag,
+                },
+                sort_keys=True,
+            )
+        )
+    return 0
+
+
 def _candidate_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--stem", required=True)
@@ -599,6 +797,22 @@ def _verify_candidate_command(arguments: argparse.Namespace) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+
+    inputs = commands.add_parser(
+        "validate-inputs",
+        help="validate component directory and tag namespace",
+    )
+    inputs.add_argument("--root", default=".")
+    inputs.add_argument("--source-directory", required=True)
+    inputs.add_argument("--tag-prefix", required=True)
+    inputs.add_argument("--format", choices=("json", "lines"), default="json")
+    inputs.set_defaults(handler=_validate_inputs_command)
+
+    tag = commands.add_parser("tag", help="validate and split a release tag")
+    tag.add_argument("--tag", required=True)
+    tag.add_argument("--tag-prefix", required=True)
+    tag.add_argument("--format", choices=("json", "lines"), default="json")
+    tag.set_defaults(handler=_tag_command)
 
     metadata = commands.add_parser("metadata", help="read closed package metadata")
     metadata.add_argument("--root", default=".")

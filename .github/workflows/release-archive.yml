@@ -7,6 +7,16 @@ on:
         description: Lower-case hyphenated stem used for all release assets.
         required: true
         type: string
+      source-directory:
+        description: Tracked component directory containing release sources.
+        required: false
+        type: string
+        default: .
+      tag-prefix:
+        description: Optional lower-case hyphenated namespace for the release tag.
+        required: false
+        type: string
+        default: ""
       version-file:
         description: Safe relative path containing one canonical MAJOR.MINOR.PATCH line.
         required: false
@@ -21,6 +31,9 @@ jobs:
     timeout-minutes: 15
     name: run consumer source-archive tests
     runs-on: ubuntu-latest
+    outputs:
+      source-directory: ${{ steps.inputs.outputs.source-directory }}
+      tag-prefix: ${{ steps.inputs.outputs.tag-prefix }}
     permissions:
       contents: read
     steps:
@@ -56,6 +69,18 @@ jobs:
             || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
           test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
 
+      - name: Validate the component release inputs
+        id: inputs
+        env:
+          SOURCE_DIRECTORY: ${{ inputs.source-directory }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+        shell: bash
+        working-directory: consumer
+        run: |
+          set -euo pipefail
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
+          write_release_input_outputs "$SOURCE_DIRECTORY" "$TAG_PREFIX" consumer
+
       # Consumers declare their own pinned test dependencies. Install exactly
       # what is listed and nothing else: --no-deps drops transitive runtime
       # requirements, and --only-binary refuses sdists, so pip never builds a
@@ -63,7 +88,7 @@ jobs:
       # this runner. A pinned line with no wheel fails the step rather than
       # widening what it installs.
       - name: Install pinned consumer test dependencies
-        working-directory: consumer
+        working-directory: ${{ steps.inputs.outputs.source-path }}
         shell: bash
         run: |
           set -euo pipefail
@@ -71,7 +96,7 @@ jobs:
           python -m pip install --disable-pip-version-check --no-deps --only-binary :all: --requirement requirements-test.txt
 
       - name: Run the standard source-archive regression suite
-        working-directory: consumer
+        working-directory: ${{ steps.inputs.outputs.source-path }}
         run: python -B -m unittest discover -s tests -v
 
   release:
@@ -83,4 +108,6 @@ jobs:
     uses: ./.github/workflows/publish-archives.yml
     with:
       artifact-stem: ${{ inputs.artifact-stem }}
+      source-directory: ${{ needs.consumer-tests.outputs.source-directory }}
+      tag-prefix: ${{ needs.consumer-tests.outputs.tag-prefix }}
       version-file: ${{ inputs.version-file }}
