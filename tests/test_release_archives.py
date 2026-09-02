@@ -49,11 +49,25 @@ def _tar_files(path: Path) -> dict[str, bytes]:
 
 
 class ReleaseArchiveBuilderTests(unittest.TestCase):
+    def test_parser_defaults_to_the_repository_root(self) -> None:
+        arguments = release_archives._parser().parse_args(
+            ["--commit", "HEAD", "--prefix", "example/", "--output-base", "dist/example"]
+        )
+
+        self.assertEqual(".", arguments.source_directory)
+
     def test_builder_pins_git_conversion_and_timezone(self) -> None:
         with TemporaryDirectory() as temporary, mock.patch.object(
             release_archives.subprocess,
             "run",
         ) as run:
+            run.side_effect = (
+                subprocess.CompletedProcess(
+                    ["git", "show"], 0, stdout="1234567890\n", stderr=""
+                ),
+                subprocess.CompletedProcess(["git", "archive"], 0),
+                subprocess.CompletedProcess(["git", "archive"], 0),
+            )
             outputs = release_archives.build_release_archives(
                 commit="deadbeef",
                 prefix="example-1.2.3/",
@@ -61,12 +75,16 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
                 cwd=ROOT,
             )
 
-        self.assertEqual(2, run.call_count)
+        self.assertEqual(3, run.call_count)
+        self.assertEqual(
+            ("git", "show", "-s", "--format=%ct", "deadbeef^{commit}"),
+            run.call_args_list[0].args[0],
+        )
         self.assertEqual(
             ("example-1.2.3.zip", "example-1.2.3.tar.gz"),
             tuple(path.name for path in outputs),
         )
-        for call in run.call_args_list:
+        for call in run.call_args_list[1:]:
             self.assertEqual(
                 (
                     "git",
@@ -81,6 +99,22 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
             self.assertEqual("UTC", call.kwargs["env"]["TZ"])
             self.assertEqual(ROOT, call.kwargs["cwd"])
             self.assertTrue(call.kwargs["check"])
+            self.assertIn("--mtime=@1234567890", call.args[0])
+
+    def test_builder_rejects_a_non_numeric_commit_timestamp(self) -> None:
+        with TemporaryDirectory() as temporary, mock.patch.object(
+            release_archives.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(
+                ["git", "show"], 0, stdout="not-a-timestamp\n", stderr=""
+            ),
+        ), self.assertRaisesRegex(ValueError, "timestamp"):
+            release_archives.build_release_archives(
+                commit="deadbeef",
+                prefix="example-1.2.3/",
+                output_base=Path(temporary) / "dist" / "example-1.2.3",
+                cwd=ROOT,
+            )
 
     def test_repeated_archives_are_identical_and_formats_agree(self) -> None:
         with TemporaryDirectory() as temporary:
@@ -108,6 +142,109 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
             self.assertTrue(
                 all(name.startswith("release-test/") for name in _zip_files(first[0]))
             )
+
+    def test_component_archive_contains_only_the_selected_tracked_tree(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(["git", "init", "--quiet", "-b", "main"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.invalid"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Release Policy Test"],
+                cwd=root,
+                check=True,
+            )
+            (root / "root.txt").write_text("root\n", encoding="utf-8")
+            component = root / "packages" / "example-tool"
+            component.mkdir(parents=True)
+            (component / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+            (component / "source.txt").write_text("component\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "--quiet", "-m", "fixture"],
+                cwd=root,
+                check=True,
+            )
+
+            outputs = release_archives.build_release_archives(
+                commit="HEAD",
+                prefix="example-tool-1.2.3/",
+                source_directory="packages/example-tool",
+                output_base=root / "dist" / "example-tool-1.2.3",
+                cwd=root,
+            )
+
+            expected = {
+                "example-tool-1.2.3/VERSION": b"1.2.3\n",
+                "example-tool-1.2.3/source.txt": b"component\n",
+            }
+            self.assertEqual(expected, _zip_files(outputs[0]))
+            self.assertEqual(expected, _tar_files(outputs[1]))
+
+    def test_component_archive_rejects_unsafe_untracked_file_and_symlink_paths(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(["git", "init", "--quiet", "-b", "main"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.invalid"],
+                cwd=root,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Release Policy Test"],
+                cwd=root,
+                check=True,
+            )
+            tracked = root / "packages" / "tracked"
+            tracked.mkdir(parents=True)
+            (tracked / "source.txt").write_text("tracked\n", encoding="utf-8")
+            (root / "tracked-file.txt").write_text("file\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "commit", "--quiet", "-m", "fixture"],
+                cwd=root,
+                check=True,
+            )
+            untracked = root / "packages" / "untracked"
+            untracked.mkdir()
+            (untracked / "source.txt").write_text("untracked\n", encoding="utf-8")
+
+            cases = (
+                "",
+                str(root.resolve()),
+                "../escape",
+                "packages\\tracked",
+                "packages/untracked",
+                "tracked-file.txt",
+            )
+            for index, source_directory in enumerate(cases):
+                with self.subTest(source_directory=source_directory), self.assertRaises(
+                    ValueError
+                ):
+                    release_archives.build_release_archives(
+                        commit="HEAD",
+                        prefix="safe/",
+                        source_directory=source_directory,
+                        output_base=root / "dist" / f"unsafe-{index}",
+                        cwd=root,
+                    )
+
+            link = root / "packages" / "linked"
+            try:
+                link.symlink_to(tracked, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlinks are unavailable: {error}")
+            with self.assertRaises(ValueError):
+                release_archives.build_release_archives(
+                    commit="HEAD",
+                    prefix="safe/",
+                    source_directory="packages/linked",
+                    output_base=root / "dist" / "linked",
+                    cwd=root,
+                )
 
     def test_builder_refuses_unsafe_prefixes_and_existing_outputs(self) -> None:
         with TemporaryDirectory() as temporary:
@@ -156,6 +293,13 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
 
 
 class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
+    @staticmethod
+    def named_step(workflow: str, name: str) -> str:
+        marker = f"      - name: {name}\n"
+        start = workflow.index(marker)
+        end = workflow.find("\n      - name:", start + len(marker))
+        return workflow[start:] if end < 0 else workflow[start:end]
+
     def sequence_mapping_keys(self, text: str, *, indent: int) -> tuple[str, ...]:
         keys: list[str] = []
         pattern = re.compile(rf"^-\s+(?P<key>{YAML_KEY})\s*:")
@@ -193,6 +337,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
                 "timeout-minutes",
                 "name",
                 "runs-on",
+                "outputs",
                 "permissions",
                 "steps",
             ),
@@ -240,7 +385,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         inputs = self.mapping_block(workflow_call, "inputs", indent=4)
 
         self.assertEqual(
-            ("artifact-stem", "version-file"),
+            ("artifact-stem", "source-directory", "tag-prefix", "version-file"),
             self.mapping_keys(inputs, indent=6),
         )
 
@@ -274,11 +419,19 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         inputs = self.mapping_block(release_job, "with", indent=4)
         self.assertEqual(
             self.mapping_keys(inputs, indent=6),
-            ("artifact-stem", "version-file"),
+            ("artifact-stem", "source-directory", "tag-prefix", "version-file"),
         )
         self.assertEqual(
             self.mapping_value(inputs, "artifact-stem", indent=6),
             "${{ inputs.artifact-stem }}",
+        )
+        self.assertEqual(
+            self.mapping_value(inputs, "source-directory", indent=6),
+            "${{ needs.consumer-tests.outputs.source-directory }}",
+        )
+        self.assertEqual(
+            self.mapping_value(inputs, "tag-prefix", indent=6),
+            "${{ needs.consumer-tests.outputs.tag-prefix }}",
         )
         self.assertEqual(
             self.mapping_value(inputs, "version-file", indent=6),
@@ -309,13 +462,180 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             },
         )
 
-    def test_source_adapter_preserves_its_two_input_and_fixed_test_contract(self) -> None:
+    def test_source_adapter_preserves_its_closed_input_and_fixed_test_contract(self) -> None:
         adapter = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
             encoding="utf-8"
         )
 
         self.assert_workflow_call_input_contract(adapter)
         self.assert_source_consumer_contract(adapter)
+
+    def test_component_inputs_are_validated_before_archive_test_or_publication_use(
+        self,
+    ) -> None:
+        adapter = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
+            encoding="utf-8"
+        )
+        core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
+            encoding="utf-8"
+        )
+        jobs = self.mapping_block(adapter, "jobs", indent=0)
+        consumer = self.mapping_block(jobs, "consumer-tests", indent=2)
+
+        self.assertLess(
+            consumer.index("Validate the component release inputs"),
+            consumer.index("steps.inputs.outputs.source-path"),
+        )
+        self.assertIn(
+            "working-directory: ${{ steps.inputs.outputs.source-path }}",
+            consumer,
+        )
+        self.assertIn(
+            "source-directory: ${{ needs.consumer-tests.outputs.source-directory }}",
+            adapter,
+        )
+        self.assertLess(
+            core.index("Validate the component release inputs"),
+            core.index("steps.inputs.outputs.source-path"),
+        )
+        self.assertIn(
+            '--source-directory "${{ steps.inputs.outputs.source-directory }}"',
+            core,
+        )
+        self.assertIn(
+            "name: ${{ steps.release.outputs.artifact-tag }}-",
+            core,
+        )
+        self.assertNotIn(
+            "name: ${{ steps.release.outputs.tag }}-",
+            core,
+        )
+
+    def test_nested_publication_scopes_every_local_asset_to_the_component(self) -> None:
+        core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
+            encoding="utf-8"
+        )
+        build = self.named_step(core, "Build deterministic source archives")
+        sbom = self.named_step(core, "Generate an SPDX SBOM for the ZIP archive")
+        inventory = self.named_step(core, "Write and verify the exact release asset inventory")
+        upload = self.named_step(core, "Preserve the exact candidate assets")
+        provenance = self.named_step(core, "Attest release asset provenance")
+        sbom_attestation = self.named_step(
+            core, "Attest the SPDX SBOM for both source archives"
+        )
+        verify = self.named_step(
+            core, "Verify provenance and SBOM attestations before publication"
+        )
+        recheck = self.named_step(core, "Re-check the remote tag, main and release absence")
+        publish = self.named_step(core, "Create, inspect and publish the immutable release")
+
+        output_match = re.search(r'--output-base "([^"]+)"', build)
+        self.assertIsNotNone(output_match)
+        output_template = output_match.group(1)  # type: ignore[union-attr]
+        self.assertEqual(
+            "${{ steps.inputs.outputs.source-path }}/dist/$stem-$version",
+            output_template,
+        )
+        action_base = (
+            "${{ steps.inputs.outputs.source-root }}/dist/"
+            "${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}"
+        )
+        self.assertIn(f"file: {action_base}.zip", sbom)
+        self.assertIn(f"output-file: {action_base}.spdx.json", sbom)
+        self.assertIn(
+            "working-directory: ${{ steps.inputs.outputs.source-path }}", inventory
+        )
+        for block in (upload, provenance):
+            for suffix in (".zip", ".tar.gz", ".spdx.json"):
+                self.assertIn(f"{action_base}{suffix}", block)
+            self.assertIn(
+                "${{ steps.inputs.outputs.source-root }}/dist/SHA256SUMS", block
+            )
+        self.assertIn(f"{action_base}.zip", sbom_attestation)
+        self.assertIn(f"{action_base}.tar.gz", sbom_attestation)
+        self.assertIn(f"sbom-path: {action_base}.spdx.json", sbom_attestation)
+        self.assertIn(
+            "working-directory: ${{ steps.inputs.outputs.source-path }}", verify
+        )
+        self.assertIn("working-directory: consumer", recheck)
+        self.assertIn("working-directory: consumer", publish)
+        self.assertIn(
+            "SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}", publish
+        )
+        publication_script = (
+            ROOT / "scripts" / "publish_archives.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn('dist="$source_path/dist"', publication_script)
+        self.assertIn(
+            '--notes-file "$source_path/RELEASE_NOTES.md"', publication_script
+        )
+        self.assertNotIn("consumer/dist/", core)
+
+        with TemporaryDirectory() as temporary:
+            repository = Path(temporary)
+            subprocess.run(
+                ["git", "init", "--quiet", "-b", "main"], cwd=repository, check=True
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.invalid"],
+                cwd=repository,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Release Policy Test"],
+                cwd=repository,
+                check=True,
+            )
+            component = repository / "packages" / "example-toolkit"
+            component.mkdir(parents=True)
+            (repository / "root.txt").write_text("root\n", encoding="utf-8")
+            (component / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=repository, check=True)
+            subprocess.run(
+                ["git", "commit", "--quiet", "-m", "fixture"],
+                cwd=repository,
+                check=True,
+            )
+            resolved_output = output_template.replace(
+                "${{ steps.inputs.outputs.source-path }}", str(component.resolve())
+            ).replace("$stem", "example-toolkit").replace("$version", "1.2.3")
+            output_base = Path(resolved_output)
+            if not output_base.is_absolute():
+                output_base = repository / output_base
+
+            outputs = release_archives.build_release_archives(
+                commit="HEAD",
+                prefix="example-toolkit-1.2.3/",
+                source_directory="packages/example-toolkit",
+                output_base=output_base,
+                cwd=repository,
+            )
+
+            self.assertEqual(component / "dist" / "example-toolkit-1.2.3.zip", outputs[0])
+            self.assertEqual(
+                component / "dist" / "example-toolkit-1.2.3.tar.gz", outputs[1]
+            )
+            self.assertFalse((repository / "dist").exists())
+
+    def test_publication_core_delegates_the_release_state_machine_to_policy_code(
+        self,
+    ) -> None:
+        core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
+            encoding="utf-8"
+        )
+        publish = self.named_step(core, "Create, inspect and publish the immutable release")
+        script = ROOT / "scripts" / "publish_archives.sh"
+
+        self.assertTrue(script.is_file(), "the trusted publication script is missing")
+        script_text = script.read_text(encoding="utf-8")
+        self.assertIn("working-directory: consumer", publish)
+        self.assertIn(
+            '"$GITHUB_WORKSPACE/policy/scripts/publish_archives.sh"', publish
+        )
+        self.assertNotIn("cleanup_current_draft()", publish)
+        self.assertIn("cleanup_current_draft()", script_text)
+        self.assertNotIn("${{", script_text)
+        self.assertIn('--notes-file "$source_path/RELEASE_NOTES.md"', script_text)
 
     def test_source_consumer_contract_rejects_privilege_and_failure_masking(
         self,
@@ -330,30 +650,28 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             1,
         )
         job_failure_mask = adapter.replace(
-            "    runs-on: ubuntu-latest\n    permissions:\n",
-            "    runs-on: ubuntu-latest\n"
+            "    permissions:\n      contents: read\n",
             "    continue-on-error: true\n"
-            "    permissions:\n",
+            "    permissions:\n      contents: read\n",
             1,
         )
         step_failure_mask = adapter.replace(
-            "        working-directory: consumer\n"
+            "        working-directory: ${{ steps.inputs.outputs.source-path }}\n"
             "        run: python -B -m unittest discover -s tests -v\n",
-            "        working-directory: consumer\n"
+            "        working-directory: ${{ steps.inputs.outputs.source-path }}\n"
             '        "continue-on-error": true\n'
             "        run: python -B -m unittest discover -s tests -v\n",
             1,
         )
         commented_failure_mask = adapter.replace(
-            "    runs-on: ubuntu-latest\n    permissions:\n",
-            "    runs-on: ubuntu-latest\n"
+            "    permissions:\n      contents: read\n",
             "    # continue-on-error: true\n"
-            "    permissions:\n",
+            "    permissions:\n      contents: read\n",
             1,
         ).replace(
-            "        working-directory: consumer\n"
+            "        working-directory: ${{ steps.inputs.outputs.source-path }}\n"
             "        run: python -B -m unittest discover -s tests -v\n",
-            "        working-directory: consumer\n"
+            "        working-directory: ${{ steps.inputs.outputs.source-path }}\n"
             '        # "continue-on-error": true\n'
             "        run: python -B -m unittest discover -s tests -v\n",
             1,
@@ -463,6 +781,16 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             "        description: Lower-case hyphenated stem used for all release assets.\n"
             "        required: true\n"
             "        type: string\n"
+            "      source-directory:\n"
+            "        description: Tracked component directory containing release sources.\n"
+            "        required: false\n"
+            "        type: string\n"
+            "        default: .\n"
+            "      tag-prefix:\n"
+            "        description: Optional lower-case hyphenated namespace for the release tag.\n"
+            "        required: false\n"
+            "        type: string\n"
+            '        default: ""\n'
             "      version-file:\n"
             "        description: Safe relative path containing one canonical "
             "MAJOR.MINOR.PATCH line.\n"
@@ -479,7 +807,10 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         )
         flow_inputs = (
             "    inputs: {artifact-stem: {description: Artifact stem, required: true, "
-            "type: string}, version-file: {description: Version file, required: false, "
+            "type: string}, source-directory: {description: Source directory, required: "
+            "false, type: string, default: .}, tag-prefix: {description: Tag prefix, "
+            'required: false, type: string, default: ""}, version-file: '
+            "{description: Version file, required: false, "
             "type: string, default: VERSION}}\n"
         )
         anchored_inputs = block.replace(
@@ -507,7 +838,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             for mutation_name, mutation in mutations.items():
                 self.assertNotEqual(workflow, mutation)
                 # Catches a source or core reusable interface that accepts an
-                # unsupported third input or hides its input map syntax.
+                # unsupported extra input or hides its input map syntax.
                 with self.subTest(
                     workflow=workflow.splitlines()[0],
                     mutation=mutation_name,
@@ -576,6 +907,10 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
             encoding="utf-8"
         )
+        publication_script = (
+            ROOT / "scripts" / "publish_archives.sh"
+        ).read_text(encoding="utf-8")
+        policy_code = core + publication_script
 
         self.assertRegex(
             core,
@@ -589,10 +924,14 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         )
         self.assertRegex(core, r"\^\[0-9a-f\]\{40\}\$")
         self.assertIn('test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"', core)
-        self.assertIn(". ../policy/scripts/gates.sh", core)
-        self.assertIn("python ../policy/scripts/build_release_archives.py", core)
-        self.assertIn("python ../policy/scripts/find_created_draft_release.py", core)
-        self.assertGreaterEqual(core.count("working-directory: consumer"), 6)
+        self.assertIn('$GITHUB_WORKSPACE/policy/scripts/gates.sh', core)
+        self.assertIn('$GITHUB_WORKSPACE/policy/scripts/build_release_archives.py', core)
+        self.assertIn('$GITHUB_WORKSPACE/policy/scripts/publish_archives.sh', core)
+        self.assertIn(
+            '$GITHUB_WORKSPACE/policy/scripts/find_created_draft_release.py',
+            publication_script,
+        )
+        self.assertNotIn("../policy/scripts/", policy_code)
         for forbidden in (
             "pip install",
             "unittest discover",
@@ -604,31 +943,39 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             "./tests/",
         ):
             with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, core)
+                self.assertNotIn(forbidden, policy_code)
 
     def test_publication_core_preserves_candidates_assets_and_signer_identity(self) -> None:
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
             encoding="utf-8"
         )
+        publication_script = (
+            ROOT / "scripts" / "publish_archives.sh"
+        ).read_text(encoding="utf-8")
         upload_start = core.index("uses: actions/upload-artifact@")
         upload_end = core.index("      - name:", upload_start)
         upload = core[upload_start:upload_end]
         action_asset_paths = re.findall(
-            r"^            (consumer/dist/[^\r\n]+)$",
+            r"^            (\$\{\{ steps\.inputs\.outputs\.source-root \}\}/dist/[^\r\n]+)$",
             core,
             re.MULTILINE,
         )
 
         self.assertIn(
-            "name: ${{ steps.release.outputs.tag }}-${{ github.run_id }}-"
+            "name: ${{ steps.release.outputs.artifact-tag }}-${{ github.run_id }}-"
             "${{ github.run_attempt }}-candidate-assets",
             upload,
         )
         self.assertIn("overwrite: false", upload)
         self.assertEqual(4, len(set(action_asset_paths)))
-        self.assertNotRegex(core, r"^            dist/", msg="action paths must include consumer/")
-        self.assertIn("working-directory: consumer", core)
-        self.assertIn("--notes-file RELEASE_NOTES.md", core)
+        self.assertNotIn("consumer/dist/", core)
+        self.assertIn(
+            "working-directory: ${{ steps.inputs.outputs.source-path }}",
+            core,
+        )
+        self.assertIn(
+            '--notes-file "$source_path/RELEASE_NOTES.md"', publication_script
+        )
         self.assertIn(
             'signer="ryanduguid/release-policy/.github/workflows/publish-archives.yml"',
             core,
@@ -639,6 +986,10 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
             encoding="utf-8"
         )
+        publication_script = (
+            ROOT / "scripts" / "publish_archives.sh"
+        ).read_text(encoding="utf-8")
+        policy_code = core + publication_script
 
         for required in (
             "SHA256SUMS",
@@ -654,17 +1005,28 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             "gate_no_existing_release",
         ):
             with self.subTest(required=required):
-                self.assertIn(required, core)
+                self.assertIn(required, policy_code)
 
-        self.assertIn("--draft", core)
-        self.assertIn("-F draft=false", core)
+        self.assertIn("--draft", publication_script)
+        self.assertIn("-F draft=false", publication_script)
         final_recheck = 'final_tag_commit="$(git ls-remote'
         publish = "gh api --method PATCH"
-        self.assertIn(final_recheck, core)
-        self.assertIn('gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"', core)
-        self.assertGreater(core.index(final_recheck), core.index("/tmp/draft-digests"))
-        self.assertGreater(core.index(publish), core.index(final_recheck))
-        publish_block = core[core.index(publish) : core.index(publish) + 300]
+        self.assertIn(final_recheck, publication_script)
+        self.assertIn(
+            'gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"',
+            publication_script,
+        )
+        self.assertGreater(
+            publication_script.index(final_recheck),
+            publication_script.index("/tmp/draft-digests"),
+        )
+        self.assertGreater(
+            publication_script.index(publish),
+            publication_script.index(final_recheck),
+        )
+        publish_block = publication_script[
+            publication_script.index(publish) : publication_script.index(publish) + 300
+        ]
         self.assertIn("repos/$GITHUB_REPOSITORY/releases/$release_id", publish_block)
 
     def test_neither_archive_workflow_uses_forbidden_handoff_or_upload_paths(self) -> None:

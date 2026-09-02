@@ -7,6 +7,16 @@ on:
         description: Lower-case hyphenated stem used for all release assets.
         required: true
         type: string
+      source-directory:
+        description: Tracked component directory containing release sources.
+        required: false
+        type: string
+        default: .
+      tag-prefix:
+        description: Optional lower-case hyphenated namespace for the release tag.
+        required: false
+        type: string
+        default: ""
       version-file:
         description: Safe relative path containing one canonical MAJOR.MINOR.PATCH line.
         required: false
@@ -59,23 +69,39 @@ jobs:
             || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
           test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
 
+      - name: Validate the component release inputs
+        id: inputs
+        env:
+          SOURCE_DIRECTORY: ${{ inputs.source-directory }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+        shell: bash
+        working-directory: consumer
+        run: |
+          set -euo pipefail
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
+          write_release_input_outputs "$SOURCE_DIRECTORY" "$TAG_PREFIX" consumer
+
       - name: Require a release-ready tag, repository and archive contract
         id: release
         working-directory: consumer
         env:
           ARTIFACT_STEM: ${{ inputs.artifact-stem }}
           GH_TOKEN: ${{ github.token }}
+          SOURCE_DIRECTORY: ${{ steps.inputs.outputs.source-directory }}
+          TAG_PREFIX: ${{ steps.inputs.outputs.tag-prefix }}
           VERSION_FILE: ${{ inputs.version-file }}
         shell: bash
         run: |
           set -euo pipefail
-          . ../policy/scripts/gates.sh
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
           run_archive_release_gates \
             "$GITHUB_REF_NAME" \
             "$GITHUB_SHA" \
             "$GITHUB_REPOSITORY" \
             "$ARTIFACT_STEM" \
-            "$VERSION_FILE"
+            "$VERSION_FILE" \
+            "$SOURCE_DIRECTORY" \
+            "$TAG_PREFIX"
 
       - name: Build deterministic source archives
         working-directory: consumer
@@ -86,23 +112,24 @@ jobs:
           set -euo pipefail
           stem="${{ steps.release.outputs.stem }}"
           version="${{ steps.release.outputs.version }}"
-          python ../policy/scripts/build_release_archives.py \
+          python "$GITHUB_WORKSPACE/policy/scripts/build_release_archives.py" \
             --commit "${{ steps.release.outputs.commit }}" \
             --prefix "${{ steps.release.outputs.prefix }}" \
-            --output-base "dist/$stem-$version"
+            --source-directory "${{ steps.inputs.outputs.source-directory }}" \
+            --output-base "${{ steps.inputs.outputs.source-path }}/dist/$stem-$version"
 
       - name: Generate an SPDX SBOM for the ZIP archive
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          file: consumer/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
+          file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
           format: spdx-json
           syft-version: v1.51.0
-          output-file: consumer/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+          output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
           upload-artifact: false
           upload-release-assets: false
 
       - name: Write and verify the exact release asset inventory
-        working-directory: consumer
+        working-directory: ${{ steps.inputs.outputs.source-path }}
         shell: bash
         run: |
           set -euo pipefail
@@ -123,12 +150,12 @@ jobs:
       - name: Preserve the exact candidate assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ steps.release.outputs.tag }}-${{ github.run_id }}-${{ github.run_attempt }}-candidate-assets
+          name: ${{ steps.release.outputs.artifact-tag }}-${{ github.run_id }}-${{ github.run_attempt }}-candidate-assets
           path: |
-            consumer/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
-            consumer/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
-            consumer/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
-            consumer/dist/SHA256SUMS
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+            ${{ steps.inputs.outputs.source-root }}/dist/SHA256SUMS
           if-no-files-found: error
           overwrite: false
           retention-days: 14
@@ -137,21 +164,21 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
-            consumer/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
-            consumer/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
-            consumer/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
-            consumer/dist/SHA256SUMS
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+            ${{ steps.inputs.outputs.source-root }}/dist/SHA256SUMS
 
       - name: Attest the SPDX SBOM for both source archives
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
-            consumer/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
-            consumer/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
-          sbom-path: consumer/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
+          sbom-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
 
       - name: Verify provenance and SBOM attestations before publication
-        working-directory: consumer
+        working-directory: ${{ steps.inputs.outputs.source-path }}
         env:
           GH_TOKEN: ${{ github.token }}
           MODULE_SHA: ${{ job.workflow_sha }}
@@ -196,221 +223,25 @@ jobs:
           test -n "$remote_tag_commit"
           test "$remote_tag_commit" = "$expected_commit"
           test "$GITHUB_SHA" = "$expected_commit"
-          . ../policy/scripts/gates.sh
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
           gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
           gate_no_existing_release "$tag" "$GITHUB_REPOSITORY"
 
       - name: Create, inspect and publish the immutable release
         working-directory: consumer
         env:
+          ARTIFACT_STEM: ${{ steps.release.outputs.stem }}
+          EXPECTED_COMMIT: ${{ steps.release.outputs.commit }}
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
         shell: bash
         run: |
           set -euo pipefail
-          tag="${{ steps.release.outputs.tag }}"
-          expected_commit="${{ steps.release.outputs.commit }}"
-          base="${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}"
-          zip="dist/$base.zip"
-          tar="dist/$base.tar.gz"
-          sbom="dist/$base.spdx.json"
-          assets=("$zip" "$tar" "$sbom" "dist/SHA256SUMS")
-          release_id=""
-          published=false
-
-          cleanup_current_draft() {
-            status="$?"
-            trap - EXIT
-            if [ "$status" -ne 0 ] && [ "$published" != true ]; then
-              # `gh release create` uploads the assets in the same call, so it
-              # can leave a draft behind and still fail before its id reached
-              # release_id. Recovering the id from the tag alone carries a
-              # residual risk: if `gh release create` fails before creating
-              # anything and a draft with this tag_name, name, draft and
-              # prerelease already exists, this deletes a draft the run did not
-              # create. gate_no_existing_release enumerates drafts in the
-              # immediately preceding step and the `concurrency` group
-              # serialises same-tag runs, so that window is seconds wide, but it
-              # is not closed. The sibling trap in release-python.yml avoids the
-              # window by gating on a captured id. Adopting the create-then-
-              # upload sequence that makes that possible here retires
-              # find_created_draft_release.py, so the PR raises it as a
-              # follow-up. A second window stays open in the other direction: a
-              # draft whose requested tag has not settled still reports a
-              # tag_name carrying the `untagged-` prefix, which matches nothing
-              # below, so the trap refuses and leaves that draft to block the
-              # retries this recovery exists to unblock. Anything other than
-              # exactly one match, including an empty or unparseable listing,
-              # leaves the id empty and the refusal stands.
-              if [ -z "$release_id" ] \
-                && gh api --paginate \
-                  -H "X-GitHub-Api-Version: 2026-03-10" \
-                  "repos/$GITHUB_REPOSITORY/releases" \
-                  > /tmp/cleanup-releases.json; then
-                release_id="$(jq -rs --arg tag "$tag" \
-                  '[(add // [])[] | select(.draft == true and .prerelease == false
-                                           and .tag_name == $tag and .name == $tag)]
-                   | if length == 1 then (.[0].id | tostring) else "" end' \
-                  /tmp/cleanup-releases.json)" || release_id=""
-              fi
-              if [ -n "$release_id" ] \
-                && gh api \
-                  -H "X-GitHub-Api-Version: 2026-03-10" \
-                  "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-                  > /tmp/cleanup-release.json \
-                && jq -e \
-                  --argjson release_id "$release_id" \
-                  --arg tag "$tag" \
-                  '.id == $release_id and .draft == true and .prerelease == false
-                   and .tag_name == $tag and .name == $tag' \
-                  /tmp/cleanup-release.json >/dev/null; then
-                gh api --method DELETE \
-                  -H "X-GitHub-Api-Version: 2026-03-10" \
-                  "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-                  >/dev/null
-              else
-                echo "refusing cleanup because the exact current draft identity was not proven" >&2
-              fi
-            fi
-            exit "$status"
-          }
-          trap cleanup_current_draft EXIT
-
-          created_release_url="$(gh release create "$tag" \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --draft \
-            --title "$tag" \
-            --notes-file RELEASE_NOTES.md \
-            "$zip#Deterministic source ZIP" \
-            "$tar#Deterministic source tar archive" \
-            "$sbom#SPDX 2.3 SBOM" \
-            "dist/SHA256SUMS#SHA-256 checksums")"
-
-          release_id="$(python ../policy/scripts/find_created_draft_release.py \
-            --repository "$GITHUB_REPOSITORY" \
-            --created-url "$created_release_url" \
-            --expected-tag "$tag" \
-            --attempts 5 \
-            --delay-seconds 5)"
-
-          expected_assets="$(printf '%s\n' \
-            "SHA256SUMS" \
-            "$base.spdx.json" \
-            "$base.tar.gz" \
-            "$base.zip" | LC_ALL=C sort)"
-          (
-            cd dist
-            for file in "SHA256SUMS" "$base.spdx.json" "$base.tar.gz" "$base.zip"; do
-              printf '%s\tsha256:%s\n' "$file" "$(sha256sum "$file" | cut -d' ' -f1)"
-            done
-          ) | LC_ALL=C sort > /tmp/expected-digests
-
-          # GitHub computes asset digests asynchronously, so a freshly uploaded
-          # asset can still report a null digest. Retry until every digest is a
-          # string and the whole inventory matches.
-          draft_ready=false
-          for _ in 1 2 3 4 5; do
-            gh api \
-              -H "X-GitHub-Api-Version: 2026-03-10" \
-              "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-              > /tmp/draft-release.json
-            jq -r '.assets[] | [.name, .digest] | @tsv' \
-              /tmp/draft-release.json | LC_ALL=C sort > /tmp/draft-digests
-            if jq -e --arg tag "$tag" \
-                '.draft == true and .prerelease == false
-                 and .tag_name == $tag and .name == $tag
-                 and (.assets | length) == 4
-                 and all(.assets[]; (.digest | type) == "string")' \
-                /tmp/draft-release.json >/dev/null \
-              && diff -u /tmp/expected-digests /tmp/draft-digests; then
-              draft_ready=true
-              break
-            fi
-            sleep 5
-          done
-          test "$draft_ready" = true
-          draft_assets="$(jq -r '.assets[].name' /tmp/draft-release.json | LC_ALL=C sort)"
-          test "$draft_assets" = "$expected_assets"
-          jq -j '.body' /tmp/draft-release.json > /tmp/draft-release-notes.md
-          diff -u RELEASE_NOTES.md /tmp/draft-release-notes.md
-
-          # Leave the identified draft untouched if the release tag or main
-          # moved while the draft was being inspected.
-          final_tag_commit="$(git ls-remote \
-            "https://github.com/$GITHUB_REPOSITORY.git" \
-            "refs/tags/$tag^{}" | cut -f1)"
-          test -n "$final_tag_commit"
-          test "$final_tag_commit" = "$expected_commit"
-          test "$GITHUB_SHA" = "$expected_commit"
-          . ../policy/scripts/gates.sh
-          gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
-
-          gh api --method PATCH \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-            -F draft=false \
-            -f make_latest=true \
-            >/dev/null
-          published=true
-
-          published_ready=false
-          for _ in 1 2 3 4 5; do
-            gh api \
-              -H "X-GitHub-Api-Version: 2026-03-10" \
-              "repos/$GITHUB_REPOSITORY/releases/$release_id" \
-              > /tmp/published-release.json
-            if jq -e --arg tag "$tag" \
-              '.draft == false and .prerelease == false and .immutable == true
-               and .tag_name == $tag and .name == $tag' \
-              /tmp/published-release.json >/dev/null; then
-              published_ready=true
-              break
-            fi
-            sleep 5
-          done
-          test "$published_ready" = true
-          test "$(git ls-remote \
-            "https://github.com/$GITHUB_REPOSITORY.git" \
-            "refs/tags/$tag^{}" | cut -f1)" = "$expected_commit"
-          jq -j '.body' /tmp/published-release.json > /tmp/published-release-notes.md
-          diff -u RELEASE_NOTES.md /tmp/published-release-notes.md
-          published_assets="$(jq -r '.assets[].name' /tmp/published-release.json | LC_ALL=C sort)"
-          test "$published_assets" = "$expected_assets"
-          jq -r '.assets[] | [.name, .digest] | @tsv' /tmp/published-release.json \
-            | LC_ALL=C sort > /tmp/published-digests
-          diff -u /tmp/expected-digests /tmp/published-digests
-
-          latest_ready=false
-          for _ in 1 2 3 4 5; do
-            if gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
-              --json tagName,isLatest \
-              | jq -e --arg tag "$tag" \
-                'any(.[]; .tagName == $tag and .isLatest == true)' >/dev/null; then
-              latest_ready=true
-              break
-            fi
-            sleep 5
-          done
-          test "$latest_ready" = true
-
-          release_verified=false
-          for _ in 1 2 3 4 5; do
-            if gh release verify "$tag" --repo "$GITHUB_REPOSITORY"; then
-              release_verified=true
-              break
-            fi
-            sleep 5
-          done
-          test "$release_verified" = true
-          for file in "${assets[@]}"; do
-            asset_verified=false
-            for _ in 1 2 3 4 5; do
-              if gh release verify-asset "$tag" "$file" --repo "$GITHUB_REPOSITORY"; then
-                asset_verified=true
-                break
-              fi
-              sleep 5
-            done
-            test "$asset_verified" = true
-          done
-          trap - EXIT
+          bash "$GITHUB_WORKSPACE/policy/scripts/publish_archives.sh" \
+            "$RELEASE_TAG" \
+            "$EXPECTED_COMMIT" \
+            "$ARTIFACT_STEM" \
+            "$RELEASE_VERSION" \
+            "$SOURCE_PATH"
