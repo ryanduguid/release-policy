@@ -25,12 +25,12 @@ CANONICAL_SHA256 = {
     ".github/dependabot.yml": "fa18b8f1272681a83062c370d846ca8a96cc4bcc6ede6441f19ac34e97d9fd40",
     ".github/workflows/ci.yml": "bb77b6e9415393e3e67f100395e696024c853eff76caecf4ce715368b97c36ed",
     ".github/workflows/codeql.yml": "52ea291e1f5acb778ecd21e2b59760af5b41d2259a8d1c4fd456ef7e557e5381",
-    ".github/workflows/publish-archives.yml": "6c60bb97704cfac6ce6fcf2e5d3389840051e69541bfa397198cd28ca03372ce",
-    ".github/workflows/release-archive.yml": "f1b9ff13dbb537808f019a41f88cb49c850b749e271b997ff079b923c46057f9",
-    ".github/workflows/release-python.yml": "3b3c2a3a96c8904b42ef5263d02a58b95b486d3e1b3fe8bab03401be7d159af9",
+    ".github/workflows/publish-archives.yml": "7de1130f4f051575031f2d64d37ce44246c63efb62ac2e862c0153ac018aff8c",
+    ".github/workflows/release-archive.yml": "5c5cd461edc181dd43a0ab785c1cb00dbb728f1d2744a97ee8273a0a205db6c3",
+    ".github/workflows/release-python.yml": "0238b14687361faf023e0e1012c77feb693c4f61a520da98890b5bc88d1ede95",
     ".github/workflows/release-skills.yml": "26246f4ad1575a90c776fcd71bcfbca3daa6e9604fc5601d974b40783fab7d7a",
     ".github/workflows/verify-skills.yml": "f9fb4fa7560eb561b2cc34fd58acbfe2e52440e10ae25a9fde67dad997d18941",
-    "README.md": "0159dd954184b971a0da200290bc9b03ebb28c22c95d4de5a5abde9f93ab4567",
+    "README.md": "e37f2676ba5402e1aa9e07e18432f713e1f0bc2d418fa000aa037cbcf7897723",
     "SECURITY.md": "9e7f9e17cf7c23e350ff08fbf25ff14a2e17071fad9b1b1d57c91a4a2e834594",
 }
 

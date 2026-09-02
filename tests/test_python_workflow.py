@@ -22,14 +22,75 @@ def job_block(workflow: str, name: str) -> str:
 class PythonWorkflowBoundaryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.publication_script = (
+            ROOT / "scripts" / "publish_python.sh"
+        ).read_text(encoding="utf-8")
 
-    def test_exposes_only_closed_version_inputs(self) -> None:
+    def test_exposes_only_closed_release_inputs_with_root_compatible_defaults(self) -> None:
         self.assertNotIn("version-command", self.workflow)
         self.assertNotIn("bash -c", self.workflow)
+        self.assertIn("source-directory:", self.workflow)
+        self.assertRegex(
+            self.workflow,
+            r"(?ms)^      source-directory:\n.*?^        default: \.$",
+        )
+        self.assertIn("tag-prefix:", self.workflow)
+        self.assertRegex(
+            self.workflow,
+            r'(?ms)^      tag-prefix:\n.*?^        default: ""$',
+        )
         self.assertIn("version-parser:", self.workflow)
         self.assertIn("default: pyproject", self.workflow)
         self.assertIn("version-file:", self.workflow)
         self.assertIn("default: pyproject.toml", self.workflow)
+
+    def test_component_inputs_are_validated_before_package_local_use(self) -> None:
+        test = job_block(self.workflow, "test")
+        build = job_block(self.workflow, "build")
+        publish = job_block(self.workflow, "publish")
+
+        for job in (test, build, publish):
+            validation = job.index("Validate the component release inputs")
+            first_component_path = job.index("steps.inputs.outputs.source-path")
+            self.assertLess(validation, first_component_path)
+            self.assertIn(
+                'SOURCE_DIRECTORY: ${{ inputs.source-directory }}',
+                job,
+            )
+            self.assertIn('TAG_PREFIX: ${{ inputs.tag-prefix }}', job)
+            self.assertIn('$GITHUB_WORKSPACE/policy/scripts/gates.sh', job)
+
+        self.assertIn(
+            "working-directory: ${{ steps.inputs.outputs.source-path }}",
+            test,
+        )
+        self.assertIn(
+            "working-directory: ${{ steps.inputs.outputs.source-path }}",
+            build,
+        )
+        self.assertNotIn(". ../policy/scripts/gates.sh", self.workflow)
+        self.assertNotIn("python ../policy/scripts/", self.workflow)
+
+    def test_namespaced_full_tag_never_becomes_a_candidate_filesystem_name(self) -> None:
+        build = job_block(self.workflow, "build")
+        publish = job_block(self.workflow, "publish")
+
+        self.assertIn(
+            "name: python-${{ steps.release.outputs.artifact-tag }}-",
+            build,
+        )
+        self.assertIn(
+            "CANDIDATE_NAME: python-${{ needs.build.outputs.artifact-tag }}-",
+            publish,
+        )
+        self.assertNotIn(
+            "name: python-${{ steps.release.outputs.tag }}-",
+            build,
+        )
+        self.assertIn('--tag "${{ steps.release.outputs.tag }}"', build)
+        self.assertIn('--source-ref "refs/tags/$tag"', publish)
+        self.assertIn("SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}", publish)
+        self.assertIn('$source_path/RELEASE_NOTES.md', self.publication_script)
 
     def test_build_is_read_only_and_publish_is_the_only_authorised_job(self) -> None:
         test = job_block(self.workflow, "test")
@@ -105,10 +166,12 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
         self.assertIn("working-directory: source", build)
         self.assertIn("path: candidate", publish)
         self.assertIn("--directory candidate", publish)
-        self.assertIn("source/RELEASE_NOTES.md", publish)
+        self.assertIn("SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}", publish)
+        self.assertIn('$source_path/RELEASE_NOTES.md', self.publication_script)
 
     def test_attestation_and_release_checks_bind_signer_source_ref_and_assets(self) -> None:
         publish = job_block(self.workflow, "publish")
+        policy_code = publish + self.publication_script
 
         for required in (
             "--source-digest",
@@ -120,31 +183,45 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
             ".immutable == true",
             "gh release verify-asset",
         ):
-            self.assertIn(required, publish)
+            self.assertIn(required, policy_code)
         self.assertIn(
             'signer="ryanduguid/release-policy/.github/workflows/release-python.yml"',
             publish,
         )
 
     def test_draft_creation_and_cleanup_use_only_the_current_numeric_release_id(self) -> None:
-        publish = job_block(self.workflow, "publish")
+        publication_script = self.publication_script
 
-        self.assertNotIn("gh release create", publish)
-        self.assertNotIn("gh release upload", publish)
-        self.assertIn("gh api --method POST", publish)
-        self.assertIn("release_id=", publish)
-        self.assertIn("repos/$GITHUB_REPOSITORY/releases/$release_id", publish)
+        self.assertNotIn("gh release create", publication_script)
+        self.assertNotIn("gh release upload", publication_script)
+        self.assertIn("gh api --method POST", publication_script)
+        self.assertIn("release_id=", publication_script)
+        self.assertIn(
+            "repos/$GITHUB_REPOSITORY/releases/$release_id", publication_script
+        )
         self.assertIn(
             'upload_url="https://uploads.github.com/repos/$GITHUB_REPOSITORY/'
             'releases/$release_id/assets"',
-            publish,
+            publication_script,
         )
-        self.assertNotIn(".upload_url |", publish)
-        self.assertIn("cleanup_current_draft", publish)
-        self.assertIn(".id == $release_id", publish)
-        self.assertIn(".draft == true", publish)
-        self.assertIn("gh api --method DELETE", publish)
-        self.assertIn("published=true", publish)
+        self.assertNotIn(".upload_url |", publication_script)
+        self.assertIn("cleanup_current_draft", publication_script)
+        self.assertIn(".id == $release_id", publication_script)
+        self.assertIn(".draft == true", publication_script)
+        self.assertIn("gh api --method DELETE", publication_script)
+        self.assertIn("published=true", publication_script)
+
+    def test_publish_delegates_the_release_state_machine_to_policy_code(self) -> None:
+        publish = job_block(self.workflow, "publish")
+        script = ROOT / "scripts" / "publish_python.sh"
+
+        self.assertTrue(script.is_file(), "the trusted Python publication script is missing")
+        script_text = script.read_text(encoding="utf-8")
+        self.assertIn('bash "$GITHUB_WORKSPACE/policy/scripts/publish_python.sh"', publish)
+        self.assertNotIn("cleanup_current_draft()", publish)
+        self.assertIn("cleanup_current_draft()", script_text)
+        self.assertNotIn("${{", script_text)
+        self.assertIn('source_path="$5"', script_text)
 
 
 if __name__ == "__main__":
