@@ -30,7 +30,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/release-python.yml": "0238b14687361faf023e0e1012c77feb693c4f61a520da98890b5bc88d1ede95",
     ".github/workflows/release-skills.yml": "26246f4ad1575a90c776fcd71bcfbca3daa6e9604fc5601d974b40783fab7d7a",
     ".github/workflows/verify-skills.yml": "f9fb4fa7560eb561b2cc34fd58acbfe2e52440e10ae25a9fde67dad997d18941",
-    "README.md": "e37f2676ba5402e1aa9e07e18432f713e1f0bc2d418fa000aa037cbcf7897723",
+    "README.md": "2978d9d4dbd7e007eb4bd6dce686a5ff2598fdabfb3fcd2e4a3556b478e05873",
     "SECURITY.md": "9e7f9e17cf7c23e350ff08fbf25ff14a2e17071fad9b1b1d57c91a4a2e834594",
 }
 
