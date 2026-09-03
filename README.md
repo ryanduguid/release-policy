@@ -308,6 +308,18 @@ SHA GitHub recorded for that run. `python scripts/check_canaries.py` validates
 the manifest offline; the scheduled CI run adds `--live` to detect pin drift or
 newer unrecorded successes.
 
+Archive and Python entries can opt into a component namespace with the optional
+`tag_prefix` field, a lower-case alphanumeric name separated by single hyphens.
+Recorded evidence and latest-success selection must both match exactly
+`<tag_prefix>/vMAJOR.MINOR.PATCH`. An omitted or empty prefix retains root
+`vMAJOR.MINOR.PATCH` tags; skills and verification entries cannot use a non-empty
+prefix. A sibling component's successful release never satisfies the canary.
+
+The maintained canaries use Accounting Review Pipeline's Xero archive and
+Review Ready Python releases, plus Australian Accounting Skills' release and
+read-only shared verification workflow. Existing published releases supply the
+release evidence; migrating these references does not require new releases.
+
 A current pin can temporarily be newer than the latest release evidence. The
 live audit reports that state explicitly without inventing a privileged dry
 run. It becomes current evidence only when that consumer completes its next
