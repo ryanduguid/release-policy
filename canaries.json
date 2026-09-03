@@ -29,13 +29,13 @@
       "workflow_path": ".github/workflows/release.yml"
     },
     {
-      "current_policy_sha": "d08de09646fc46b43d3e59394105005c123496bb",
+      "current_policy_sha": "3ff09b654a17b9a3b55548e25e6108ee582b00c4",
       "evidence": {
-        "head_sha": "0cd5478c0aa412813cd1b0a182f365250d823c93",
-        "policy_sha": "f180faa567e95669224211d0282b3b437fe79ea9",
-        "ref": "v0.1.5",
-        "run_id": 32865033315,
-        "started_at": "2026-08-25T15:19:05Z"
+        "head_sha": "27743fcc8f04e56afbeea2ee293fd0e10d59130f",
+        "policy_sha": "3ff09b654a17b9a3b55548e25e6108ee582b00c4",
+        "ref": "v0.1.6",
+        "run_id": 33646477102,
+        "started_at": "2026-09-02T15:07:13Z"
       },
       "family": "skills",
       "policy_workflow": ".github/workflows/release-skills.yml",
@@ -43,13 +43,13 @@
       "workflow_path": ".github/workflows/release.yml"
     },
     {
-      "current_policy_sha": "d08de09646fc46b43d3e59394105005c123496bb",
+      "current_policy_sha": "3ff09b654a17b9a3b55548e25e6108ee582b00c4",
       "evidence": {
-        "head_sha": "c4b4d4eae0503941b82857473c6f99fe782e13ff",
-        "policy_sha": "d08de09646fc46b43d3e59394105005c123496bb",
+        "head_sha": "27743fcc8f04e56afbeea2ee293fd0e10d59130f",
+        "policy_sha": "3ff09b654a17b9a3b55548e25e6108ee582b00c4",
         "ref": "main",
-        "run_id": 33570523161,
-        "started_at": "2026-09-01T23:19:51Z"
+        "run_id": 33646426504,
+        "started_at": "2026-09-02T15:06:45Z"
       },
       "family": "verify",
       "policy_workflow": ".github/workflows/verify-skills.yml",
