@@ -17,6 +17,7 @@ _WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
 _RELEASE_TAG = re.compile(
     r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
 )
+_TAG_PREFIX = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _FAMILIES = {"archive", "python", "skills", "verify"}
 
 
@@ -37,6 +38,7 @@ class Canary:
     policy_workflow: str
     current_policy_sha: str
     evidence: Evidence
+    tag_prefix: str = ""
 
 
 @dataclass(frozen=True)
@@ -45,9 +47,19 @@ class CheckResult:
     warnings: tuple[str, ...]
 
 
-def _mapping(value: object, *, label: str, keys: set[str]) -> dict[str, object]:
-    if not isinstance(value, dict) or set(value) != keys:
-        raise ValueError(f"{label} must contain exactly {sorted(keys)}")
+def _mapping(
+    value: object,
+    *,
+    label: str,
+    keys: set[str],
+    optional_keys: set[str] | None = None,
+) -> dict[str, object]:
+    optional = optional_keys or set()
+    if not isinstance(value, dict) or set(value) - optional != keys:
+        raise ValueError(
+            f"{label} must contain exactly {sorted(keys)} "
+            f"and only optional keys {sorted(optional)}"
+        )
     return value
 
 
@@ -62,6 +74,17 @@ def _sha(value: object, *, label: str) -> str:
     if _FULL_SHA.fullmatch(result) is None:
         raise ValueError(f"{label} must be a full lower-case SHA")
     return result
+
+
+def _matches_release_tag(ref: object, tag_prefix: str) -> bool:
+    if not isinstance(ref, str):
+        return False
+    if tag_prefix:
+        prefix = f"{tag_prefix}/"
+        if not ref.startswith(prefix):
+            return False
+        ref = ref[len(prefix):]
+    return _RELEASE_TAG.fullmatch(ref) is not None
 
 
 def parse_manifest(document: object) -> tuple[Canary, ...]:
@@ -86,6 +109,7 @@ def parse_manifest(document: object) -> tuple[Canary, ...]:
                 "repository",
                 "workflow_path",
             },
+            optional_keys={"tag_prefix"},
         )
         family = _text(entry["family"], label=f"family[{index}].family")
         if family not in _FAMILIES:
@@ -93,6 +117,18 @@ def parse_manifest(document: object) -> tuple[Canary, ...]:
         if family in seen:
             raise ValueError(f"duplicate canary family: {family}")
         seen.add(family)
+
+        tag_prefix = entry.get("tag_prefix", "")
+        if not isinstance(tag_prefix, str) or (
+            tag_prefix and (
+                family not in {"archive", "python"}
+                or _TAG_PREFIX.fullmatch(tag_prefix) is None
+            )
+        ):
+            raise ValueError(
+                f"{family}.tag_prefix must be empty or a lower-case hyphenated "
+                "archive/Python namespace"
+            )
 
         repository = _text(entry["repository"], label=f"{family}.repository")
         if _REPOSITORY.fullmatch(repository) is None:
@@ -118,7 +154,7 @@ def parse_manifest(document: object) -> tuple[Canary, ...]:
         if family == "verify":
             if ref != "main":
                 raise ValueError("verify evidence must use main")
-        elif _RELEASE_TAG.fullmatch(ref) is None:
+        elif not _matches_release_tag(ref, tag_prefix):
             raise ValueError(f"{family} release evidence must use a canonical version tag")
 
         canaries.append(
@@ -144,6 +180,7 @@ def parse_manifest(document: object) -> tuple[Canary, ...]:
                         label=f"{family}.evidence.started_at",
                     ),
                 ),
+                tag_prefix=tag_prefix,
             )
         )
     return tuple(canaries)
@@ -214,7 +251,7 @@ def _latest_relevant_run(payload: object, canary: Canary) -> dict[str, object] |
         if canary.family == "verify":
             if branch == "main":
                 return run
-        elif isinstance(branch, str) and _RELEASE_TAG.fullmatch(branch):
+        elif _matches_release_tag(branch, canary.tag_prefix):
             return run
     return None
 
