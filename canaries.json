@@ -1,59 +1,61 @@
 {
   "families": [
     {
-      "current_policy_sha": "fca32335275ee264799644ccd659b025358dd23c",
+      "current_policy_sha": "3ff09b654a17b9a3b55548e25e6108ee582b00c4",
       "evidence": {
-        "head_sha": "f880d7aa348e3f9051a09ea94494cf04f0da16da",
-        "policy_sha": "47480b782926179b621ec1c6643ef88c80fc8fd4",
-        "ref": "v0.1.5",
-        "run_id": 32694029726,
-        "started_at": "2026-08-24T05:34:47Z"
+        "head_sha": "3ae854911bf36f00bd3cc3eeafd1855848896629",
+        "policy_sha": "3ff09b654a17b9a3b55548e25e6108ee582b00c4",
+        "ref": "xero-trial-balance-export/v0.1.6",
+        "run_id": 33650049566,
+        "started_at": "2026-09-02T15:40:14Z"
       },
       "family": "archive",
       "policy_workflow": ".github/workflows/release-archive.yml",
-      "repository": "ryanduguid/accounting-excel-toolkit",
+      "repository": "ryanduguid/accounting-review-pipeline",
+      "tag_prefix": "xero-trial-balance-export",
+      "workflow_path": ".github/workflows/release-xero-trial-balance-export.yml"
+    },
+    {
+      "current_policy_sha": "3ff09b654a17b9a3b55548e25e6108ee582b00c4",
+      "evidence": {
+        "head_sha": "2de565b3ce3916afe718b2b895d5474930030aee",
+        "policy_sha": "3ff09b654a17b9a3b55548e25e6108ee582b00c4",
+        "ref": "review-ready-gate/v0.1.3",
+        "run_id": 33671339947,
+        "started_at": "2026-09-02T19:06:52Z"
+      },
+      "family": "python",
+      "policy_workflow": ".github/workflows/release-python.yml",
+      "repository": "ryanduguid/accounting-review-pipeline",
+      "tag_prefix": "review-ready-gate",
+      "workflow_path": ".github/workflows/release-review-ready-gate.yml"
+    },
+    {
+      "current_policy_sha": "8b4de1ed339f1358b5f3e850b63412d8717d01da",
+      "evidence": {
+        "head_sha": "1d6b9f12c6faed307018c524d76a3c6689db3f46",
+        "policy_sha": "8b4de1ed339f1358b5f3e850b63412d8717d01da",
+        "ref": "v0.2.0",
+        "run_id": 33622813334,
+        "started_at": "2026-09-02T11:05:39Z"
+      },
+      "family": "skills",
+      "policy_workflow": ".github/workflows/release-skills.yml",
+      "repository": "ryanduguid/australian-accounting-skills",
       "workflow_path": ".github/workflows/release.yml"
     },
     {
       "current_policy_sha": "8b4de1ed339f1358b5f3e850b63412d8717d01da",
       "evidence": {
-        "head_sha": "ec36d30a183b5d0d1258e6e51f3d4378a1b1dd3c",
-        "policy_sha": "3b8a377207cab2c7c808fcc96b66578f4695beea",
-        "ref": "v0.1.1",
-        "run_id": 32925012003,
-        "started_at": "2026-08-26T03:03:28Z"
-      },
-      "family": "python",
-      "policy_workflow": ".github/workflows/release-python.yml",
-      "repository": "ryanduguid/workpaper-review-gate",
-      "workflow_path": ".github/workflows/release.yml"
-    },
-    {
-      "current_policy_sha": "3ff09b654a17b9a3b55548e25e6108ee582b00c4",
-      "evidence": {
-        "head_sha": "27743fcc8f04e56afbeea2ee293fd0e10d59130f",
-        "policy_sha": "3ff09b654a17b9a3b55548e25e6108ee582b00c4",
-        "ref": "v0.1.6",
-        "run_id": 33646477102,
-        "started_at": "2026-09-02T15:07:13Z"
-      },
-      "family": "skills",
-      "policy_workflow": ".github/workflows/release-skills.yml",
-      "repository": "ryanduguid/hardhat-ledger",
-      "workflow_path": ".github/workflows/release.yml"
-    },
-    {
-      "current_policy_sha": "3ff09b654a17b9a3b55548e25e6108ee582b00c4",
-      "evidence": {
-        "head_sha": "27743fcc8f04e56afbeea2ee293fd0e10d59130f",
-        "policy_sha": "3ff09b654a17b9a3b55548e25e6108ee582b00c4",
+        "head_sha": "1bde4cc049382d51574f3ae3652b871d9f8e6fd6",
+        "policy_sha": "8b4de1ed339f1358b5f3e850b63412d8717d01da",
         "ref": "main",
-        "run_id": 33646426504,
-        "started_at": "2026-09-02T15:06:45Z"
+        "run_id": 33720956208,
+        "started_at": "2026-09-03T05:55:56Z"
       },
       "family": "verify",
       "policy_workflow": ".github/workflows/verify-skills.yml",
-      "repository": "ryanduguid/hardhat-ledger",
+      "repository": "ryanduguid/australian-accounting-skills",
       "workflow_path": ".github/workflows/verify.yml"
     }
   ],
