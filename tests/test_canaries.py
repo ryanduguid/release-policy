@@ -344,6 +344,18 @@ class CanaryManifestTests(unittest.TestCase):
         self.assertIn("python scripts/check_canaries.py", workflow)
         self.assertIn("if: github.event_name == 'schedule'", workflow)
         self.assertIn("python scripts/check_canaries.py --live", workflow)
+        group = next(
+            line.strip().removeprefix("group: ")
+            for line in workflow.splitlines()
+            if line.strip().startswith("group: ")
+        )
+        groups = {
+            group.replace("${{ github.workflow }}", "CI")
+            .replace("${{ github.ref }}", "refs/heads/main")
+            .replace("${{ github.event_name }}", event)
+            for event in ("schedule", "push", "workflow_dispatch")
+        }
+        self.assertEqual(len(groups), 3, "live audit must not share a cancellation group")
 
 
 if __name__ == "__main__":
