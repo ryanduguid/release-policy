@@ -23,7 +23,7 @@ root = Path(sys.argv[1]).resolve()
 CANONICAL_SHA256 = {
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
     ".github/dependabot.yml": "fa18b8f1272681a83062c370d846ca8a96cc4bcc6ede6441f19ac34e97d9fd40",
-    ".github/workflows/ci.yml": "bb77b6e9415393e3e67f100395e696024c853eff76caecf4ce715368b97c36ed",
+    ".github/workflows/ci.yml": "1b0a2611a2d6dd38228ae8a96b9bb6ffa269128864484b6154f1cded21826ff5",
     ".github/workflows/codeql.yml": "52ea291e1f5acb778ecd21e2b59760af5b41d2259a8d1c4fd456ef7e557e5381",
     ".github/workflows/publish-archives.yml": "7de1130f4f051575031f2d64d37ce44246c63efb62ac2e862c0153ac018aff8c",
     ".github/workflows/release-archive.yml": "5c5cd461edc181dd43a0ab785c1cb00dbb728f1d2744a97ee8273a0a205db6c3",
