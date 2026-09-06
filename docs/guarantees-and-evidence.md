@@ -23,7 +23,7 @@
   pull request (ADR-0001).
 
 Phase 2 and phase 3 designs are recorded in
-[ADR-0001](../docs/adr/0001-shared-release-policy.md). Skill packs use a
+[ADR-0001](adr/0001-shared-release-policy.md). Skill packs use a
 separate adapter so their inventory and stronger validation controls are not
 reduced to the source-archive contract. The historical notes-only `v0.1.0`
 marker proves neither release phase.
