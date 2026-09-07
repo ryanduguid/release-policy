@@ -27,6 +27,12 @@ class RepositoryFixture(unittest.TestCase):
             cwd=self.root,
             check=True,
         )
+        # git commit otherwise spawns `git maintenance run --auto`, which
+        # detaches on current Git and can still be writing into .git while
+        # tearDown removes the temporary directory.
+        subprocess.run(
+            ["git", "config", "maintenance.auto", "false"], cwd=self.root, check=True
+        )
 
     def tearDown(self) -> None:
         self.temporary.cleanup()

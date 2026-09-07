@@ -157,6 +157,12 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
                 cwd=root,
                 check=True,
             )
+            # git commit otherwise spawns `git maintenance run --auto`, which
+            # detaches on current Git and can still be writing into .git while
+            # the temporary directory is removed.
+            subprocess.run(
+                ["git", "config", "maintenance.auto", "false"], cwd=root, check=True
+            )
             (root / "root.txt").write_text("root\n", encoding="utf-8")
             component = root / "packages" / "example-tool"
             component.mkdir(parents=True)
@@ -197,6 +203,10 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
                 ["git", "config", "user.name", "Release Policy Test"],
                 cwd=root,
                 check=True,
+            )
+            # No detached auto-maintenance after the commit; see the test above.
+            subprocess.run(
+                ["git", "config", "maintenance.auto", "false"], cwd=root, check=True
             )
             tracked = root / "packages" / "tracked"
             tracked.mkdir(parents=True)
@@ -583,6 +593,12 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             )
             subprocess.run(
                 ["git", "config", "user.name", "Release Policy Test"],
+                cwd=repository,
+                check=True,
+            )
+            # No detached auto-maintenance after the commit; see the builder tests.
+            subprocess.run(
+                ["git", "config", "maintenance.auto", "false"],
                 cwd=repository,
                 check=True,
             )
