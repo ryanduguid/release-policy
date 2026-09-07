@@ -19,6 +19,12 @@ _RELEASE_TAG = re.compile(
 )
 _TAG_PREFIX = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _FAMILIES = {"archive", "python", "skills", "verify"}
+# GitHub's compare API reports the pin relative to release-policy main. Only
+# these two statuses mean the pin is an ancestor of main. GitHub refuses a
+# reusable-workflow call at a commit no branch or tag reaches, before any job
+# starts, so a pin that matches the consumer's workflow byte for byte can still
+# be dead after a history rewrite of this repository.
+_REACHABLE_STATUSES = frozenset({"identical", "behind"})
 
 
 @dataclass(frozen=True)
@@ -279,6 +285,25 @@ def check_live(
                 f"{prefix}: current pin {actual_pin} != recorded "
                 f"{canary.current_policy_sha}"
             )
+
+        compare_endpoint = (
+            "repos/ryanduguid/release-policy/compare/"
+            f"main...{canary.current_policy_sha}"
+        )
+        try:
+            comparison = fetch_json(compare_endpoint)
+        except RuntimeError as error:
+            errors.append(
+                f"{prefix}: current pin {canary.current_policy_sha} is not reachable "
+                f"from release-policy main: {error}"
+            )
+        else:
+            status = comparison.get("status") if isinstance(comparison, dict) else None
+            if status not in _REACHABLE_STATUSES:
+                errors.append(
+                    f"{prefix}: current pin {canary.current_policy_sha} is not reachable "
+                    f"from release-policy main (compare status {status!r})"
+                )
 
         run_endpoint = f"repos/{canary.repository}/actions/runs/{canary.evidence.run_id}"
         try:
