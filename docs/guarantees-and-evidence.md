@@ -34,8 +34,13 @@ marker proves neither release phase.
 verification consumer. Each entry binds the consumer's current literal policy
 pin to the latest successful production-shaped run and the reusable workflow
 SHA GitHub recorded for that run. `python scripts/check_canaries.py` validates
-the manifest offline; the scheduled CI run adds `--live` to detect pin drift or
-newer unrecorded successes.
+the manifest offline; the scheduled CI run adds `--live` to detect pin drift,
+newer unrecorded successes, and a pin that no branch or tag of this repository
+reaches any more. GitHub refuses a reusable-workflow call at such a commit
+before any job starts, so after a history rewrite here a consumer's pin can
+match its workflow byte for byte and still fail every release. The audit asks
+GitHub's compare API how the pin sits relative to `main` and accepts only
+`identical` or `behind`.
 
 Archive and Python entries can opt into a component namespace with the optional
 `tag_prefix` field, a lower-case alphanumeric name separated by single hyphens.

@@ -29,13 +29,13 @@ CANONICAL_SHA256 = {
     ".github/workflows/release-python.yml": "0238b14687361faf023e0e1012c77feb693c4f61a520da98890b5bc88d1ede95",
     ".github/workflows/release-skills.yml": "26246f4ad1575a90c776fcd71bcfbca3daa6e9604fc5601d974b40783fab7d7a",
     ".github/workflows/verify-skills.yml": "f9fb4fa7560eb561b2cc34fd58acbfe2e52440e10ae25a9fde67dad997d18941",
-    "README.md": "50d4a21f1723f9abe7a15a13828dbd3100cdcec26336ddac868d93ae8ed930d1",
+    "README.md": "1067f28fca8f41fbbc4ee6d9e6214e3d0e9b1b7c1b7e7f18f57d1e37b185e069",
     "docs/python-consumers.md": "c31c0e85cdfcfc7e0cea1422a388cd16f5dc17070db9d22775bbea1da265840a",
     "docs/pypi-publishing.md": "d371728da74e3308fa18304240e2ffbf6323412c28e5c3d525cb325550cef3b4",
     "docs/archive-consumers.md": "16730282b48c25aa522b3bd6cf6b9be6f6fa0ed63762c69c8dd16b30bb79661b",
     "docs/skill-consumers.md": "bf410ecab21c23bf4a51331c4eb62fd6f566310bf9cd85ce0fc527ffa8823cfa",
     "docs/consumer-prerequisites.md": "0843bf113cbe6963cce05ddfdd447cd75c7ed847dd6c7a5c9cb6fe868d980335",
-    "docs/guarantees-and-evidence.md": "1d5b9ae80e771b423e171df219d80c30417ed3e3f9f4dff2f585e1e3d836bd46",
+    "docs/guarantees-and-evidence.md": "c2044a7a26be229c20e660d2486a2800dd1b51e8d7b4eb5df12587224d59e60d",
     "SECURITY.md": "9e7f9e17cf7c23e350ff08fbf25ff14a2e17071fad9b1b1d57c91a4a2e834594",
 }
 
