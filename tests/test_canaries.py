@@ -170,6 +170,8 @@ class CanaryManifestTests(unittest.TestCase):
                 ]
 
                 def fetch_json(endpoint: str) -> object:
+                    if "/compare/" in endpoint:
+                        return {"status": "behind"}
                     if endpoint.endswith("/actions/runs/123"):
                         return recorded
                     return {"workflow_runs": [*irrelevant, recorded]}
@@ -199,6 +201,8 @@ class CanaryManifestTests(unittest.TestCase):
         ):
             with self.subTest(message=message):
                 def fetch_json(endpoint: str) -> object:
+                    if "/compare/" in endpoint:
+                        return {"status": "behind"}
                     if endpoint.endswith("/actions/runs/123"):
                         return evidence
                     return {"workflow_runs": runs}
@@ -226,6 +230,8 @@ class CanaryManifestTests(unittest.TestCase):
                 )
 
                 def fetch_json(endpoint: str) -> object:
+                    if "/compare/" in endpoint:
+                        return {"status": "identical"}
                     if endpoint.endswith("/actions/runs/123"):
                         return recorded
                     return {"workflow_runs": [
@@ -262,6 +268,8 @@ class CanaryManifestTests(unittest.TestCase):
 
         def fetch_json(endpoint: str) -> object:
             requests.append(endpoint)
+            if endpoint == f"repos/ryanduguid/release-policy/compare/main...{SHA}":
+                return {"status": "behind"}
             if endpoint.endswith("/actions/runs/123"):
                 return run_payload()
             if "/actions/workflows/" in endpoint:
@@ -283,10 +291,12 @@ class CanaryManifestTests(unittest.TestCase):
 
         self.assertEqual(result.errors, ())
         self.assertEqual(result.warnings, ())
-        self.assertEqual(len(requests), 3)
+        self.assertEqual(len(requests), 4)
 
     def test_detects_stale_current_pin_and_newer_success(self) -> None:
         def fetch_json(endpoint: str) -> object:
+            if "/compare/" in endpoint:
+                return {"status": "behind"}
             if endpoint.endswith("/actions/runs/123"):
                 return run_payload()
             return {"workflow_runs": [run_payload(run_id=456), run_payload()]}
@@ -307,6 +317,8 @@ class CanaryManifestTests(unittest.TestCase):
         document = manifest(current_sha=SHA, evidence_sha=OLDER_SHA)
 
         def fetch_json(endpoint: str) -> object:
+            if "/compare/" in endpoint:
+                return {"status": "behind"}
             if endpoint.endswith("/actions/runs/123"):
                 return run_payload(policy_sha=OLDER_SHA)
             return {"workflow_runs": [run_payload(policy_sha=OLDER_SHA)]}
@@ -323,6 +335,41 @@ class CanaryManifestTests(unittest.TestCase):
         self.assertEqual(result.errors, ())
         self.assertEqual(len(result.warnings), 1)
         self.assertIn("current pin lacks release evidence", result.warnings[0])
+
+    def test_rejects_a_current_pin_unreachable_from_policy_main(self) -> None:
+        """A pin can match the consumer's workflow byte for byte and still be
+        dead: after a history rewrite of this repository the commit reaches no
+        branch or tag, and GitHub refuses the reusable-workflow call before any
+        job starts. The audit asks GitHub how the pin sits relative to main and
+        accepts only an ancestor."""
+        for compare, message in (
+            ({"status": "ahead"}, "compare status 'ahead'"),
+            ({"status": "diverged"}, "compare status 'diverged'"),
+            ({"unexpected": True}, "compare status None"),
+            (RuntimeError("HTTP 404: No commit found"), "No commit found"),
+        ):
+            with self.subTest(message=message):
+                def fetch_json(endpoint: str) -> object:
+                    if "/compare/" in endpoint:
+                        if isinstance(compare, Exception):
+                            raise compare
+                        return compare
+                    if endpoint.endswith("/actions/runs/123"):
+                        return run_payload()
+                    return {"workflow_runs": [run_payload()]}
+
+                result = check_canaries.check_live(
+                    check_canaries.parse_manifest(manifest()),
+                    fetch_json=fetch_json,
+                    fetch_text=lambda _: (
+                        "uses: ryanduguid/release-policy/.github/workflows/"
+                        f"release-python.yml@{SHA}\n"
+                    ),
+                )
+                self.assertEqual(len(result.errors), 1)
+                self.assertIn("is not reachable from release-policy main", result.errors[0])
+                self.assertIn(message, result.errors[0])
+                self.assertEqual(result.warnings, ())
 
     def test_load_rejects_noncanonical_json(self) -> None:
         with tempfile.TemporaryDirectory(prefix="canary-manifest-") as directory:
