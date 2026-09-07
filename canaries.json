@@ -1,7 +1,7 @@
 {
   "families": [
     {
-      "current_policy_sha": "4b0b1b17deb1da16c5d2262a08e93e82336485e8",
+      "current_policy_sha": "99a6314ca2cd4ea21b465614b73d108fd8fe2077",
       "evidence": {
         "head_sha": "36fa194d523c073127cbb1f3c21f7e68b088b6c9",
         "policy_sha": "1637bebd06c06a4606efdaa5fea6d88ddd546b38",
@@ -30,7 +30,7 @@
       "workflow_path": ".github/workflows/release-review-ready-gate.yml"
     },
     {
-      "current_policy_sha": "4b0b1b17deb1da16c5d2262a08e93e82336485e8",
+      "current_policy_sha": "99a6314ca2cd4ea21b465614b73d108fd8fe2077",
       "evidence": {
         "head_sha": "1d6b9f12c6faed307018c524d76a3c6689db3f46",
         "policy_sha": "8b4de1ed339f1358b5f3e850b63412d8717d01da",
@@ -44,7 +44,7 @@
       "workflow_path": ".github/workflows/release.yml"
     },
     {
-      "current_policy_sha": "4b0b1b17deb1da16c5d2262a08e93e82336485e8",
+      "current_policy_sha": "99a6314ca2cd4ea21b465614b73d108fd8fe2077",
       "evidence": {
         "head_sha": "3f3100ea327c6123df0e7b034016c542a1b90f69",
         "policy_sha": "4b0b1b17deb1da16c5d2262a08e93e82336485e8",

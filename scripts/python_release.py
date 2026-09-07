@@ -317,7 +317,7 @@ def _version_from_pyproject(path: Path) -> str:
 def _literal_assignment_value(node: ast.stmt) -> tuple[bool, object | None]:
     if isinstance(node, ast.Assign):
         targets = node.targets
-        value = node.value
+        value: ast.expr | None = node.value
     elif isinstance(node, ast.AnnAssign):
         targets = [node.target]
         value = node.value

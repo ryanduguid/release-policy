@@ -20,6 +20,12 @@ jobs:
     timeout-minutes: 15
     name: lint and test
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # scripts/python_release.py reads pyproject metadata with tomllib,
+        # which arrived in Python 3.11, so 3.11 is the floor under test.
+        python: ["3.11", "3.12", "3.13"]
     env:
       ACTIONLINT_VERSION: "1.7.12"
       ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
@@ -68,7 +74,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
 
       - name: Install pinned Python tools
         run: >-
@@ -76,12 +82,20 @@ jobs:
           "build==1.2.2"
           "coverage==7.15.4"
           "diff-cover==10.5.1"
+          "ruff==0.16.6"
+          "mypy==2.3.1"
+
+      - name: Ruff the policy scripts and tests
+        run: python -m ruff check .
+
+      - name: Type-check the policy scripts
+        run: python -m mypy
 
       - name: Validate the release-family canary manifest
         run: python scripts/check_canaries.py
 
       - name: Audit live canary pins and successful-run evidence
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' && matrix.python == '3.12'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/check_canaries.py --live

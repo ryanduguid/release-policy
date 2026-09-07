@@ -1,0 +1,23 @@
+# Tool configuration only. This repository publishes reusable workflows and the
+# policy scripts behind them, not a Python distribution: nothing here is
+# installed or built, and CI pins its Python tools in ci.yml.
+
+[tool.ruff]
+line-length = 100
+src = ["scripts", "tests"]
+
+[tool.ruff.lint]
+# First-enablement set: syntax and undefined-name errors only (E9, F82).
+# Existing import layout and string literals stay as they are.
+select = ["E9", "F82"]
+
+[tool.mypy]
+# scripts/python_release.py reads pyproject metadata with tomllib, which
+# arrived in Python 3.11, so 3.11 is the floor the policy scripts run on.
+python_version = "3.11"
+# The scripts import one another as top-level modules from their own
+# directory, and the tests import them as `scripts.<name>`; checking the
+# scripts alone keeps one module name per file.
+files = ["scripts"]
+ignore_missing_imports = true
+pretty = true
