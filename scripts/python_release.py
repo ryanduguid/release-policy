@@ -437,11 +437,8 @@ def _regular_asset(path: Path) -> None:
 
 
 def _digest(path: Path) -> str:
-    value = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            value.update(chunk)
-    return value.hexdigest()
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def _manifest_bytes(inventory: CandidateInventory) -> bytes:
@@ -451,8 +448,6 @@ def _manifest_bytes(inventory: CandidateInventory) -> bytes:
 
 
 def _exact_directory_files(directory: Path) -> set[str]:
-    if directory.is_symlink() or not directory.is_dir():
-        raise ValueError("candidate directory must be a regular directory")
     entries = list(directory.iterdir())
     for entry in entries:
         if entry.is_symlink() or not entry.is_file():
