@@ -40,7 +40,7 @@ def build_release_archives(
     output_base: Path,
     source_directory: str = ".",
     cwd: Path | None = None,
-) -> tuple[Path, Path]:
+) -> tuple[Path, ...]:
     """Build ZIP and tar.gz archives with stable text and time metadata."""
 
     _validate_prefix(prefix)
