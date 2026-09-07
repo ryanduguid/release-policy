@@ -46,11 +46,11 @@
     {
       "current_policy_sha": "99a6314ca2cd4ea21b465614b73d108fd8fe2077",
       "evidence": {
-        "head_sha": "3f3100ea327c6123df0e7b034016c542a1b90f69",
-        "policy_sha": "4b0b1b17deb1da16c5d2262a08e93e82336485e8",
+        "head_sha": "2e0a376bbd7c2756220e7c04037759376aab0954",
+        "policy_sha": "99a6314ca2cd4ea21b465614b73d108fd8fe2077",
         "ref": "main",
-        "run_id": 33954928833,
-        "started_at": "2026-09-05T08:19:06Z"
+        "run_id": 34101411762,
+        "started_at": "2026-09-07T08:35:40Z"
       },
       "family": "verify",
       "policy_workflow": ".github/workflows/verify-skills.yml",
