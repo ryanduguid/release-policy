@@ -44,6 +44,4 @@ a full policy commit.
 
 Run the existing offline manifest check with `python scripts/check_canaries.py`. Scheduled CI adds the live audit, which checks each consumer's pin, confirms the pin is still reachable from this repository's `main`, and compares the recorded evidence with the latest successful run.
 
-Consumer migrations remain separately reviewed changes pinned to full policy commits. No workflow or repository protection changes accompany this documentation.
-
 </details>
