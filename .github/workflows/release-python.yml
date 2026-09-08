@@ -227,7 +227,7 @@ jobs:
           uv run --locked --extra dev --python 3.12 python -m build
 
       - name: Generate SPDX SBOM for the wheel
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
           format: spdx-json
