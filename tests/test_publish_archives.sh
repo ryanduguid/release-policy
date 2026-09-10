@@ -44,12 +44,17 @@ gh() {
       jq -e --rawfile body "$FIXTURE/consumer/RELEASE_NOTES.md" \
         '. == {tag_name:"v1.2.3",name:"v1.2.3",draft:true,prerelease:false,body:$body}' \
         "$input" >/dev/null || return 1
-      jq -n --rawfile body "$FIXTURE/consumer/RELEASE_NOTES.md" \
-        '{id:7,tag_name:"v1.2.3",name:"v1.2.3",draft:true,prerelease:false,body:$body}'
+      local created_tag=v1.2.3
+      case "$CASE" in
+        settles|never-settles) created_tag=untagged-pending ;;
+        changed-tag) created_tag=v9.9.9 ;;
+      esac
+      jq -n --arg tag "$created_tag" --rawfile body "$FIXTURE/consumer/RELEASE_NOTES.md" \
+        '{id:7,tag_name:$tag,name:"v1.2.3",draft:true,prerelease:false,body:$body}'
       ;;
     POST\ https://uploads.github.com/repos/example/fixture/releases/7/assets\?*)
       # The ID must be known even when the first upload fails.
-      [ "$CASE" = success ] || return 1
+      [[ "$CASE" = success || "$CASE" = settles ]] || return 1
       local name="${endpoint#*name=}" expected_media
       name="${name%%&*}"
       case "$name" in
@@ -70,8 +75,13 @@ gh() {
       printf '%s\n' "$GITHUB_SHA"
       ;;
     'GET repos/example/fixture/releases/7')
+      if [ "$CASE" = never-settles ] || { [ "$CASE" = settles ] && [ ! -f "$FIXTURE/seen-unsettled" ]; }; then
+        touch "$FIXTURE/seen-unsettled"
+        printf '{"id":7,"tag_name":"untagged-pending","name":"v1.2.3","draft":true,"prerelease":false}\n'
+        return
+      fi
       case "$CASE" in
-        success)
+        success|settles)
           local draft=true
           [ ! -f "$FIXTURE/published" ] || draft=false
           jq -n --argjson draft "$draft" --slurpfile assets "$FIXTURE/assets" \
@@ -80,6 +90,7 @@ gh() {
           ;;
         already-published) printf '{"id":7,"tag_name":"v1.2.3","name":"v1.2.3","draft":false,"prerelease":false}\n' ;;
         wrong-identity) printf '{"id":8,"tag_name":"v1.2.3","name":"v1.2.3","draft":true,"prerelease":false}\n' ;;
+        changed-tag) printf '{"id":7,"tag_name":"v9.9.9","name":"v1.2.3","draft":true,"prerelease":false}\n' ;;
         unsettled-tag) printf '{"id":7,"tag_name":"untagged-pending","name":"v1.2.3","draft":true,"prerelease":false}\n' ;;
         *) printf '{"id":7,"tag_name":"v1.2.3","name":"v1.2.3","draft":true,"prerelease":false}\n' ;;
       esac
@@ -96,16 +107,22 @@ gh() {
 }
 export -f gh
 git() {
-  if [ "$1" = ls-remote ]; then printf '%s\trefs/tags/v1.2.3^{}\n' "$GITHUB_SHA";
+  if [ "$1" = ls-remote ]; then
+    [ "$CASE" != missing-tag ] || return 0
+    if [ "$CASE" = moved-tag ]; then printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\trefs/tags/v1.2.3^{}\n';
+    else printf '%s\trefs/tags/v1.2.3^{}\n' "$GITHUB_SHA"; fi
   else echo "unexpected git request" >&2; return 1; fi
 }
 export -f git
+sleep() { printf '%s\n' "$*" >> "$FIXTURE/sleeps"; }
+export -f sleep
 
 failures=0
-for CASE in create-fails upload-fails already-published wrong-identity unsettled-tag; do
+for CASE in create-fails upload-fails already-published wrong-identity unsettled-tag missing-tag moved-tag changed-tag never-settles; do
   export CASE
   : > "$FIXTURE/calls"
   : > "$FIXTURE/deleted"
+  : > "$FIXTURE/sleeps"
   if bash "$POLICY/scripts/publish_archives.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3 \
       "$FIXTURE/consumer" > "$FIXTURE/output" 2>&1; then
     echo "FAIL $CASE: publication unexpectedly succeeded"
@@ -120,9 +137,22 @@ for CASE in create-fails upload-fails already-published wrong-identity unsettled
   else
     echo "ok   $CASE preserves draft ownership"
   fi
+  if [[ "$CASE" = missing-tag || "$CASE" = moved-tag ]] && [ -s "$FIXTURE/calls" ]; then
+    echo "FAIL $CASE: GitHub was called after tag verification failed"
+    failures=$((failures+1))
+  fi
+  if [ "$CASE" = changed-tag ] && { [ -s "$FIXTURE/sleeps" ] || grep -q 'uploads.github.com' "$FIXTURE/calls"; }; then
+    echo "FAIL changed-tag: retried or uploaded after an identity change"
+    failures=$((failures+1))
+  fi
+  if [ "$CASE" = never-settles ] && { [ "$(wc -l < "$FIXTURE/sleeps" | tr -d ' ')" != 4 ] || grep -q 'uploads.github.com' "$FIXTURE/calls"; }; then
+    echo "FAIL never-settles: expected four retry delays without uploads"
+    failures=$((failures+1))
+  fi
 done
 
-CASE=success
+for CASE in success settles; do
+rm -f "$FIXTURE/published" "$FIXTURE/seen-unsettled"
 : > "$FIXTURE/assets"
 : > "$FIXTURE/uploads"
 : > "$FIXTURE/deleted"
@@ -134,10 +164,11 @@ if bash "$POLICY/scripts/publish_archives.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3
     "$FIXTURE/consumer" > "$FIXTURE/output" 2>&1 \
     && [ -f "$FIXTURE/published" ] && [ ! -s "$FIXTURE/deleted" ] \
     && [ "$(sort -u "$FIXTURE/uploads" | wc -l | tr -d ' ')" = 4 ]; then
-  echo "ok   success publishes all four verified assets"
+  echo "ok   $CASE publishes all four verified assets"
 else
-  echo "FAIL success: publication or asset inventory failed"
+  echo "FAIL $CASE: publication or asset inventory failed"
   cat "$FIXTURE/output"
   failures=$((failures+1))
 fi
+done
 test "$failures" -eq 0
