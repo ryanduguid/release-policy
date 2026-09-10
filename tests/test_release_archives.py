@@ -18,7 +18,6 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import build_release_archives as release_archives  # noqa: E402
-import find_created_draft_release as draft_release  # noqa: E402
 from tests.test_skill_workflows import YAML_KEY, YamlContractAssertions  # noqa: E402
 
 
@@ -577,7 +576,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('dist="$source_path/dist"', publication_script)
         self.assertIn(
-            '--notes-file "$source_path/RELEASE_NOTES.md"', publication_script
+            '--rawfile body "$source_path/RELEASE_NOTES.md"', publication_script
         )
         self.assertNotIn("consumer/dist/", core)
 
@@ -651,7 +650,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertNotIn("cleanup_current_draft()", publish)
         self.assertIn("cleanup_current_draft()", script_text)
         self.assertNotIn("${{", script_text)
-        self.assertIn('--notes-file "$source_path/RELEASE_NOTES.md"', script_text)
+        self.assertIn('--rawfile body "$source_path/RELEASE_NOTES.md"', script_text)
 
     def test_source_consumer_contract_rejects_privilege_and_failure_masking(
         self,
@@ -943,10 +942,6 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn('$GITHUB_WORKSPACE/policy/scripts/gates.sh', core)
         self.assertIn('$GITHUB_WORKSPACE/policy/scripts/build_release_archives.py', core)
         self.assertIn('$GITHUB_WORKSPACE/policy/scripts/publish_archives.sh', core)
-        self.assertIn(
-            '$GITHUB_WORKSPACE/policy/scripts/find_created_draft_release.py',
-            publication_script,
-        )
         self.assertNotIn("../policy/scripts/", policy_code)
         for forbidden in (
             "pip install",
@@ -990,7 +985,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             core,
         )
         self.assertIn(
-            '--notes-file "$source_path/RELEASE_NOTES.md"', publication_script
+            '--rawfile body "$source_path/RELEASE_NOTES.md"', publication_script
         )
         self.assertIn(
             'signer="ryanduguid/release-policy/.github/workflows/publish-archives.yml"',
@@ -1014,7 +1009,6 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             ".zip",
             "actions/attest@",
             "actions/upload-artifact@",
-            "find_created_draft_release.py",
             "gh attestation verify",
             "gh release verify-asset",
             "gate_main_matches",
@@ -1023,7 +1017,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, policy_code)
 
-        self.assertIn("--draft", publication_script)
+        self.assertIn("draft: true", publication_script)
         self.assertIn("-F draft=false", publication_script)
         final_recheck = 'final_tag_commit="$(git ls-remote'
         publish = "gh api --method PATCH"
@@ -1060,154 +1054,6 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
                 with self.subTest(forbidden=forbidden):
                     self.assertNotIn(forbidden, workflow)
 
-
-class CreatedDraftLookupTests(unittest.TestCase):
-    def test_selects_only_the_exact_created_untagged_draft(self) -> None:
-        created_url = "https://github.com/example/tool/releases/tag/untagged-created"
-        releases = [
-            {
-                "id": 41,
-                "html_url": "https://github.com/example/tool/releases/tag/v9.9.9",
-                "draft": True,
-                "prerelease": False,
-            },
-            {
-                "id": 42,
-                "html_url": created_url,
-                "draft": True,
-                "prerelease": False,
-            },
-        ]
-
-        self.assertEqual(
-            "42",
-            draft_release.select_created_draft_release_id(releases, created_url),
-        )
-
-    def test_retries_visibility_transient_api_and_partial_json_failures(self) -> None:
-        created_url = "https://api.github.com/repos/example/tool/releases/42"
-        created = {
-            "id": 42,
-            "url": created_url,
-            "draft": True,
-            "prerelease": False,
-        }
-        failures: tuple[BaseException | list[dict[str, object]], ...] = (
-            draft_release.ReleaseNotVisibleError("not visible yet"),
-            subprocess.CalledProcessError(
-                1,
-                ["gh", "api"],
-                stderr="HTTP 503: Service Unavailable",
-            ),
-            json.JSONDecodeError("partial", '{"id":', 6),
-            [created],
-        )
-        results = iter(failures)
-        delays: list[float] = []
-
-        def list_releases() -> list[dict[str, object]]:
-            result = next(results)
-            if isinstance(result, BaseException):
-                raise result
-            return result
-
-        self.assertEqual(
-            "42",
-            draft_release.find_created_draft_release_id(
-                list_releases,
-                created_url,
-                attempts=4,
-                delay_seconds=2,
-                sleep=delays.append,
-            ),
-        )
-        self.assertEqual([2, 2, 2], delays)
-
-    def test_tracks_the_exact_id_until_the_requested_tag_is_visible(self) -> None:
-        created_url = "https://github.com/example/tool/releases/tag/untagged-created"
-        listings = iter(
-            (
-                [
-                    {
-                        "id": 42,
-                        "html_url": created_url,
-                        "tag_name": "untagged-created",
-                        "draft": True,
-                        "prerelease": False,
-                    }
-                ],
-                [
-                    {
-                        "id": 42,
-                        "html_url": "https://github.com/example/tool/releases/tag/v1.2.3",
-                        "tag_name": "v1.2.3",
-                        "draft": True,
-                        "prerelease": False,
-                    },
-                    {
-                        "id": 43,
-                        "html_url": created_url,
-                        "tag_name": "v9.9.9",
-                        "draft": True,
-                        "prerelease": False,
-                    },
-                ],
-            )
-        )
-        delays: list[float] = []
-
-        self.assertEqual(
-            "42",
-            draft_release.find_created_draft_release_id(
-                lambda: next(listings),
-                created_url,
-                expected_tag="v1.2.3",
-                attempts=2,
-                delay_seconds=2,
-                sleep=delays.append,
-            ),
-        )
-        self.assertEqual([2], delays)
-
-    def test_fails_immediately_for_credentials_or_an_ineligible_match(self) -> None:
-        created_url = "https://api.github.com/repos/example/tool/releases/42"
-        credentials = mock.Mock(
-            side_effect=subprocess.CalledProcessError(
-                1,
-                ["gh", "api"],
-                stderr="HTTP 401: Bad credentials",
-            )
-        )
-        with self.assertRaises(subprocess.CalledProcessError):
-            draft_release.find_created_draft_release_id(
-                credentials,
-                created_url,
-                attempts=5,
-                delay_seconds=0,
-            )
-        self.assertEqual(1, credentials.call_count)
-
-        ineligible = mock.Mock(
-            return_value=[
-                {
-                    "id": 42,
-                    "url": created_url,
-                    "draft": False,
-                    "prerelease": False,
-                }
-            ]
-        )
-        with self.assertRaisesRegex(
-            draft_release.ReleaseLookupError,
-            "not an eligible draft",
-        ):
-            draft_release.find_created_draft_release_id(
-                ineligible,
-                created_url,
-                attempts=5,
-                delay_seconds=0,
-            )
-        self.assertEqual(1, ineligible.call_count)
 
 
 if __name__ == "__main__":
