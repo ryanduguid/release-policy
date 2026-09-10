@@ -2,19 +2,19 @@
 
 Policy checks establish release evidence, not accounting correctness.
 
-**Input:** the recorded `review-ready-gate/v0.1.3` Python canary from Accounting Review Pipeline.
+**Input:** the recorded `review-ready-gate/v0.1.5` Python canary from Accounting Review Pipeline.
 
-The consumer's approved integration line is:
+The consumer's recorded integration line on 10 September 2026 is:
 
 ```yaml
-uses: ryanduguid/release-policy/.github/workflows/release-python.yml@787db4590e725cfd37104c8a9dd9e75f7fd4c018
+uses: ryanduguid/release-policy/.github/workflows/release-python.yml@fcf25e532e9eb60056ae6e5c819cf3125c4f4b91
 ```
 
-**Recorded output:** [run 33671339947](https://github.com/ryanduguid/accounting-review-pipeline/actions/runs/33671339947) supplies the release evidence for [review-ready-gate/v0.1.3](https://github.com/ryanduguid/accounting-review-pipeline/releases/tag/review-ready-gate/v0.1.3), with policy SHA `3ff09b654a17b9a3b55548e25e6108ee582b00c4`.
+**Recorded output:** [run 34163202701](https://github.com/ryanduguid/accounting-review-pipeline/actions/runs/34163202701) supplies the release evidence for [review-ready-gate/v0.1.5](https://github.com/ryanduguid/accounting-review-pipeline/releases/tag/review-ready-gate/v0.1.5), with policy SHA `fcf25e532e9eb60056ae6e5c819cf3125c4f4b91`.
 
-**Human decision:** Check the release artefacts and their attestations against that recorded policy revision. The current consumer pin is newer than this release evidence; the earlier run does not certify the newer pin.
+**Human decision:** Check the release artefacts and their attestations against that recorded policy revision. This evidence applies to the recorded policy revision. Later policy changes need their own verification.
 
-This example is read from [canaries.json](canaries.json), which retains the source commit, policy SHA and run identity. This repository has no package installation command.
+This snapshot was checked against [canaries.json](canaries.json) on 10 September 2026. The manifest retains the source commit, policy SHA and run identity; consult it for later updates. This repository has no package installation command.
 
 <details>
 <summary>Consumer setup, policy guarantees and historical limits</summary>
