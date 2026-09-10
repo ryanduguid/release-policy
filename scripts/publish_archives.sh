@@ -22,40 +22,8 @@ published=false
 cleanup_current_draft() {
   status="$?"
   trap - EXIT
-  if [ "$status" -ne 0 ] && [ "$published" != true ]; then
-    # `gh release create` uploads the assets in the same call, so it
-    # can leave a draft behind and still fail before its id reached
-    # release_id. Recovering the id from the tag alone carries a
-    # residual risk: if `gh release create` fails before creating
-    # anything and a draft with this tag_name, name, draft and
-    # prerelease already exists, this deletes a draft the run did not
-    # create. gate_no_existing_release enumerates drafts in the
-    # immediately preceding step and the `concurrency` group
-    # serialises same-tag runs, so that window is seconds wide, but it
-    # is not closed. The sibling trap in release-python.yml avoids the
-    # window by gating on a captured id. Adopting the create-then-
-    # upload sequence that makes that possible here retires
-    # find_created_draft_release.py, so the PR raises it as a
-    # follow-up. A second window stays open in the other direction: a
-    # draft whose requested tag has not settled still reports a
-    # tag_name carrying the `untagged-` prefix, which matches nothing
-    # below, so the trap refuses and leaves that draft to block the
-    # retries this recovery exists to unblock. Anything other than
-    # exactly one match, including an empty or unparseable listing,
-    # leaves the id empty and the refusal stands.
-    if [ -z "$release_id" ] \
-      && gh api --paginate \
-        -H "X-GitHub-Api-Version: 2026-03-10" \
-        "repos/$GITHUB_REPOSITORY/releases" \
-        > /tmp/cleanup-releases.json; then
-      release_id="$(jq -rs --arg tag "$tag" \
-        '[(add // [])[] | select(.draft == true and .prerelease == false
-                                 and .tag_name == $tag and .name == $tag)]
-         | if length == 1 then (.[0].id | tostring) else "" end' \
-        /tmp/cleanup-releases.json)" || release_id=""
-    fi
-    if [ -n "$release_id" ] \
-      && gh api \
+  if [ "$status" -ne 0 ] && [ -n "$release_id" ] && [ "$published" != true ]; then
+    if gh api \
         -H "X-GitHub-Api-Version: 2026-03-10" \
         "repos/$GITHUB_REPOSITORY/releases/$release_id" \
         > /tmp/cleanup-release.json \
@@ -77,23 +45,45 @@ cleanup_current_draft() {
 }
 trap cleanup_current_draft EXIT
 
-created_release_url="$(gh release create "$tag" \
-  --repo "$GITHUB_REPOSITORY" \
-  --verify-tag \
-  --draft \
-  --title "$tag" \
-  --notes-file "$source_path/RELEASE_NOTES.md" \
-  "$zip#Deterministic source ZIP" \
-  "$tar#Deterministic source tar archive" \
-  "$sbom#SPDX 2.3 SBOM" \
-  "$dist/SHA256SUMS#SHA-256 checksums")"
+jq -n \
+  --arg tag "$tag" \
+  --rawfile body "$source_path/RELEASE_NOTES.md" \
+  '{tag_name: $tag, name: $tag, body: $body,
+    draft: true, prerelease: false}' \
+  > /tmp/create-release.json
+gh api --method POST \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  "repos/$GITHUB_REPOSITORY/releases" \
+  --input /tmp/create-release.json \
+  > /tmp/created-release.json
+release_id="$(jq -er '.id | select(type == "number") | tostring' \
+  /tmp/created-release.json)"
+upload_url="https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets"
+jq -e \
+  --argjson release_id "$release_id" \
+  --arg tag "$tag" \
+  '.id == $release_id and .draft == true and .prerelease == false
+   and .tag_name == $tag and .name == $tag' \
+  /tmp/created-release.json >/dev/null
+jq -j '.body' /tmp/created-release.json > /tmp/created-release-notes.md
+diff -u "$source_path/RELEASE_NOTES.md" /tmp/created-release-notes.md
 
-release_id="$(python "$GITHUB_WORKSPACE/policy/scripts/find_created_draft_release.py" \
-  --repository "$GITHUB_REPOSITORY" \
-  --created-url "$created_release_url" \
-  --expected-tag "$tag" \
-  --attempts 5 \
-  --delay-seconds 5)"
+upload_asset() {
+  file="$1"
+  media_type="$2"
+  label="$3"
+  name="$(basename "$file")"
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]
+  gh api --method POST \
+    -H "Content-Type: $media_type" \
+    "$upload_url?name=$name&label=$label" \
+    --input "$file" \
+    >/dev/null
+}
+upload_asset "$zip" application/zip Deterministic%20source%20ZIP
+upload_asset "$tar" application/gzip Deterministic%20source%20tar%20archive
+upload_asset "$sbom" application/spdx+json SPDX%202.3%20SBOM
+upload_asset "$dist/SHA256SUMS" text/plain SHA-256%20checksums
 
 expected_assets="$(printf '%s\n' \
   "SHA256SUMS" \
@@ -118,8 +108,8 @@ for _ in 1 2 3 4 5; do
     > /tmp/draft-release.json
   jq -r '.assets[] | [.name, .digest] | @tsv' \
     /tmp/draft-release.json | LC_ALL=C sort > /tmp/draft-digests
-  if jq -e --arg tag "$tag" \
-      '.draft == true and .prerelease == false
+  if jq -e --arg tag "$tag" --argjson release_id "$release_id" \
+      '.id == $release_id and .draft == true and .prerelease == false
        and .tag_name == $tag and .name == $tag
        and (.assets | length) == 4
        and all(.assets[]; (.digest | type) == "string")' \
@@ -162,8 +152,8 @@ for _ in 1 2 3 4 5; do
     -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$GITHUB_REPOSITORY/releases/$release_id" \
     > /tmp/published-release.json
-  if jq -e --arg tag "$tag" \
-    '.draft == false and .prerelease == false and .immutable == true
+  if jq -e --arg tag "$tag" --argjson release_id "$release_id" \
+    '.id == $release_id and .draft == false and .prerelease == false and .immutable == true
      and .tag_name == $tag and .name == $tag' \
     /tmp/published-release.json >/dev/null; then
     published_ready=true
