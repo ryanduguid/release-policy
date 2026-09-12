@@ -38,6 +38,7 @@ a full policy commit.
 - [PyPI hand-off and one-time setup](docs/pypi-publishing.md)
 - [Source archives](docs/archive-consumers.md)
 - [Skill verification and releases](docs/skill-consumers.md)
+- [Attribution checks](docs/attribution-consumers.md)
 - [Prerequisites](docs/consumer-prerequisites.md)
 - [Guarantees and canary evidence](docs/guarantees-and-evidence.md)
 - [Shared-policy decision](docs/adr/0001-shared-release-policy.md)
