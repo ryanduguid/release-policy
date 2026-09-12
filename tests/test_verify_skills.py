@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+import unittest
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
-import subprocess
-import sys
 from tempfile import TemporaryDirectory
-import unittest
 from unittest import mock
-
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))

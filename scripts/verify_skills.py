@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Sequence
-from pathlib import Path, PurePosixPath
 import re
 import stat
 import subprocess
 import sys
-
+from collections.abc import Callable, Sequence
+from pathlib import Path, PurePosixPath
 
 SUPPORTED_MODES = frozenset({"subcontractor-accounting-v1"})
 REGULAR_GIT_MODES = frozenset({"100644", "100755"})

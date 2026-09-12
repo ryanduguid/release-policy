@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
 from typing import Sequence
 
 from python_release import validate_source_directory

@@ -1,24 +1,24 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 import tarfile
-from tempfile import TemporaryDirectory
 import unittest
-from unittest import mock
 import zipfile
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import build_release_archives as release_archives  # noqa: E402
 from tests.test_skill_workflows import YAML_KEY, YamlContractAssertions  # noqa: E402
+
+import build_release_archives as release_archives  # noqa: E402
 
 
 def _sha256(path: Path) -> str:
