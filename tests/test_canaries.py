@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from scripts import check_canaries
-
 
 SHA = "1" * 40
 OLDER_SHA = "2" * 40

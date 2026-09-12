@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+import unittest
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
-import subprocess
-import sys
 from tempfile import TemporaryDirectory
-import unittest
 from unittest import mock
-
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -81,7 +80,7 @@ class SkillVerifierTests(unittest.TestCase):
 
         verify_skills.verify_skill_pack(self.root, "subcontractor-accounting-v1", "VERSION", runner=runner)
 
-        # Catches commands_for_mode mutations that reorder commands or change a fixed argument.
+        # Catches verification_commands mutations that reorder commands or change an argument.
         self.assertEqual(EXPECTED_COMMANDS, tuple(call[0] for call in calls))
         self.assertEqual(4, len(calls))
         for _, cwd, check, shell in calls:

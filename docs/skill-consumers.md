@@ -39,14 +39,18 @@ Use the separate release adapter for annotated version tags:
 Replace `<full-40-char-commit-sha>` with a reviewed literal 40-character
 commit before committing either consumer workflow.
 
+`skills-verification-mode` is optional and defaults to the only supported
+mode, `subcontractor-accounting-v1`. Both workflows still accept it, so the
+lines above stay valid; a caller may drop them.
+
 In mode `subcontractor-accounting-v1` the release adapter refuses the tag
 `v0.1.0` and fails its `guard` job with `v0.1.0 is frozen and must never be
 rebuilt or replaced`, because the mode treats a consumer's `v0.1.0` as a frozen
 historical marker that no release may rebuild or replace, so a first skill-pack
 release must carry some other tag, `v0.1.1` or later by convention.
 
-The `subcontractor-accounting-v1` verifier requires a tracked regular version
-file, `VERSION` by default, plus tracked regular files
+The `subcontractor-accounting-v1` verifier requires a tracked regular
+`VERSION` file, plus tracked regular files
 `requirements-test.txt`, `scripts/validate_validation.py`,
 `tests/verify_skills_cli.py` and at least one tracked regular `test*.py` file
 under `tests/`. It runs these fixed commands in order:

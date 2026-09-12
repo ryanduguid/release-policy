@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import argparse
 import ast
-from dataclasses import dataclass
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import tomllib
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from typing import Any, Sequence
-
 
 _CANONICAL_VERSION = re.compile(
     r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
