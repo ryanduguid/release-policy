@@ -40,7 +40,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # shellcheck and actionlint do not depend on the Python under test, so
+      # they download and run once, on the 3.12 leg, like the live canary audit.
       - name: Download and verify shellcheck
+        if: matrix.python == '3.12'
         shell: bash
         run: |
           set -euo pipefail
@@ -49,10 +52,12 @@ jobs:
           tar -xJf "shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
 
       - name: Shellcheck the scripts and tests
+        if: matrix.python == '3.12'
         run: |
           "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" -x scripts/*.sh tests/*.sh
 
       - name: Download and verify actionlint
+        if: matrix.python == '3.12'
         shell: bash
         run: |
           set -euo pipefail
@@ -65,6 +70,7 @@ jobs:
       # add it. Until that ships, ignore this one known false positive; remove the
       # -ignore flag once #707 lands in a release.
       - name: Actionlint the workflows
+        if: matrix.python == '3.12'
         run: |
           ./actionlint \
             -shellcheck "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" \

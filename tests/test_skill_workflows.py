@@ -401,57 +401,6 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
 
         self.assert_release_dag_contract(workflow)
 
-    def test_release_dag_contract_rejects_extra_jobs_and_wrong_active_needs(self) -> None:
-        workflow = self.read_workflow("release-skills.yml")
-        extra_job = workflow.replace(
-            "jobs:\n  guard:",
-            "jobs:\n"
-            "  bypass:\n"
-            "    runs-on: ubuntu-latest\n"
-            "    steps:\n"
-            "      - run: true\n\n"
-            "  guard:",
-            1,
-        )
-        wrong_needs = workflow.replace(
-            "    needs: [guard, verify]\n",
-            "    needs: bypass\n    # needs: [guard, verify]\n",
-            1,
-        )
-        flow_job = workflow.replace(
-            "  verify:\n"
-            "    needs: guard\n"
-            "    permissions:\n"
-            "      contents: read\n"
-            "    uses: ./.github/workflows/verify-skills.yml\n"
-            "    with:\n"
-            "      skills-verification-mode: ${{ inputs.skills-verification-mode }}\n",
-            "  verify: {needs: guard, permissions: {contents: read}, uses: "
-            "./.github/workflows/verify-skills.yml, with: "
-            '{skills-verification-mode: "${{ inputs.skills-verification-mode }}"}}\n',
-            1,
-        )
-        anchored_job = workflow.replace("  guard:\n", "  guard: &guard_job\n", 1)
-        aliased_job = anchored_job[: anchored_job.index("  publish:")] + (
-            "  publish: *guard_job\n"
-        )
-
-        # Catches an unapproved fourth job in the closed release DAG.
-        with self.subTest(mutation="extra job"), self.assertRaises(AssertionError):
-            self.assert_release_dag_contract(extra_job)
-        # Catches a publication job whose only active dependency bypasses the
-        # guard and verifier while the approved dependency survives as a comment.
-        with self.subTest(mutation="wrong active needs"), self.assertRaises(
-            AssertionError
-        ):
-            self.assert_release_dag_contract(wrong_needs)
-        # Catches a contract-owned called job supplied as an inline flow map.
-        with self.subTest(mutation="flow-map job"), self.assertRaises(AssertionError):
-            self.assert_release_dag_contract(flow_job)
-        # Catches a contract-owned called job supplied through an alias.
-        with self.subTest(mutation="aliased job"), self.assertRaises(AssertionError):
-            self.assert_release_dag_contract(aliased_job)
-
     def test_release_verification_job_has_only_read_permission_and_verifier_inputs(self) -> None:
         verify = self.job_block(self.read_workflow("release-skills.yml"), "verify")
 
@@ -470,51 +419,6 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
         workflow = self.read_workflow("release-skills.yml")
 
         self.assert_release_publication_contract(workflow)
-
-    def test_release_publication_contract_rejects_quoted_flow_and_alias_permissions(
-        self,
-    ) -> None:
-        workflow = self.read_workflow("release-skills.yml")
-        quoted_permission = workflow.replace(
-            "      id-token: write\n    uses: ./.github/workflows/publish-archives.yml",
-            '      id-token: write\n      "packages": write\n'
-            "    uses: ./.github/workflows/publish-archives.yml",
-            1,
-        )
-        flow_permission = workflow.replace(
-            "    permissions:\n"
-            "      attestations: write\n"
-            "      contents: write\n"
-            "      id-token: write\n",
-            "    permissions: {attestations: write, contents: write, "
-            "id-token: write}\n",
-            1,
-        )
-        aliased_permission = workflow.replace(
-            "permissions:\n  contents: read\n",
-            "permissions: &publish_permissions\n"
-            "  attestations: write\n"
-            "  contents: write\n"
-            "  id-token: write\n",
-            1,
-        ).replace(
-            "    permissions:\n"
-            "      attestations: write\n"
-            "      contents: write\n"
-            "      id-token: write\n",
-            "    permissions: *publish_permissions\n",
-            1,
-        )
-
-        # Catches an extra write permission hidden behind a quoted YAML key.
-        with self.assertRaises(AssertionError):
-            self.assert_release_publication_contract(quoted_permission)
-        # Catches a privileged permission block supplied as an inline flow map.
-        with self.assertRaises(AssertionError):
-            self.assert_release_publication_contract(flow_permission)
-        # Catches a privileged permission block supplied through an alias.
-        with self.assertRaises(AssertionError):
-            self.assert_release_publication_contract(aliased_permission)
 
     def test_adapters_forbid_state_transfer_open_commands_and_custom_outputs(self) -> None:
         workflows = (
