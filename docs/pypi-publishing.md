@@ -4,7 +4,7 @@ PyPI cannot name a reusable workflow as a Trusted Publisher
 ([pypi/warehouse#11096](https://github.com/pypi/warehouse/issues/11096)), so the
 publish step runs in the consumer, not here. This module builds, tests, gates,
 SBOMs and attests the distribution, then hands the exact same files to the
-caller as a run artifact.
+caller as a run artefact.
 
 Set the input, then add a second job:
 
@@ -38,7 +38,7 @@ Set the input, then add a second job:
             uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
 
 The `release` job exposes `stem` and `version` outputs so the caller can name
-the artifact without repeating the version logic. Consumer tests and the build
+the artefact without repeating the version logic. Consumer tests and the build
 run on separate `contents: read` jobs with sibling source and policy checkouts.
 The publication job keeps source, policy and candidate data in three sibling
 directories, downloads by immutable Actions artefact ID, verifies the API
