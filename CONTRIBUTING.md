@@ -30,7 +30,7 @@ CI also runs pinned ShellCheck and actionlint over `scripts/*.sh`, `tests/*.sh`
 and the workflows. Changed lines in `scripts/*.py` need complete branch
 coverage.
 
-Install the git hooks once with `python -m pip install pre-commit && pre-commit install`; they run the pinned ruff check and ruff format on staged files.
+Install the git hook once with `python -m pip install pre-commit && pre-commit install`; it runs the pinned ruff check on staged files.
 
 ## Pull requests
 
