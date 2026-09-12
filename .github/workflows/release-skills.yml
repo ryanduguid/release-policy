@@ -14,8 +14,9 @@ on:
         default: VERSION
       skills-verification-mode:
         description: Closed policy-owned skill-pack verification mode.
-        required: true
+        required: false
         type: string
+        default: subcontractor-accounting-v1
 
 permissions:
   contents: read

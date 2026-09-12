@@ -26,7 +26,7 @@ def require_supported_mode(mode: str) -> None:
 
 def guard_skill_release(mode: str, tag: str) -> None:
     require_supported_mode(mode)
-    if mode == "subcontractor-accounting-v1" and tag == "v0.1.0":
+    if tag == "v0.1.0":
         raise VerificationError("v0.1.0 is frozen and must never be rebuilt or replaced")
 
 
@@ -125,8 +125,7 @@ def read_canonical_version(path: Path) -> str:
     return match.group(1)
 
 
-def commands_for_mode(mode: str, *, python: str = sys.executable) -> tuple[Command, ...]:
-    require_supported_mode(mode)
+def verification_commands(*, python: str = sys.executable) -> tuple[Command, ...]:
     return (
         (python, "-m", "pip", "install", "--isolated", "--disable-pip-version-check", "--no-input", "--no-deps", "--requirement", "requirements-test.txt"),
         (python, "-B", "-m", "unittest", "discover", "-s", "tests", "-v"),
@@ -149,7 +148,7 @@ def verify_skill_pack(
     require_tracked_regular_file(root, "tests/verify_skills_cli.py", label="Skills CLI program")
     require_tracked_test_files(root)
     read_canonical_version(version_path)
-    for command in commands_for_mode(mode):
+    for command in verification_commands():
         runner(command, cwd=root, check=True, shell=False)
 
 

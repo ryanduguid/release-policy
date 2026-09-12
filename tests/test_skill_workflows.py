@@ -272,8 +272,12 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
             tuple(inputs),
             ("skills-verification-mode", "version-file"),
         )
-        self.assertRegex(inputs["skills-verification-mode"], r"(?m)^        required: true$")
+        self.assertRegex(inputs["skills-verification-mode"], r"(?m)^        required: false$")
         self.assertRegex(inputs["skills-verification-mode"], r"(?m)^        type: string$")
+        self.assertRegex(
+            inputs["skills-verification-mode"],
+            r"(?m)^        default: subcontractor-accounting-v1$",
+        )
         self.assertRegex(inputs["version-file"], r"(?m)^        required: false$")
         self.assertRegex(inputs["version-file"], r"(?m)^        type: string$")
         self.assertRegex(inputs["version-file"], r"(?m)^        default: VERSION$")
@@ -332,9 +336,14 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
             tuple(inputs),
             ("artifact-stem", "version-file", "skills-verification-mode"),
         )
-        for name in ("artifact-stem", "skills-verification-mode"):
-            self.assertRegex(inputs[name], r"(?m)^        required: true$")
-            self.assertRegex(inputs[name], r"(?m)^        type: string$")
+        self.assertRegex(inputs["artifact-stem"], r"(?m)^        required: true$")
+        self.assertRegex(inputs["artifact-stem"], r"(?m)^        type: string$")
+        self.assertRegex(inputs["skills-verification-mode"], r"(?m)^        required: false$")
+        self.assertRegex(inputs["skills-verification-mode"], r"(?m)^        type: string$")
+        self.assertRegex(
+            inputs["skills-verification-mode"],
+            r"(?m)^        default: subcontractor-accounting-v1$",
+        )
         self.assertRegex(inputs["version-file"], r"(?m)^        required: false$")
         self.assertRegex(inputs["version-file"], r"(?m)^        type: string$")
         self.assertRegex(inputs["version-file"], r"(?m)^        default: VERSION$")

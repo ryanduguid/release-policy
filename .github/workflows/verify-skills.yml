@@ -5,8 +5,9 @@ on:
     inputs:
       skills-verification-mode:
         description: Closed policy-owned skill-pack verification mode.
-        required: true
+        required: false
         type: string
+        default: subcontractor-accounting-v1
       version-file:
         description: Safe relative tracked version file.
         required: false
