@@ -23,8 +23,8 @@ component uses:
           source-directory: adapters/accounting-excel-toolkit
           tag-prefix: accounting-excel-toolkit
 
-`version-file` defaults to `VERSION`. The workflow accepts no arbitrary test
-command, build command or asset glob. It runs the fixed unittest contract,
-builds deterministic ZIP and tar.gz source archives from the tagged commit,
-generates an SPDX SBOM, and publishes exactly those three files plus
-`SHA256SUMS` after inspecting the exact draft returned by GitHub.
+The version file is always the tracked `VERSION` file. The workflow accepts
+no arbitrary test command, build command or asset glob. It runs the fixed
+unittest contract, builds deterministic ZIP and tar.gz source archives from
+the tagged commit, generates an SPDX SBOM, and publishes exactly those three
+files plus `SHA256SUMS` after inspecting the exact draft returned by GitHub.

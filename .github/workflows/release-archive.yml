@@ -17,11 +17,6 @@ on:
         required: false
         type: string
         default: ""
-      version-file:
-        description: Safe relative path containing one canonical MAJOR.MINOR.PATCH line.
-        required: false
-        type: string
-        default: VERSION
 
 permissions:
   contents: read
@@ -110,4 +105,3 @@ jobs:
       artifact-stem: ${{ inputs.artifact-stem }}
       source-directory: ${{ needs.consumer-tests.outputs.source-directory }}
       tag-prefix: ${{ needs.consumer-tests.outputs.tag-prefix }}
-      version-file: ${{ inputs.version-file }}

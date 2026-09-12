@@ -49,8 +49,8 @@ rebuilt or replaced`, because the mode treats a consumer's `v0.1.0` as a frozen
 historical marker that no release may rebuild or replace, so a first skill-pack
 release must carry some other tag, `v0.1.1` or later by convention.
 
-The `subcontractor-accounting-v1` verifier requires a tracked regular version
-file, `VERSION` by default, plus tracked regular files
+The `subcontractor-accounting-v1` verifier requires a tracked regular
+`VERSION` file, plus tracked regular files
 `requirements-test.txt`, `scripts/validate_validation.py`,
 `tests/verify_skills_cli.py` and at least one tracked regular `test*.py` file
 under `tests/`. It runs these fixed commands in order:

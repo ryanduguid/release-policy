@@ -8,11 +8,6 @@ on:
         required: false
         type: string
         default: subcontractor-accounting-v1
-      version-file:
-        description: Safe relative tracked version file.
-        required: false
-        type: string
-        default: VERSION
 
 permissions:
   contents: read
@@ -54,8 +49,6 @@ jobs:
         working-directory: consumer
         env:
           SKILLS_VERIFICATION_MODE: ${{ inputs.skills-verification-mode }}
-          VERSION_FILE: ${{ inputs.version-file }}
         run: >-
           python ../policy/scripts/verify_skills.py verify
           --mode "$SKILLS_VERIFICATION_MODE"
-          --version-file "$VERSION_FILE"

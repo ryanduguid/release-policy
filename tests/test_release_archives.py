@@ -20,6 +20,11 @@ from tests.test_skill_workflows import YAML_KEY, YamlContractAssertions  # noqa:
 
 import build_release_archives as release_archives  # noqa: E402
 
+# The consumer-facing adapter takes no version-file input; the privileged core
+# it calls keeps its own, defaulted to VERSION.
+ADAPTER_INPUTS = ("artifact-stem", "source-directory", "tag-prefix")
+CORE_INPUTS = (*ADAPTER_INPUTS, "version-file")
+
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -388,15 +393,16 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn("working-directory: consumer", consumer_job)
         self.assertEqual(1, consumer_job.count(test_command))
 
-    def assert_workflow_call_input_contract(self, workflow: str) -> None:
+    def assert_workflow_call_input_contract(
+        self,
+        workflow: str,
+        expected: tuple[str, ...],
+    ) -> None:
         trigger = self.mapping_block(workflow, "on", indent=0)
         workflow_call = self.mapping_block(trigger, "workflow_call", indent=2)
         inputs = self.mapping_block(workflow_call, "inputs", indent=4)
 
-        self.assertEqual(
-            ("artifact-stem", "source-directory", "tag-prefix", "version-file"),
-            self.mapping_keys(inputs, indent=6),
-        )
+        self.assertEqual(expected, self.mapping_keys(inputs, indent=6))
 
     def assert_source_adapter_release_contract(self, adapter: str) -> None:
         jobs = self.mapping_block(adapter, "jobs", indent=0)
@@ -428,7 +434,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         inputs = self.mapping_block(release_job, "with", indent=4)
         self.assertEqual(
             self.mapping_keys(inputs, indent=6),
-            ("artifact-stem", "source-directory", "tag-prefix", "version-file"),
+            ("artifact-stem", "source-directory", "tag-prefix"),
         )
         self.assertEqual(
             self.mapping_value(inputs, "artifact-stem", indent=6),
@@ -441,10 +447,6 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertEqual(
             self.mapping_value(inputs, "tag-prefix", indent=6),
             "${{ needs.consumer-tests.outputs.tag-prefix }}",
-        )
-        self.assertEqual(
-            self.mapping_value(inputs, "version-file", indent=6),
-            "${{ inputs.version-file }}",
         )
 
     def assert_publication_core_permission_contract(self, core: str) -> None:
@@ -476,7 +478,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assert_workflow_call_input_contract(adapter)
+        self.assert_workflow_call_input_contract(adapter, ADAPTER_INPUTS)
         self.assert_source_consumer_contract(adapter)
 
     def test_component_inputs_are_validated_before_archive_test_or_publication_use(
@@ -736,8 +738,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             "  release: {needs: consumer-tests, permissions: {attestations: write, "
             "contents: write, id-token: write}, uses: "
             "./.github/workflows/publish-archives.yml, with: {artifact-stem: "
-            '"${{ inputs.artifact-stem }}", version-file: '
-            '"${{ inputs.version-file }}"}}\n'
+            '"${{ inputs.artifact-stem }}"}}\n'
         )
         anchored_job = adapter.replace(
             "  consumer-tests:\n",
@@ -778,7 +779,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         jobs = self.mapping_block(core, "jobs", indent=0)
         publish_job = self.mapping_block(jobs, "publish", indent=2)
 
-        self.assert_workflow_call_input_contract(core)
+        self.assert_workflow_call_input_contract(core, CORE_INPUTS)
         self.assert_publication_core_permission_contract(core)
         self.assertIn("group: release-${{ github.repository }}-${{ github.ref }}", publish_job)
         self.assertIn("cancel-in-progress: false", publish_job)
@@ -786,11 +787,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
     def test_source_and_core_interfaces_reject_quoted_flow_and_alias_inputs(
         self,
     ) -> None:
-        workflows = tuple(
-            (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
-            for name in ("release-archive.yml", "publish-archives.yml")
-        )
-        block = (
+        shared_block = (
             "    inputs:\n"
             "      artifact-stem:\n"
             "        description: Lower-case hyphenated stem used for all release assets.\n"
@@ -806,6 +803,10 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             "        required: false\n"
             "        type: string\n"
             '        default: ""\n'
+        )
+        # Only the privileged core still declares version-file, so each
+        # interface gets its own input block and expected key tuple.
+        version_file_block = (
             "      version-file:\n"
             "        description: Safe relative path containing one canonical "
             "MAJOR.MINOR.PATCH line.\n"
@@ -813,34 +814,49 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             "        type: string\n"
             "        default: VERSION\n"
         )
-        quoted_extra = (
-            block
-            + '      "command":\n'
-            "        description: Unsupported custom command.\n"
-            "        required: false\n"
-            "        type: string\n"
-        )
-        flow_inputs = (
+        shared_flow_inputs = (
             "    inputs: {artifact-stem: {description: Artifact stem, required: true, "
             "type: string}, source-directory: {description: Source directory, required: "
             "false, type: string, default: .}, tag-prefix: {description: Tag prefix, "
-            'required: false, type: string, default: ""}, version-file: '
-            "{description: Version file, required: false, "
-            "type: string, default: VERSION}}\n"
+            'required: false, type: string, default: ""}'
         )
-        anchored_inputs = block.replace(
-            "    inputs:\n",
-            "    inputs: &archive_inputs\n",
-            1,
-        )
-        aliased_triggers = (
-            "  workflow_dispatch:\n"
-            + anchored_inputs
-            + "  workflow_call:\n"
-            + "    inputs: *archive_inputs\n"
+        version_file_flow_input = (
+            ", version-file: {description: Version file, required: false, "
+            "type: string, default: VERSION}"
         )
 
-        for workflow in workflows:
+        for name, expected in (
+            ("release-archive.yml", ADAPTER_INPUTS),
+            ("publish-archives.yml", CORE_INPUTS),
+        ):
+            workflow = (ROOT / ".github" / "workflows" / name).read_text(
+                encoding="utf-8"
+            )
+            declares_version_file = "version-file" in expected
+            block = shared_block + (version_file_block if declares_version_file else "")
+            flow_inputs = (
+                shared_flow_inputs
+                + (version_file_flow_input if declares_version_file else "")
+                + "}\n"
+            )
+            quoted_extra = (
+                block
+                + '      "command":\n'
+                "        description: Unsupported custom command.\n"
+                "        required: false\n"
+                "        type: string\n"
+            )
+            anchored_inputs = block.replace(
+                "    inputs:\n",
+                "    inputs: &archive_inputs\n",
+                1,
+            )
+            aliased_triggers = (
+                "  workflow_dispatch:\n"
+                + anchored_inputs
+                + "  workflow_call:\n"
+                + "    inputs: *archive_inputs\n"
+            )
             mutations = {
                 "quoted extra": workflow.replace(block, quoted_extra, 1),
                 "flow map": workflow.replace(block, flow_inputs, 1),
@@ -855,10 +871,10 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
                 # Catches a source or core reusable interface that accepts an
                 # unsupported extra input or hides its input map syntax.
                 with self.subTest(
-                    workflow=workflow.splitlines()[0],
+                    workflow=name,
                     mutation=mutation_name,
                 ), self.assertRaises(AssertionError):
-                    self.assert_workflow_call_input_contract(mutation)
+                    self.assert_workflow_call_input_contract(mutation, expected)
 
     def test_direct_test_entry_point_loads(self) -> None:
         result = subprocess.run(

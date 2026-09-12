@@ -262,25 +262,19 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
             publish,
             r"(?m)^    uses: \./\.github/workflows/publish-archives\.yml$",
         )
-        self.assertEqual(self.with_keys(publish), ("artifact-stem", "version-file"))
+        self.assertEqual(self.with_keys(publish), ("artifact-stem",))
 
     def test_verification_workflow_has_closed_interface_and_permissions(self) -> None:
         workflow = self.read_workflow("verify-skills.yml")
         inputs = dict(self.workflow_inputs(workflow))
 
-        self.assertEqual(
-            tuple(inputs),
-            ("skills-verification-mode", "version-file"),
-        )
+        self.assertEqual(tuple(inputs), ("skills-verification-mode",))
         self.assertRegex(inputs["skills-verification-mode"], r"(?m)^        required: false$")
         self.assertRegex(inputs["skills-verification-mode"], r"(?m)^        type: string$")
         self.assertRegex(
             inputs["skills-verification-mode"],
             r"(?m)^        default: subcontractor-accounting-v1$",
         )
-        self.assertRegex(inputs["version-file"], r"(?m)^        required: false$")
-        self.assertRegex(inputs["version-file"], r"(?m)^        type: string$")
-        self.assertRegex(inputs["version-file"], r"(?m)^        default: VERSION$")
         self.assertEqual(self.permission_map(workflow, indent=0), {"contents": "read"})
 
         verify = self.job_block(workflow, "verify")
@@ -326,7 +320,6 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
         self.assertRegex(verify, r"(?m)^        working-directory: consumer$")
         self.assertIn("python ../policy/scripts/verify_skills.py verify", verify)
         self.assertIn('--mode "$SKILLS_VERIFICATION_MODE"', verify)
-        self.assertIn('--version-file "$VERSION_FILE"', verify)
 
     def test_release_workflow_has_closed_interface_without_secrets_or_outputs(self) -> None:
         workflow = self.read_workflow("release-skills.yml")
@@ -334,7 +327,7 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
 
         self.assertEqual(
             tuple(inputs),
-            ("artifact-stem", "version-file", "skills-verification-mode"),
+            ("artifact-stem", "skills-verification-mode"),
         )
         self.assertRegex(inputs["artifact-stem"], r"(?m)^        required: true$")
         self.assertRegex(inputs["artifact-stem"], r"(?m)^        type: string$")
@@ -344,9 +337,6 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
             inputs["skills-verification-mode"],
             r"(?m)^        default: subcontractor-accounting-v1$",
         )
-        self.assertRegex(inputs["version-file"], r"(?m)^        required: false$")
-        self.assertRegex(inputs["version-file"], r"(?m)^        type: string$")
-        self.assertRegex(inputs["version-file"], r"(?m)^        default: VERSION$")
         self.assertEqual(self.permission_map(workflow, indent=0), {"contents": "read"})
 
     def test_release_guard_always_runs_and_fails_the_frozen_tag(self) -> None:
@@ -435,12 +425,10 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
             "      contents: read\n"
             "    uses: ./.github/workflows/verify-skills.yml\n"
             "    with:\n"
-            "      skills-verification-mode: ${{ inputs.skills-verification-mode }}\n"
-            "      version-file: ${{ inputs.version-file }}\n",
+            "      skills-verification-mode: ${{ inputs.skills-verification-mode }}\n",
             "  verify: {needs: guard, permissions: {contents: read}, uses: "
             "./.github/workflows/verify-skills.yml, with: "
-            '{skills-verification-mode: "${{ inputs.skills-verification-mode }}", '
-            'version-file: "${{ inputs.version-file }}"}}\n',
+            '{skills-verification-mode: "${{ inputs.skills-verification-mode }}"}}\n',
             1,
         )
         anchored_job = workflow.replace("  guard:\n", "  guard: &guard_job\n", 1)
@@ -476,10 +464,7 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
             verify,
             r"(?m)^    uses: \./\.github/workflows/verify-skills\.yml$",
         )
-        self.assertEqual(
-            self.with_keys(verify),
-            ("skills-verification-mode", "version-file"),
-        )
+        self.assertEqual(self.with_keys(verify), ("skills-verification-mode",))
 
     def test_release_publication_job_has_exact_privileges_dependencies_and_inputs(self) -> None:
         workflow = self.read_workflow("release-skills.yml")

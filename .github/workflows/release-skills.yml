@@ -7,11 +7,6 @@ on:
         description: Lower-case hyphenated stem used for all release assets.
         required: true
         type: string
-      version-file:
-        description: Safe relative tracked version file.
-        required: false
-        type: string
-        default: VERSION
       skills-verification-mode:
         description: Closed policy-owned skill-pack verification mode.
         required: false
@@ -65,7 +60,6 @@ jobs:
     uses: ./.github/workflows/verify-skills.yml
     with:
       skills-verification-mode: ${{ inputs.skills-verification-mode }}
-      version-file: ${{ inputs.version-file }}
 
   publish:
     needs: [guard, verify]
@@ -76,4 +70,3 @@ jobs:
     uses: ./.github/workflows/publish-archives.yml
     with:
       artifact-stem: ${{ inputs.artifact-stem }}
-      version-file: ${{ inputs.version-file }}
