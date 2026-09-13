@@ -13,12 +13,15 @@
   commit before release creation.
 - Draft creation and asset upload are bound to the returned numeric release ID.
   A pre-publication failure deletes only that exact current-run draft; a
-  published release is never rolled back by mutation. Immutable/latest state,
+  published release is never rolled back by mutation. Immutable state,
   notes and asset digests are rechecked after publication.
 - The source-archive family preserves the exact candidate artefacts, verifies
   provenance and both archive SBOM attestations before publication, rechecks
   remote tag/main/release absence, binds inspection to the draft create URL and
-  numeric release ID, and verifies immutable/latest release state afterwards.
+  numeric release ID, and verifies immutable release state afterwards.
+- Publication requests the repository-wide latest label, but that label is
+  not a verification gate. Another component may become latest while the
+  exact published release and its assets are being verified.
 - Consumers pin this repository by full commit SHA and upgrade by reviewed
   pull request (ADR-0001).
 

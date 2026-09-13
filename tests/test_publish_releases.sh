@@ -6,12 +6,20 @@ POLICY="$(cd "$HERE/.." && pwd)"
 FIXTURE="$(mktemp -d)"
 trap 'rm -rf "$FIXTURE"' EXIT
 export FIXTURE
+family="${1:-archives}"
+case "$family" in
+  archives) asset_names=(example-1.2.3.zip example-1.2.3.tar.gz example-1.2.3.spdx.json SHA256SUMS) ;;
+  python) asset_names=(example-1.2.3-py3-none-any.whl example-1.2.3.tar.gz example-1.2.3.spdx.json release-manifest.json SHA256SUMS) ;;
+  *) exit 64 ;;
+esac
 mkdir -p "$FIXTURE/consumer/dist" "$FIXTURE/workspace"
 ln -s "$POLICY" "$FIXTURE/workspace/policy"
 printf 'Release notes.\n' > "$FIXTURE/consumer/RELEASE_NOTES.md"
-for name in example-1.2.3.zip example-1.2.3.tar.gz example-1.2.3.spdx.json SHA256SUMS; do
+for name in "${asset_names[@]}"; do
   printf '%s\n' "$name" > "$FIXTURE/consumer/dist/$name"
 done
+cd "$FIXTURE/consumer"
+ln -s dist candidate
 export GH=gh
 export GITHUB_REPOSITORY=example/fixture GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export GITHUB_WORKSPACE="$FIXTURE/workspace"
@@ -22,9 +30,18 @@ gh() {
   local method=GET endpoint="" input="" media="" arg
   if [ "$1 $2" = "release create" ]; then return 1; fi
   if [ "$1 $2" = "release list" ]; then
-    printf '[{"tagName":"v1.2.3","isLatest":true}]\n'; return
+    if [ "$CASE" = superseded ]; then
+      printf '[{"tagName":"v1.2.3","isLatest":false},{"tagName":"sibling/v2.0.0","isLatest":true}]\n'
+    else
+      printf '[{"tagName":"v1.2.3","isLatest":true}]\n'
+    fi
+    return
   fi
   if [ "$1 $2" = "release verify" ] || [ "$1 $2" = "release verify-asset" ]; then
+    [ "$CASE" != verification-fails ] || return 1
+    if [ "$1 $2" = "release verify-asset" ]; then
+      [ "$CASE" != asset-verification-fails ] || return 1
+    fi
     return 0
   fi
   for ((arg=1; arg<=$#; arg++)); do
@@ -54,17 +71,18 @@ gh() {
       ;;
     POST\ https://uploads.github.com/repos/example/fixture/releases/7/assets\?*)
       # The ID must be known even when the first upload fails.
-      [[ "$CASE" = success || "$CASE" = settles ]] || return 1
+      [[ "$CASE" = success || "$CASE" = settles || "$CASE" = superseded || "$CASE" = published-* || "$CASE" = *verification-fails ]] || return 1
       local name="${endpoint#*name=}" expected_media
       name="${name%%&*}"
       case "$name" in
-        example-1.2.3.zip) expected_media=application/zip ;;
+        example-1.2.3.zip|example-1.2.3-py3-none-any.whl) expected_media=application/zip ;;
         example-1.2.3.tar.gz) expected_media=application/gzip ;;
         example-1.2.3.spdx.json) expected_media=application/spdx+json ;;
+        release-manifest.json) expected_media=application/json ;;
         SHA256SUMS) expected_media=text/plain ;;
         *) return 1 ;;
       esac
-      [ "$input" = "$FIXTURE/consumer/dist/$name" ] || return 1
+      [[ "$input" = "$FIXTURE/consumer/dist/$name" || "$input" = "candidate/$name" ]] || return 1
       [ "$media" = "Content-Type: $expected_media" ] || return 1
       printf '%s\n' "$endpoint" >> "$FIXTURE/uploads"
       ;;
@@ -81,12 +99,18 @@ gh() {
         return
       fi
       case "$CASE" in
-        success|settles)
+        success|settles|superseded|published-*|*verification-fails)
           local draft=true
           [ ! -f "$FIXTURE/published" ] || draft=false
-          jq -n --argjson draft "$draft" --slurpfile assets "$FIXTURE/assets" \
+          jq -n --arg case "$CASE" --argjson draft "$draft" --slurpfile assets "$FIXTURE/assets" \
             --rawfile body "$FIXTURE/consumer/RELEASE_NOTES.md" \
-            '{id:7,tag_name:"v1.2.3",name:"v1.2.3",draft:$draft,prerelease:false,immutable:true,body:$body,assets:$assets}'
+            '{id:7,tag_name:"v1.2.3",name:"v1.2.3",draft:$draft,prerelease:false,immutable:true,body:$body,assets:$assets}
+             | if $draft then .
+               elif $case == "published-mutable" then .immutable = false
+               elif $case == "published-identity" then .id = 8
+               elif $case == "published-digest" then .assets[0].digest = "sha256:wrong"
+               elif $case == "published-notes" then .body = "changed"
+               else . end'
           ;;
         already-published) printf '{"id":7,"tag_name":"v1.2.3","name":"v1.2.3","draft":false,"prerelease":false}\n' ;;
         wrong-identity) printf '{"id":8,"tag_name":"v1.2.3","name":"v1.2.3","draft":true,"prerelease":false}\n' ;;
@@ -95,6 +119,7 @@ gh() {
         *) printf '{"id":7,"tag_name":"v1.2.3","name":"v1.2.3","draft":true,"prerelease":false}\n' ;;
       esac
       ;;
+    'GET repos/example/fixture/releases?per_page=100') printf '7\n' ;;
     'GET repos/example/fixture/releases')
       printf '[{"id":99,"tag_name":"v1.2.3","name":"v1.2.3","draft":true,"prerelease":false}]\n'
       ;;
@@ -118,12 +143,13 @@ sleep() { printf '%s\n' "$*" >> "$FIXTURE/sleeps"; }
 export -f sleep
 
 failures=0
+if [ "$family" = archives ]; then
 for CASE in create-fails upload-fails already-published wrong-identity unsettled-tag missing-tag moved-tag changed-tag never-settles; do
   export CASE
   : > "$FIXTURE/calls"
   : > "$FIXTURE/deleted"
   : > "$FIXTURE/sleeps"
-  if bash "$POLICY/scripts/publish_archives.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3 \
+  if bash "$POLICY/scripts/publish_$family.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3 \
       "$FIXTURE/consumer" > "$FIXTURE/output" 2>&1; then
     echo "FAIL $CASE: publication unexpectedly succeeded"
     failures=$((failures+1))
@@ -151,24 +177,40 @@ for CASE in create-fails upload-fails already-published wrong-identity unsettled
   fi
 done
 
-for CASE in success settles; do
+fi
+cases=(success superseded published-mutable published-identity published-digest published-notes verification-fails asset-verification-fails)
+[ "$family" != archives ] || cases+=(settles)
+for CASE in "${cases[@]}"; do
+export CASE
 rm -f "$FIXTURE/published" "$FIXTURE/seen-unsettled"
+: > "$FIXTURE/calls"
 : > "$FIXTURE/assets"
 : > "$FIXTURE/uploads"
 : > "$FIXTURE/deleted"
-for name in example-1.2.3.zip example-1.2.3.tar.gz example-1.2.3.spdx.json SHA256SUMS; do
+for name in "${asset_names[@]}"; do
   digest="$(sha256sum "$FIXTURE/consumer/dist/$name" | cut -d' ' -f1)"
   jq -n --arg name "$name" --arg digest "sha256:$digest" '{name:$name,digest:$digest}' >> "$FIXTURE/assets"
 done
-if bash "$POLICY/scripts/publish_archives.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3 \
-    "$FIXTURE/consumer" > "$FIXTURE/output" 2>&1 \
+status=0
+bash "$POLICY/scripts/publish_$family.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3 \
+    "$FIXTURE/consumer" > "$FIXTURE/output" 2>&1 || status=$?
+expected_status=0
+[[ "$CASE" != published-* && "$CASE" != *verification-fails ]] || expected_status=1
+if [ "$status" -eq "$expected_status" ] \
     && [ -f "$FIXTURE/published" ] && [ ! -s "$FIXTURE/deleted" ] \
-    && [ "$(sort -u "$FIXTURE/uploads" | wc -l | tr -d ' ')" = 4 ]; then
-  echo "ok   $CASE publishes all four verified assets"
+    && [ "$(sort -u "$FIXTURE/uploads" | wc -l | tr -d ' ')" = "${#asset_names[@]}" ]; then
+  echo "ok   $family $CASE checks all ${#asset_names[@]} assets without deleting a published release"
 else
   echo "FAIL $CASE: publication or asset inventory failed"
   cat "$FIXTURE/output"
   failures=$((failures+1))
+fi
+if [ "$expected_status" = 0 ]; then
+  if [ "$(grep -c '^release verify ' "$FIXTURE/calls")" != 1 ] \
+      || [ "$(grep -c '^release verify-asset ' "$FIXTURE/calls")" != "${#asset_names[@]}" ]; then
+    echo "FAIL $family $CASE: release or asset verification was skipped"
+    failures=$((failures+1))
+  fi
 fi
 done
 test "$failures" -eq 0

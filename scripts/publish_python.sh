@@ -180,18 +180,8 @@ test "$published_assets" = "$expected_assets"
 jq -j '.body' /tmp/published-release.json > /tmp/published-release-notes.md
 diff -u "$source_path/RELEASE_NOTES.md" /tmp/published-release-notes.md
 
-latest_ready=false
-for _ in 1 2 3 4 5; do
-  if gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
-    --json tagName,isLatest \
-    | jq -e --arg tag "$tag" \
-      'any(.[]; .tagName == $tag and .isLatest == true)' >/dev/null; then
-    latest_ready=true
-    break
-  fi
-  sleep 5
-done
-test "$latest_ready" = true
+# Another component can become latest while this release is being verified.
+# Release identity, immutability and asset checks above remain authoritative.
 
 release_verified=false
 for _ in 1 2 3 4 5; do
