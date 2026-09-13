@@ -1,13 +1,13 @@
 {
   "families": [
     {
-      "current_policy_sha": "99a6314ca2cd4ea21b465614b73d108fd8fe2077",
+      "current_policy_sha": "171aa487dbc0a8f437ed84407f0d506f814548c1",
       "evidence": {
-        "head_sha": "17d0bac33d4bb5b4197482e31f715893c5eb49ca",
+        "head_sha": "14ce50f0d3c4f323611c50b0b1fb2d81f8f0d33a",
         "policy_sha": "99a6314ca2cd4ea21b465614b73d108fd8fe2077",
-        "ref": "v0.1.5",
-        "run_id": 34107132560,
-        "started_at": "2026-09-07T09:38:12Z"
+        "ref": "v0.1.6",
+        "run_id": 34728795528,
+        "started_at": "2026-09-13T00:45:37Z"
       },
       "family": "archive",
       "policy_workflow": ".github/workflows/release-archive.yml",
@@ -15,13 +15,13 @@
       "workflow_path": ".github/workflows/release.yml"
     },
     {
-      "current_policy_sha": "fcf25e532e9eb60056ae6e5c819cf3125c4f4b91",
+      "current_policy_sha": "171aa487dbc0a8f437ed84407f0d506f814548c1",
       "evidence": {
-        "head_sha": "dad1c5e1283a40d6e9346d53b3761f21c823ce82",
+        "head_sha": "874e92d85458e87ebf726b1fc35ca3c333c88934",
         "policy_sha": "fcf25e532e9eb60056ae6e5c819cf3125c4f4b91",
-        "ref": "review-ready-gate/v0.1.5",
-        "run_id": 34163202701,
-        "started_at": "2026-09-07T21:27:25Z"
+        "ref": "review-ready-gate/v0.1.6",
+        "run_id": 34728781919,
+        "started_at": "2026-09-13T00:45:21Z"
       },
       "family": "python",
       "policy_workflow": ".github/workflows/release-python.yml",
@@ -30,7 +30,7 @@
       "workflow_path": ".github/workflows/release-review-ready-gate.yml"
     },
     {
-      "current_policy_sha": "99a6314ca2cd4ea21b465614b73d108fd8fe2077",
+      "current_policy_sha": "171aa487dbc0a8f437ed84407f0d506f814548c1",
       "evidence": {
         "head_sha": "527b0a22c8be5ce10855f12f052cd3bda7b7b827",
         "policy_sha": "99a6314ca2cd4ea21b465614b73d108fd8fe2077",
@@ -44,13 +44,13 @@
       "workflow_path": ".github/workflows/release.yml"
     },
     {
-      "current_policy_sha": "99a6314ca2cd4ea21b465614b73d108fd8fe2077",
+      "current_policy_sha": "171aa487dbc0a8f437ed84407f0d506f814548c1",
       "evidence": {
-        "head_sha": "11138efe5ee7aef8e77296a2b1d621cdb83ab3b9",
-        "policy_sha": "99a6314ca2cd4ea21b465614b73d108fd8fe2077",
+        "head_sha": "c2668da09299c7c098d8eccd7e0329b03093caa4",
+        "policy_sha": "171aa487dbc0a8f437ed84407f0d506f814548c1",
         "ref": "main",
-        "run_id": 34217116877,
-        "started_at": "2026-09-08T10:45:24Z"
+        "run_id": 34732623328,
+        "started_at": "2026-09-13T02:16:04Z"
       },
       "family": "verify",
       "policy_workflow": ".github/workflows/verify-skills.yml",
