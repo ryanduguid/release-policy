@@ -23,8 +23,9 @@ This snapshot was checked against [canaries.json](canaries.json) on 10 September
 
 `v0.1.0` is a manually created, notes-only historical source marker. It has no
 uploaded, checksummed module artefact and is not a verified distributable
-module release. It remains mutable, but must not be silently rewritten,
-replaced, or retrofitted with assets.
+module release. GitHub marks the release immutable, so its tag and assets are
+fixed; only its title and notes can still be edited, and it must not be
+retrofitted with assets or described as a distributable.
 
 The repository now contains reviewed-in-code source-archive and initial
 skill-pack workflow implementations. That does not retrofit `v0.1.0`, make the

@@ -52,9 +52,10 @@ Recorded evidence and latest-success selection must both match exactly
 `vMAJOR.MINOR.PATCH` tags; skills and verification entries cannot use a non-empty
 prefix. A sibling component's successful release never satisfies the canary.
 
-The maintained canaries use Accounting Review Pipeline's Xero archive and
-Review Ready Python releases, plus Australian Accounting Skills' release and
-read-only shared verification workflow. Existing published releases supply the
+The maintained canaries, selected in `canaries.json`, use the Australian Tax
+Legislation Corpus archive release, Accounting Review Pipeline's Review Ready
+Python release, and Australian Accounting Skills' release and read-only shared
+verification workflow. Existing published releases supply the
 release evidence; migrating these references does not require new releases.
 
 A current pin can temporarily be newer than the latest release evidence. The
