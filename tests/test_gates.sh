@@ -353,6 +353,8 @@ expect_fail "archive release rejects an artifact stem and prefix mismatch" \
     "packages/target-prefix" "target-prefix"
 unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
 
-run_case "archive publication preserves draft ownership" bash "$HERE/test_publish_archives.sh"
+run_case "archive publication preserves draft ownership" bash "$HERE/test_publish_releases.sh"
+
+run_case "Python publication preserves release verification" bash "$HERE/test_publish_releases.sh" python
 
 finish
