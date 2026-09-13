@@ -40,7 +40,7 @@ Set the input, then add a second job:
 The `release` job exposes `stem` and `version` outputs so the caller can name
 the artefact without repeating the version logic. Consumer tests and the build
 run on separate `contents: read` jobs with sibling source and policy checkouts.
-The publication job keeps source, policy and candidate data in three sibling
+The publication job keeps source, policy and candidate data in 3 sibling
 directories, downloads by immutable Actions artefact ID, verifies the API
 digest, run and source identity, then verifies the policy-owned candidate
 manifest before using write authority.

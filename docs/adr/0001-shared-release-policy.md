@@ -1,4 +1,4 @@
-# ADR-0001: Shared release-policy module as a dedicated repository of reusable workflows
+# ADR-0001: shared release-policy module as a dedicated repository of reusable workflows
 
 - Status: Accepted
 - Date: 2026-08-16
@@ -10,10 +10,10 @@
 Ten repositories implement the same release policy independently: tag gates, checksums, SBOM generation, provenance attestations and a draft-then-publish lifecycle. The duplication is measurable at the current heads:
 
 - Three packaged-Python workflows (`au-tax-change-impact-monitor`, `monthly-close-control-plane`, `xero-ai-review-gateway`) are 100 lines each and differ only in the wheel filename stem and the version-extraction command.
-- An 88-line release-archive builder is byte-identical in four repositories; its test is byte-identical in three; a draft-release lookup is duplicated in two.
-- The two skill-pack repositories carry a 309-line hardened variant of the same policy (semver tag regex, API-based main check, dirty-tree gate, paginated no-overwrite check). The policy already exists at three maturity levels, and fixes land family by family instead of once.
+- An 88-line release-archive builder is byte-identical in 4 repositories; its test is byte-identical in 3; a draft-release lookup is duplicated in 2.
+- The 2 skill-pack repositories carry a 309-line hardened variant of the same policy (semver tag regex, API-based main check, dirty-tree gate, paginated no-overwrite check). The policy already exists at 3 maturity levels, and fixes land family by family instead of once.
 
-All ten repositories received release-hardening work on 15 August 2026, and roughly ten per-repo hardening draft PRs are still open against the same files.
+All 10 repositories received release-hardening work on 15 August 2026, and roughly 10 per-repo hardening draft PRs are still open against the same files.
 
 ## Decision
 
@@ -27,12 +27,12 @@ Key properties:
 4. **Blast radius.** A defective module version can block a consumer's next release run. It cannot alter consumer code, existing releases or published assets. Recovery is repointing one SHA.
 5. **Canonical gate set.** The hardened skill-pack variant becomes the single policy core; the weaker Python-family gates are retired.
 6. **Supersession.** The open per-repo release-hardening draft PRs that this module obsoletes are closed as each consumer migrates, with a comment linking this ADR. The exact PR list is compiled at migration time.
-7. **Pilot.** The three packaged-Python repositories migrate first. The source-archive family and skill packs follow in later phases.
+7. **Pilot.** The 3 packaged-Python repositories migrate first. The source-archive family and skill packs follow in later phases.
 
 ## Alternatives considered
 
 - **Composite actions in `.github`.** Rejected. Composite actions cannot own job-level `permissions` or `concurrency`, so the most security-relevant part of the policy would remain duplicated in every caller, and the `.github` repository's documented community-health role would broaden.
-- **Shared Python release tool.** Rejected. OIDC attestation and permissions must stay in workflow YAML regardless, splitting the policy across two layers, and a pip-installable tool adds its own supply-chain surface.
+- **Shared Python release tool.** Rejected. OIDC attestation and permissions must stay in workflow YAML regardless, splitting the policy across 2 layers, and a pip-installable tool adds its own supply-chain surface.
 
 ## Consequences
 

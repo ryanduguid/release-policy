@@ -15,10 +15,10 @@
 
 Source-archive callers additionally require:
 
-- a lower-case hyphenated `artifact-stem`;
+- a lower-case hyphenated `artifact-stem`
 - a safe relative version file containing one canonical `MAJOR.MINOR.PATCH`
   line;
 - a standard-library unittest suite runnable as
   `python -B -m unittest discover -s tests -v`; and
-- no release-specific files that must be generated outside the four exact
+- no release-specific files that must be generated outside the 4 exact
   policy-owned assets.

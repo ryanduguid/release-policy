@@ -36,10 +36,10 @@ CANONICAL_SHA256 = {
     ".github/workflows/coderabbit-review-trigger.yml": "b5513eaef5ce239ea1b6087037b9b103832a438f241ee3b2233b1675dd4c70ea",
     "README.md": "93c9c281039fe3e7f71af088a4a49e81a074024b24c4864ca5b54bde3ff6f42d",
     "docs/python-consumers.md": "c31c0e85cdfcfc7e0cea1422a388cd16f5dc17070db9d22775bbea1da265840a",
-    "docs/pypi-publishing.md": "e185552c5f1e52d225c8c7c0c469ca8cef36cab55300531d520e7301887139a3",
-    "docs/archive-consumers.md": "dd0212168ccaa487312d3ee7f7bb156bd9389cdda8afa061093355b9ad68e302",
+    "docs/pypi-publishing.md": "aac286a9fb1352077ee1435f06e21dee23760161b12dc5dc6cb8fa1193ca46a2",
+    "docs/archive-consumers.md": "e7f2557374467ff3431dd7fe702debc1be7836942288d28a314eda5f43bc21df",
     "docs/skill-consumers.md": "41eaea2a6f4ec707de902d0d68c8cf4b82c82f3458fcf21752de646eb4fea9f2",
-    "docs/consumer-prerequisites.md": "0843bf113cbe6963cce05ddfdd447cd75c7ed847dd6c7a5c9cb6fe868d980335",
+    "docs/consumer-prerequisites.md": "b078b5f82d0f9eba7134ad12cf5edd04cb6db8f71746e72138bb05e9fd33b9dc",
     "docs/guarantees-and-evidence.md": "9de79b0c0757f743841eabcdfcfcefb6513a4edf307b8455b6852c92517c3c95",
     "SECURITY.md": "9e7f9e17cf7c23e350ff08fbf25ff14a2e17071fad9b1b1d57c91a4a2e834594",
 }
