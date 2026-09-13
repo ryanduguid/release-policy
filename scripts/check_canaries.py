@@ -19,7 +19,7 @@ _RELEASE_TAG = re.compile(
 _TAG_PREFIX = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _FAMILIES = {"archive", "python", "skills", "verify"}
 # GitHub's compare API reports the pin relative to release-policy main. Only
-# these two statuses mean the pin is an ancestor of main. GitHub refuses a
+# these 2 statuses mean the pin is an ancestor of main. GitHub refuses a
 # reusable-workflow call at a commit no branch or tag reaches, before any job
 # starts, so a pin that matches the consumer's workflow byte for byte can still
 # be dead after a history rewrite of this repository.

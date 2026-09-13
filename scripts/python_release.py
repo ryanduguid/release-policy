@@ -363,7 +363,7 @@ def derive_metadata(
     version_parser: str,
     version_file: str,
 ) -> ReleaseMetadata:
-    """Read package name and version through one of two closed parsers."""
+    """Read package name and version through one of 2 closed parsers."""
 
     parsers = {
         "pyproject": _version_from_pyproject,
@@ -473,7 +473,7 @@ def write_candidate_inventory(
     run_id: int,
     run_attempt: int,
 ) -> CandidateInventory:
-    """Write a manifest and checksum file around exactly three prebuilt payloads."""
+    """Write a manifest and checksum file around exactly 3 prebuilt payloads."""
 
     _validate_context(
         stem=stem,
