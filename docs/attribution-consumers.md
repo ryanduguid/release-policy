@@ -28,8 +28,10 @@ Keep the consumer's `No AI attribution` workflow to one job:
   to `main` and manual dispatch, and grants the called workflow
   `contents: read`, `pull-requests: read` and `statuses: write`.
 
-Keep the event types and the per-event concurrency group in the caller; a
-called workflow's own concurrency has no effect. The caller carries no steps of
+Keep the event types and the per-event concurrency group in the caller. A
+called workflow cannot set workflow-level concurrency, but concurrency on a job
+inside it does apply, and a group that matches the caller's can cancel the
+caller. The caller carries no steps of
 its own and no `pull_request` trigger: the status posted from the trusted base
 branch is the gate, and branch protection requires the `Attribution policy`
 commit status, not a job name.
