@@ -60,12 +60,23 @@ gh api --method POST \
 release_id="$(jq -er '.id | select(type == "number") | tostring' \
   /tmp/created-release.json)"
 upload_url="https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets"
-jq -e \
-  --argjson release_id "$release_id" \
-  --arg tag "$tag" \
-  '.id == $release_id and .draft == true and .prerelease == false
-   and .tag_name == $tag and .name == $tag' \
-  /tmp/created-release.json >/dev/null
+# A fresh draft can report an untagged-* placeholder until its tag settles.
+# Retry only that state, always by the ID returned from creation. Identical to
+# publish_archives.sh: both publish paths must survive the same GitHub state.
+for attempt in 1 2 3 4 5; do
+  jq -e --argjson release_id "$release_id" --arg tag "$tag" \
+    '.id == $release_id and .draft == true and .prerelease == false
+     and .name == $tag' /tmp/created-release.json >/dev/null
+  if jq -e --arg tag "$tag" '.tag_name == $tag' \
+      /tmp/created-release.json >/dev/null; then
+    break
+  fi
+  jq -e '.tag_name | startswith("untagged-")' /tmp/created-release.json >/dev/null
+  test "$attempt" -lt 5
+  sleep 5
+  gh api -H "X-GitHub-Api-Version: 2026-03-10" \
+    "repos/$GITHUB_REPOSITORY/releases/$release_id" > /tmp/created-release.json
+done
 jq -j '.body' /tmp/created-release.json > /tmp/created-release-notes.md
 diff -u "$source_path/RELEASE_NOTES.md" /tmp/created-release-notes.md
 

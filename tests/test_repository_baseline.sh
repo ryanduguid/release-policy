@@ -23,7 +23,7 @@ CANONICAL_SHA256 = {
     "docs/attribution-consumers.md": "6744aad349574785ecdcc495b1b6b5f2370fa5f66bf3467ff827f000de43c37d",
     ".github/actions/no-ai-attribution/action.yml": "caab09af9770d353d0feb8819a8b4e19dd081e32ec9fe8d600fe3d70a17eb620",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
-    ".github/dependabot.yml": "fa18b8f1272681a83062c370d846ca8a96cc4bcc6ede6441f19ac34e97d9fd40",
+    ".github/dependabot.yml": "baf5bed4e5b960787d53ee5ea8d9d7376fbc54565d6a392604fb94afb6bc1b66",
     ".github/workflows/ci.yml": "fae94abd26b5d639d4fa1c8336166d3ddb6d5559cdfeeee5476796f6da6ae3c3",
     ".github/workflows/codeql.yml": "0d01772f298332e096e1c7508768f4417548e2f6ac8f6fb847aea47171c76405",
     ".github/workflows/no-ai-attribution.yml": "3a41017245f9e8c3e41de2d828c1bb2e5b49721391a177905dceb861277a0f5b",
