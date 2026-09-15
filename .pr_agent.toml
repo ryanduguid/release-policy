@@ -18,7 +18,7 @@ inline_comments_severity_threshold = 3
 # Bug and quality findings come from the Issues agent; rule violations come
 # from the Compliance agent, so each gets the guidance it acts on.
 issues_user_guidelines = "Australian English spellings are correct, not typos. Do not propose tax classifications, individual tax positions or Division 7A treatment."
-compliance_user_guidelines = "Check a claim against whichever of AGENTS.md, CLAUDE.md and CONTRIBUTING.md exist in the repository before raising a rule violation. Do not raise rule violations that propose tax classifications, individual tax positions or Division 7A treatment."
+compliance_user_guidelines = "tests/test_repository_baseline.sh pins a SHA256 digest for every protected policy document, and canaries.json records completed consumer runs. A digest change is a reviewed policy change, not a defect. Check AGENTS.md, CONTRIBUTING.md and the relevant docs/ consumer guide before raising a rule violation. Do not raise rule violations that propose tax classifications, individual tax positions or Division 7A treatment."
 
 [review_agent_ux]
 show_daily_tips = false
