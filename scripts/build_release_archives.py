@@ -72,7 +72,10 @@ def build_release_archives(
 
     outputs = tuple(Path(f"{output_base}{suffix}") for _, suffix in _ARCHIVE_FORMATS)
     for output in outputs:
-        if output.exists():
+        # exists() follows the link, so a dangling symlink here passed the check
+        # and git archive --output resolved it, writing outside the validated
+        # directory. Test the final component itself.
+        if output.is_symlink() or output.exists():
             raise FileExistsError(f"refusing to overwrite existing archive: {output}")
 
     environment = os.environ.copy()

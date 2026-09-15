@@ -1,7 +1,11 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    # directory: / covers .github/workflows and a root-level action.yml only,
+    # so the pins inside the composite action were never proposed for update.
+    directories:
+      - /
+      - /.github/actions/no-ai-attribution
     schedule:
       interval: weekly
     cooldown:

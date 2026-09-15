@@ -6,7 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "demo-pkg"
 version = "0.1.0"
 description = "Determinism fixture for release-policy CI"
-requires-python = ">=3.10"
+# The policy scripts and every consumer target 3.11 and later.
+requires-python = ">=3.11"
 
 [tool.setuptools.packages.find]
 include = ["demo_pkg*"]
