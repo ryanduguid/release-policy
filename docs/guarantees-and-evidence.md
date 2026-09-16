@@ -38,12 +38,21 @@ verification consumer. Each entry binds the consumer's current literal policy
 pin to the latest successful production-shaped run and the reusable workflow
 SHA GitHub recorded for that run. `python scripts/check_canaries.py` validates
 the manifest offline; the scheduled CI run adds `--live` to detect pin drift,
-newer unrecorded successes, and a pin that no branch or tag of this repository
-reaches any more. GitHub refuses a reusable-workflow call at such a commit
-before any job starts, so after a history rewrite here a consumer's pin can
-match its workflow byte for byte and still fail every release. The audit asks
-GitHub's compare API how the pin sits relative to `main` and accepts only
-`identical` or `behind`.
+release evidence that has been overtaken, and a pin that no branch or tag of
+this repository reaches any more. GitHub refuses a reusable-workflow call at
+such a commit before any job starts, so after a history rewrite here a
+consumer's pin can match its workflow byte for byte and still fail every
+release. The audit asks GitHub's compare API how the pin sits relative to
+`main` and accepts only `identical` or `behind`.
+
+The freshness rule differs by family, because the consumers differ. An
+archive, Python or skills release runs on a tag, so a success newer than the
+recorded evidence means a release happened that nobody wrote down, and the
+audit fails until a person records it. The verification consumer runs on every
+push to its default branch, so a newer success is the ordinary state; the
+audit instead requires the newest success to be running the pin the consumer
+declares today. The recorded run stays the reviewed example either way, and is
+checked against GitHub the same way for every family.
 
 Archive and Python entries can opt into a component namespace with the optional
 `tag_prefix` field, a lower-case alphanumeric name separated by single hyphens.
@@ -58,7 +67,10 @@ Python release, and Australian Accounting Skills' release and read-only shared
 verification workflow. Existing published releases supply the
 release evidence; migrating these references does not require new releases.
 
-A current pin can temporarily be newer than the latest release evidence. The
-live audit reports that state explicitly without inventing a privileged dry
-run. It becomes current evidence only when that consumer completes its next
-authorised release through the pinned workflow.
+A release family's current pin can temporarily be newer than its latest
+release evidence. The live audit reports that state explicitly, as a warning
+rather than a failure, without inventing a privileged dry run. It becomes
+current evidence only when that consumer completes its next authorised release
+through the pinned workflow. The verification entry carries no such warning:
+it publishes nothing to wait for, and its next push already proves or
+disproves the current pin.

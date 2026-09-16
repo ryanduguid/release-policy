@@ -335,6 +335,96 @@ class CanaryManifestTests(unittest.TestCase):
         self.assertEqual(len(result.warnings), 1)
         self.assertIn("current pin lacks release evidence", result.warnings[0])
 
+    def test_verify_accepts_a_newer_success_running_the_current_pin(self) -> None:
+        """The verification consumer runs on every push to its default branch,
+        so a success newer than the recorded evidence is the ordinary state
+        rather than drift. What has to hold is that the newest success is
+        running the pin the consumer declares today."""
+        recorded = run_payload(family="verify", ref="main")
+        newer = run_payload(family="verify", ref="main", run_id=456)
+
+        def fetch_json(endpoint: str) -> object:
+            if "/compare/" in endpoint:
+                return {"status": "behind"}
+            if endpoint.endswith("/actions/runs/123"):
+                return recorded
+            return {"workflow_runs": [newer, recorded]}
+
+        result = check_canaries.check_live(
+            check_canaries.parse_manifest(manifest(family="verify", ref="main")),
+            fetch_json=fetch_json,
+            fetch_text=lambda _: (
+                "uses: ryanduguid/release-policy/.github/workflows/"
+                f"verify-skills.yml@{SHA}\n"
+            ),
+        )
+
+        self.assertEqual(result.errors, ())
+        self.assertEqual(result.warnings, ())
+
+    def test_verify_rejects_a_latest_success_on_a_superseded_pin(self) -> None:
+        """A consumer that declares a pin its own workflow has never run
+        successfully is the state this family exists to catch."""
+        recorded = run_payload(family="verify", ref="main")
+        superseded = run_payload(
+            family="verify", ref="main", run_id=456, policy_sha=OLDER_SHA
+        )
+
+        def fetch_json(endpoint: str) -> object:
+            if "/compare/" in endpoint:
+                return {"status": "behind"}
+            if endpoint.endswith("/actions/runs/123"):
+                return recorded
+            return {"workflow_runs": [superseded, recorded]}
+
+        result = check_canaries.check_live(
+            check_canaries.parse_manifest(manifest(family="verify", ref="main")),
+            fetch_json=fetch_json,
+            fetch_text=lambda _: (
+                "uses: ryanduguid/release-policy/.github/workflows/"
+                f"verify-skills.yml@{SHA}\n"
+            ),
+        )
+
+        self.assertEqual(len(result.errors), 1)
+        self.assertIn("used policy pin", result.errors[0])
+        self.assertEqual(result.warnings, ())
+
+    def test_verify_does_not_record_a_release_evidence_warning(self) -> None:
+        """`current pin lacks release evidence` names a pin no release has run
+        yet, and it clears on that consumer's next authorised release. The
+        verification consumer publishes nothing, so the warning would never
+        clear on its own, and the current-pin check above already proves the
+        thing the warning exists to doubt."""
+        recorded = run_payload(family="verify", ref="main", policy_sha=OLDER_SHA)
+        newer = run_payload(family="verify", ref="main", run_id=456)
+
+        def fetch_json(endpoint: str) -> object:
+            if "/compare/" in endpoint:
+                return {"status": "behind"}
+            if endpoint.endswith("/actions/runs/123"):
+                return recorded
+            return {"workflow_runs": [newer, recorded]}
+
+        result = check_canaries.check_live(
+            check_canaries.parse_manifest(
+                manifest(
+                    family="verify",
+                    ref="main",
+                    current_sha=SHA,
+                    evidence_sha=OLDER_SHA,
+                )
+            ),
+            fetch_json=fetch_json,
+            fetch_text=lambda _: (
+                "uses: ryanduguid/release-policy/.github/workflows/"
+                f"verify-skills.yml@{SHA}\n"
+            ),
+        )
+
+        self.assertEqual(result.errors, ())
+        self.assertEqual(result.warnings, ())
+
     def test_rejects_a_current_pin_unreachable_from_policy_main(self) -> None:
         """A pin can match the consumer's workflow byte for byte and still be
         dead: after a history rewrite of this repository the commit reaches no
