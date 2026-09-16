@@ -1,0 +1,77 @@
+# The egress check
+
+`scripts/check_egress.py` reads a publication candidate and refuses it if it
+carries content that should not leave private hands. It is a standalone
+script: no reusable workflow calls it, and no consumer pin changes because it
+exists. Adopt it by adding a step, not by moving a pin.
+
+## Why it runs on egress and not on commit
+
+A hook on the way into a private repository blocks authoring the material this
+check exists to contain. Private notes, client identifiers and internal
+hostnames all have to be written somewhere. The rule is that they are written
+freely and checked once, on the way out: the same shape as a one-way
+firewall, where content flows private to public through a deterministic check
+and nothing flows back.
+
+That is why this check is deliberately absent from `.pre-commit-config.yaml`.
+
+## The three layers
+
+| Layer | What it looks for | On a finding |
+| --- | --- | --- |
+| A | terms from the operator's private terms file | hard fail |
+| B | structural shapes: user paths, private addresses, internal hostnames, bucket URIs, dotenv references, UNC shares | soft fail; `--allow-structural` waves them through |
+| C | the reserved namespace `x-internal-` | hard fail |
+
+Layer A's terms live in a file that is never committed. A public repository
+carrying the list of words it must not publish has already published them.
+Keep the file outside the checkout, or somewhere `.gitignore` covers, and pass
+it with `--terms`.
+
+Layer C works the other way round: anything internal is marked with the
+`x-internal-` prefix where it is written, so the check needs no knowledge of
+what the value means to refuse it.
+
+## Exit status
+
+| Status | Meaning |
+| --- | --- |
+| `0` | nothing to report |
+| `1` | a finding: do not publish |
+| `2` | the check did not run, so nothing was checked |
+
+The 2 band is what stops a broken gate reading as a clean one. A missing terms
+file, an unreadable candidate or a pattern that does not compile all land
+there and print `nothing was checked; this candidate is unchecked, not clean`.
+
+The check also fails closed on its own configuration: run with neither
+`--terms` nor `--no-terms` and it refuses to report a verdict at all, because
+a clean result that silently skipped layer A is worse than no result. A terms
+file that exists but lists no terms is an error for the same reason: an
+emptied policy file is the likeliest way this gate would go quiet.
+
+## Use
+
+```bash
+python scripts/check_egress.py dist/ --terms ../private/egress-terms.txt
+```
+
+```bash
+python scripts/check_egress.py README.md docs --no-terms --allow-structural
+```
+
+Files whose suffix is not a known text type, and files that do not decode as
+UTF-8, are listed as `not scanned as text` rather than passed silently. A gate
+cannot vouch for bytes it never decoded, and saying so is the difference
+between a scanned candidate and an assumed one.
+
+## What holds it in place
+
+- the verifier, `scripts/check_egress.py`, with the three-state status above
+- a CI step in `.github/workflows/ci.yml` over this repository's own published
+  prose, layers B and C only, because the terms file is private
+- `tests/test_egress.py`: a fixture for each layer, a near-miss negative for
+  each one so the check does not train its reader to ignore it, and a fixture
+  for each exit band including the ones that must report 2 rather than 1
+- no pre-commit hook, for the reason at the top of this page

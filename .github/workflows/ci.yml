@@ -109,6 +109,16 @@ jobs:
       - name: Check repository baseline
         run: bash tests/test_repository_baseline.sh
 
+      - name: Check the published prose for egress findings
+        # Layers B and C only: the layer A terms file is private and never
+        # reaches CI, which is the point of keeping it out of the repository.
+        # --allow-structural because SECURITY.md names a dotenv file in prose,
+        # which is a shape layer B looks for and a person has already read.
+        run: >-
+          python scripts/check_egress.py
+          README.md RELEASE_NOTES.md CONTRIBUTING.md SECURITY.md AGENTS.md docs
+          --no-terms --allow-structural
+
       - name: Run gate tests
         run: bash tests/test_gates.sh
 

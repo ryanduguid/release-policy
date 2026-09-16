@@ -40,6 +40,7 @@ a full policy commit.
 - [Source archives](docs/archive-consumers.md)
 - [Skill verification and releases](docs/skill-consumers.md)
 - [Attribution checks](docs/attribution-consumers.md)
+- [The egress check](docs/egress-check.md)
 - [Prerequisites](docs/consumer-prerequisites.md)
 - [Guarantees and canary evidence](docs/guarantees-and-evidence.md)
 - [Shared-policy decision](docs/adr/0001-shared-release-policy.md)
