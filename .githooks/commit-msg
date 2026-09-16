@@ -29,7 +29,7 @@ VENDOR='claude|anthropic|codex|openai|cursor|copilot|chatgpt|gemini|devin|codeiu
 DOMAIN='claude\.ai|claude\.com|anthropic\.com|openai\.com|chatgpt\.com|cursor\.(com|sh)|codeium\.com|windsurf\.com|cognition\.ai|devin\.ai|nousresearch\.com|qodo\.ai|openhands\.dev|all-hands\.dev'
 
 # Vendor words that are not plausible human names, so they can be matched alone.
-SOLE='claude|anthropic|openai|chatgpt|copilot|codex|cursor|codeium|windsurf|antigravity|qodo|openhands|nousresearch'
+SOLE='anthropic|openai|chatgpt|copilot|codex|cursor|codeium|windsurf|antigravity|qodo|openhands|nousresearch'
 
 status=0
 
@@ -77,6 +77,7 @@ check_identity committer "$(git var GIT_COMMITTER_IDENT)"
 # --- message ---------------------------------------------------------------
 # Comment lines are stripped by git after this hook, so drop them here too, and
 # skip fenced code blocks so a quoted example is not read as a credit.
+perl -MUnicode::Normalize -CSD -pe '$_ = NFKD($_); s/\p{M}//g; s/\p{Cf}//g' "$msg_file" |
 awk -v vendor="$VENDOR" -v domain="$DOMAIN" -v hook="$hook" '
 	function flag(why) {
 		printf "%s: %s line %d: %s\n", hook, why, NR, $0 > "/dev/stderr"
@@ -85,7 +86,16 @@ awk -v vendor="$VENDOR" -v domain="$DOMAIN" -v hook="$hook" '
 	/^#/ { next }
 	{
 		line = tolower($0)
-		if (line ~ /^[ \t]*(```|~~~)/) { fence = !fence; next }
+		# CommonMark fences allow at most three spaces and require matching closers.
+		if (line ~ /^ {0,3}(`{3,}|~{3,})[ \t]*$/) {
+			marker = substr(line, match(line, /(`|~)/), 1)
+			start = match(line, /(`|~)/)
+			count = 0
+			while (substr(line, start + count, 1) == marker) count++
+			if (!fence) { fence = 1; fence_marker = marker; fence_length = count }
+			else if (marker == fence_marker && count >= fence_length) fence = 0
+			next
+		}
 		if (fence) next
 
 		if (line ~ ("^[ \t]*co-?authored-by:.*(" vendor ")"))
@@ -96,13 +106,15 @@ awk -v vendor="$VENDOR" -v domain="$DOMAIN" -v hook="$hook" '
 			flag("session trailer")
 		else if (line ~ ("^[ \t]*_?[^a-z0-9]*\xf0\x9f\xa4\x96.*(" vendor ")"))
 			flag("robot emoji credit")
-		else if (line ~ ("^[ \t]*_?(generated|written|created|produced|assisted) (with|by) .*(" vendor ")"))
+		else if (line ~ ("^[ \t]*_?(generated|written|created|produced|assisted|implemented) (with|by) .*(" vendor ")"))
 			flag("generated-with footer")
+		else if (line ~ /^[ \t]*review (bot|agent|fixes)[ \t]*$/)
+			flag("review agent credit")
 		else if (line ~ ("^[ \t]*[_<(]*https?://([a-z0-9.-]+\\.)?(" domain ")"))
 			flag("bare vendor url")
 	}
 	END { exit bad ? 1 : 0 }
-' "$msg_file" || status=1
+' || status=1
 
 if [ "$status" -ne 0 ]; then
 	cat >&2 <<'EOF'
