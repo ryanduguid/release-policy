@@ -18,6 +18,13 @@ _RELEASE_TAG = re.compile(
 )
 _TAG_PREFIX = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _FAMILIES = {"archive", "python", "skills", "verify"}
+# A release family publishes on a tag, so a success newer than the recorded
+# evidence means that evidence has been overtaken and a person should look.
+# The verification consumer runs on every push to its default branch, where a
+# newer success is the ordinary state: requiring identity there made the
+# manifest stale within a day of every consumer push and proved nothing the
+# current-pin check does not prove directly.
+_RELEASE_FAMILIES = frozenset(_FAMILIES - {"verify"})
 # GitHub's compare API reports the pin relative to release-policy main. Only
 # these 2 statuses mean the pin is an ancestor of main. GitHub refuses a
 # reusable-workflow call at a commit no branch or tag reaches, before any job
@@ -344,13 +351,27 @@ def check_live(
             latest = None
         if latest is None:
             errors.append(f"{prefix}: no relevant successful workflow run was returned")
-        elif latest.get("id") != canary.evidence.run_id:
-            errors.append(
-                f"{prefix}: latest successful run {latest.get('id')!r} != recorded "
-                f"{canary.evidence.run_id}"
-            )
+        elif canary.family in _RELEASE_FAMILIES:
+            if latest.get("id") != canary.evidence.run_id:
+                errors.append(
+                    f"{prefix}: latest successful run {latest.get('id')!r} != recorded "
+                    f"{canary.evidence.run_id}"
+                )
+        else:
+            # The recorded run stays the reviewed example, checked above like any
+            # other. Freshness comes from the live listing instead: the newest
+            # success has to be running the pin the consumer declares today.
+            observed_pin = _referenced_policy_sha(latest, canary)
+            if observed_pin != canary.current_policy_sha:
+                errors.append(
+                    f"{prefix}: latest successful run {latest.get('id')!r} used policy "
+                    f"pin {observed_pin!r} != current {canary.current_policy_sha}"
+                )
 
-        if canary.evidence.policy_sha != canary.current_policy_sha:
+        if (
+            canary.family in _RELEASE_FAMILIES
+            and canary.evidence.policy_sha != canary.current_policy_sha
+        ):
             warnings.append(
                 f"{prefix}: current pin lacks release evidence; latest success used "
                 f"{canary.evidence.policy_sha}"
