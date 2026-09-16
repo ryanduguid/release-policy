@@ -21,11 +21,18 @@ def write(root: Path, name: str, text: str) -> Path:
 
 @contextlib.contextmanager
 def candidate(files: dict[str, str]):
+    """A publication candidate, with the working directory inside it.
+
+    The checker matches an --exclude against the path as given, so tests that
+    pass relative paths exercise the same matching a caller gets from a
+    repository checkout.
+    """
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
         for name, text in files.items():
             write(root, name, text)
-        yield root
+        with contextlib.chdir(root):
+            yield root
 
 
 def run(argv: list[str]) -> tuple[int, str, str]:
@@ -38,12 +45,18 @@ def run(argv: list[str]) -> tuple[int, str, str]:
 class LayerATests(unittest.TestCase):
     """Configured terms: the words that must never reach a public artefact."""
 
-    def test_a_configured_term_is_a_finding(self) -> None:
+    def test_a_configured_term_is_a_finding_and_the_term_is_not_printed(self) -> None:
+        # The finding names where to look, never what was found: this output
+        # goes to CI logs, read by more people than the artefact would reach.
         with candidate({"README.md": "Prepared for Northwind Holdings in June.\n"}) as root:
-            terms = write(root.parent, "terms.txt", "Northwind Holdings\n")
+            terms = write(root.parent, "terms.txt", "# policy\nNorthwind Holdings\n")
             code, out, _ = run([str(root / "README.md"), "--terms", str(terms)])
             self.assertEqual(code, 1)
-            self.assertIn("[A] configured term 'Northwind Holdings'", out)
+            self.assertIn("[A] configured term at ", out)
+            self.assertIn("terms.txt:2 (match redacted)", out)
+            self.assertIn("README.md:1", out)
+            self.assertNotIn("Northwind", out)
+            self.assertNotIn("Prepared for", out)
             self.assertIn("do not publish", out)
 
     def test_a_term_is_found_whatever_its_case(self) -> None:
@@ -65,18 +78,20 @@ class LayerATests(unittest.TestCase):
     def test_comments_and_blank_lines_in_the_terms_file_are_not_terms(self) -> None:
         with candidate({"notes.md": "nothing to see\n"}) as root:
             terms = write(root.parent, "terms.txt", "# a comment\n\n  \nAcme\n")
-            self.assertEqual(check_egress.load_terms(terms), ("Acme",))
+            loaded = check_egress.load_terms(terms)
+            self.assertEqual([(term.line, term.text) for term in loaded], [(4, "Acme")])
             code, _, _ = run([str(root), "--terms", str(terms)])
             self.assertEqual(code, 0)
 
-    def test_the_excerpt_is_bounded_and_does_not_reprint_the_paragraph(self) -> None:
+    def test_no_part_of_the_matched_line_reaches_the_output(self) -> None:
         line = "%s Northwind Holdings %s" % ("filler " * 40, "trailing " * 40)
         with candidate({"notes.md": line + "\n"}) as root:
             terms = write(root.parent, "terms.txt", "Northwind Holdings\n")
             _, out, _ = run([str(root), "--terms", str(terms)])
             printed = [row for row in out.splitlines() if "[A]" in row][0]
             self.assertLess(len(printed), len(line))
-            self.assertIn("...", printed)
+            for fragment in ("filler", "trailing", "Northwind"):
+                self.assertNotIn(fragment, printed)
 
 
 class LayerBTests(unittest.TestCase):
@@ -213,20 +228,37 @@ class CandidateTests(unittest.TestCase):
             self.assertEqual([p.name for p in walked], ["a.md", "b.md"])
             self.assertEqual(check_egress.candidate_files([root / "a.md"]), (root / "a.md",))
 
-    def test_a_file_that_is_not_scanned_as_text_is_reported_not_passed(self) -> None:
+    def test_a_file_that_cannot_be_read_as_text_is_not_cleared(self) -> None:
+        # "Clean" would be a claim about bytes the gate never decoded.
         with candidate({"README.md": "clean\n"}) as root:
             (root / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n binary")
             code, out, _ = run([str(root), "--no-terms"])
-            self.assertEqual(code, 0)
+            self.assertEqual(code, 1)
             self.assertIn("not scanned as text: ", out)
             self.assertIn("logo.png", out)
+            self.assertIn("unchecked, so this candidate is not cleared", out)
 
     def test_undecodable_text_is_reported_rather_than_crashing(self) -> None:
         with candidate({"README.md": "clean\n"}) as root:
             (root / "broken.md").write_bytes(b"\xff\xfe not utf-8")
             code, out, _ = run([str(root), "--no-terms"])
-            self.assertEqual(code, 0)
+            self.assertEqual(code, 1)
             self.assertIn("broken.md", out)
+
+    def test_allow_unscanned_clears_them_once_a_person_has_looked(self) -> None:
+        with candidate({"README.md": "clean\n"}) as root:
+            (root / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n binary")
+            code, out, _ = run([str(root), "--no-terms", "--allow-unscanned"])
+            self.assertEqual(code, 0)
+            self.assertIn("not scanned as text: ", out)
+            self.assertIn("waved through by --allow-unscanned", out)
+
+    def test_allow_unscanned_does_not_wave_through_a_finding(self) -> None:
+        with candidate({"notes.md": "x-internal-ledger: 4\n"}) as root:
+            (root / "logo.png").write_bytes(b"\x89PNG binary")
+            code, out, _ = run([str(root), "--no-terms", "--allow-unscanned"])
+            self.assertEqual(code, 1)
+            self.assertIn("[C]", out)
 
 
 class EntryPointTests(unittest.TestCase):
@@ -252,57 +284,98 @@ class EntryPointTests(unittest.TestCase):
         self.assertIn("[C] reserved namespace", out.getvalue())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ExclusionTests(unittest.TestCase):
     """An exclusion is for a file that must carry the shapes, and it is loud."""
 
     def test_an_excluded_file_is_printed_and_not_scanned(self) -> None:
-        with candidate({"guide.md": "the reserved prefix is x-internal-\n"}) as root:
-            code, out, _ = run([str(root), "--no-terms", "--exclude", "guide.md"])
+        with candidate({"docs/guide.md": "the reserved prefix is x-internal-\n"}):
+            code, out, _ = run(["docs", "--no-terms", "--exclude", "docs/guide.md"])
             self.assertEqual(code, 0, out)
-            self.assertIn("excluded by --exclude, not checked: ", out)
-            self.assertIn("guide.md", out)
+            self.assertIn("excluded by --exclude, not checked: docs/guide.md", out)
             self.assertNotIn("[C]", out)
 
     def test_an_exclusion_does_not_cover_its_neighbours(self) -> None:
         files = {
-            "guide.md": "the reserved prefix is x-internal-\n",
-            "other.md": "x-internal-ledger: 4\n",
+            "docs/guide.md": "the reserved prefix is x-internal-\n",
+            "docs/other.md": "x-internal-ledger: 4\n",
         }
-        with candidate(files) as root:
-            code, out, _ = run([str(root), "--no-terms", "--exclude", "guide.md"])
+        with candidate(files):
+            code, out, _ = run(["docs", "--no-terms", "--exclude", "docs/guide.md"])
             self.assertEqual(code, 1)
-            self.assertIn("other.md", out)
+            self.assertIn("docs/other.md", out)
+            self.assertIn("[C]", out)
+
+    def test_an_exclusion_is_the_path_not_the_file_name(self) -> None:
+        # A bare basename would exclude every file of that name at any depth,
+        # so adding docs/nested/guide.md would stop it being scanned without
+        # anyone changing the exclusion. The pattern matches the whole path.
+        files = {
+            "docs/guide.md": "the reserved prefix is x-internal-\n",
+            "docs/nested/guide.md": "x-internal-ledger: 4\n",
+        }
+        with candidate(files):
+            code, out, _ = run(["docs", "--no-terms", "--exclude", "docs/guide.md"])
+            self.assertEqual(code, 1)
+            self.assertIn("docs/nested/guide.md", out)
             self.assertIn("[C]", out)
 
     def test_a_pattern_that_matches_nothing_exits_2(self) -> None:
         # A stale exclusion protects nothing and hides the next file that
         # needs looking at, so it fails rather than passing quietly.
-        with candidate({"README.md": "clean\n"}) as root:
-            code, out, err = run([str(root), "--no-terms", "--exclude", "gone.md"])
+        with candidate({"README.md": "clean\n"}):
+            code, out, err = run([".", "--no-terms", "--exclude", "gone.md"])
             self.assertEqual(code, 2)
             self.assertIn("matched no file in the candidate: gone.md", err)
             self.assertIn("unchecked, not clean", out)
 
     def test_a_glob_excludes_a_family_of_files(self) -> None:
         files = {"docs/a.md": "x-internal-one\n", "docs/b.md": "x-internal-two\n"}
-        with candidate(files) as root:
-            code, out, _ = run([str(root), "--no-terms", "--exclude", "*.md"])
+        with candidate(files):
+            code, out, _ = run(["docs", "--no-terms", "--exclude", "docs/*.md"])
             self.assertEqual(code, 0, out)
             self.assertEqual(out.count("excluded by --exclude"), 2)
 
     def test_this_repository_can_check_its_own_published_prose(self) -> None:
-        # The gate's own documentation names the reserved namespace, so the
-        # CI invocation excludes it. This pins that the rest still passes and
-        # that the exclusion is still needed, because an exclusion that stops
-        # matching is an error.
+        # The invocation CI runs, from the repository root. The gate's own
+        # documentation names the reserved namespace, so it is excluded by its
+        # path; the rest has to keep passing, and the exclusion has to keep
+        # being needed, because one that stops matching is an error.
         root = Path(__file__).resolve().parents[1]
-        code, out, err = run([
-            str(root / "README.md"), str(root / "SECURITY.md"), str(root / "docs"),
-            "--no-terms", "--allow-structural", "--exclude", "egress-check.md",
-        ])
+        with contextlib.chdir(root):
+            code, out, err = run([
+                "README.md", "RELEASE_NOTES.md", "CONTRIBUTING.md",
+                "SECURITY.md", "AGENTS.md", "docs",
+                "--no-terms", "--allow-structural",
+                "--exclude", "docs/egress-check.md",
+            ])
         self.assertEqual(code, 0, out + err)
-        self.assertIn("egress-check.md", out)
+        self.assertIn("excluded by --exclude, not checked: docs/egress-check.md", out)
+
+
+class PrivateAddressTests(unittest.TestCase):
+    """Every RFC 1918 range, not just the two that came to mind first."""
+
+    def test_each_private_range_is_a_finding(self):
+        for label, address in (
+            ("10/8", "10.1.2.3"),
+            ("172.16/12 low", "172.16.0.1"),
+            ("172.16/12 mid", "172.24.8.9"),
+            ("172.16/12 high", "172.31.255.254"),
+            ("192.168/16", "192.168.0.14"),
+            ("loopback", "127.0.0.1"),
+        ):
+            with self.subTest(label), candidate({"notes.md": f"host {address} here\n"}):
+                code, out, _ = run([".", "--no-terms"])
+                self.assertEqual(code, 1, out)
+                self.assertIn("[B] private ipv4", out)
+
+    def test_public_addresses_either_side_of_the_range_are_not_findings(self):
+        # The near-miss negatives: 172.15 and 172.32 are public.
+        text = "edge hosts 172.15.0.1 and 172.32.0.1 are public\n"
+        with candidate({"notes.md": text}):
+            code, out, _ = run([".", "--no-terms"])
+            self.assertEqual(code, 0, out)
+
+
+if __name__ == "__main__":
+    unittest.main()

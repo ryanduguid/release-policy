@@ -21,8 +21,14 @@ That is why this check is deliberately absent from `.pre-commit-config.yaml`.
 | Layer | What it looks for | On a finding |
 | --- | --- | --- |
 | A | terms from the operator's private terms file | hard fail |
-| B | structural shapes: user paths, private addresses, internal hostnames, bucket URIs, dotenv references, UNC shares | soft fail; `--allow-structural` waves them through |
+| B | structural shapes: user paths, every RFC 1918 range, loopback, internal hostnames, bucket URIs, dotenv references, UNC shares | soft fail; `--allow-structural` waves them through |
 | C | the reserved namespace `x-internal-` | hard fail |
+
+A layer A finding reports the candidate file and line, and the line in the
+terms file that matched. It never prints the term or the text around it. Both
+are the private material this check exists to contain, and a CI log is read by
+more people than the artefact would have reached. The operator has the terms
+file; the line number is enough to act on.
 
 Layer A's terms live in a file that is never committed. A public repository
 carrying the list of words it must not publish has already published them.
@@ -61,8 +67,18 @@ checked`, and a pattern that matches no file in the candidate is an error in
 the 2 band, because a stale exclusion protects nothing and hides the next file
 that needs looking at.
 
-Exclude a file because it must contain the shapes, never because it is
-inconvenient that it does.
+The pattern is matched against the whole path as given, not the file name, so
+`--exclude docs/egress-check.md` excludes that one file and leaves
+`docs/nested/egress-check.md` to be scanned. Exclude a file because it must
+contain the shapes, never because it is inconvenient that it does.
+
+## Files that cannot be read as text
+
+A file whose suffix is not a known text type, or that does not decode as
+UTF-8, is listed as `not scanned as text` and the candidate is **not** cleared.
+A gate cannot vouch for bytes it never decoded, and reporting `clean` would be
+a claim about exactly those bytes. Pass `--allow-unscanned` once a person has
+decided the listed files are fit to publish; they are printed either way.
 
 ## Use
 
@@ -74,10 +90,9 @@ python scripts/check_egress.py dist/ --terms ../private/egress-terms.txt
 python scripts/check_egress.py README.md docs --no-terms --allow-structural
 ```
 
-Files whose suffix is not a known text type, and files that do not decode as
-UTF-8, are listed as `not scanned as text` rather than passed silently. A gate
-cannot vouch for bytes it never decoded, and saying so is the difference
-between a scanned candidate and an assumed one.
+```bash
+python scripts/check_egress.py dist/ --terms ../private/egress-terms.txt --allow-unscanned
+```
 
 ## What holds it in place
 

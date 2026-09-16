@@ -42,11 +42,12 @@ the 2 band and say so. Fail closed: without either --terms or an explicit
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import re
 import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from pathlib import Path, PurePath
+from pathlib import Path
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1
@@ -63,6 +64,7 @@ STRUCTURAL_PATTERNS: tuple[tuple[str, str], ...] = (
     ("unix home path", r"/(?:home|Users)/[A-Za-z0-9._-]+/"),
     ("private ipv4", r"\b(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"),
     ("private ipv4", r"\b192\.168\.\d{1,3}\.\d{1,3}\b"),
+    ("private ipv4", r"\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b"),
     ("localhost url", r"\bhttps?://(?:localhost|127\.0\.0\.1)(?::\d+)?\b"),
     ("internal hostname", r"\b[A-Za-z0-9-]+\.(?:internal|local|lan|corp|intranet)\b"),
     ("object store uri", r"\b(?:s3|gs|azure)://[A-Za-z0-9._-]+"),
@@ -91,10 +93,25 @@ class Finding:
     excerpt: str
 
     def render(self) -> str:
-        return f"{self.path}:{self.line}: [{self.layer}] {self.label}: {self.excerpt}"
+        where = f"{self.path}:{self.line}: [{self.layer}] {self.label}"
+        return f"{where}: {self.excerpt}" if self.excerpt else where
 
 
-def load_terms(path: Path) -> tuple[str, ...]:
+@dataclass(frozen=True)
+class Term:
+    """One layer A term, and where in the terms file it was written.
+
+    The line number is what a finding reports. The term itself is private by
+    definition, so it is never printed: a log that names the word it caught
+    has leaked it to everyone who can read the log, which on hosted CI is a
+    wider audience than the artefact would have had.
+    """
+
+    line: int
+    text: str
+
+
+def load_terms(path: Path) -> tuple[Term, ...]:
     """Read the operator's layer A terms: one per line, # starts a comment.
 
     A terms file that exists but holds no term is an error, not an empty
@@ -107,8 +124,8 @@ def load_terms(path: Path) -> tuple[str, ...]:
     except OSError as error:
         raise EgressError(f"cannot read the terms file {path}: {error}") from error
     terms = tuple(
-        line.strip()
-        for line in text.splitlines()
+        Term(line=number, text=line.strip())
+        for number, line in enumerate(text.splitlines(), start=1)
         if line.strip() and not line.lstrip().startswith("#")
     )
     if not terms:
@@ -147,7 +164,11 @@ def partition_excluded(
     unused = set(patterns)
     for path in files:
         posix = path.as_posix()
-        matched = [p for p in patterns if PurePath(posix).match(p) or posix.endswith("/" + p)]
+        # fnmatch against the whole path, not PurePath.match, which matches
+        # from the right: a bare basename would then exclude every file of
+        # that name at any depth, so adding docs/nested/<name> would skip
+        # scanning it without anyone changing the exclusion.
+        matched = [p for p in patterns if fnmatch.fnmatchcase(posix, p)]
         if matched:
             unused.difference_update(matched)
             excluded.append(path)
@@ -190,12 +211,13 @@ def scan_text(
     text: str,
     *,
     label_path: str,
-    terms: Iterable[str],
+    terms: Iterable[Term],
     patterns: Iterable[tuple[str, str]] = STRUCTURAL_PATTERNS,
+    terms_label: str = "the terms file",
 ) -> tuple[Finding, ...]:
     """Apply all three layers to one file's text."""
     findings: list[Finding] = []
-    lowered_terms = [(term, term.lower()) for term in terms]
+    lowered_terms = [(term, term.text.lower()) for term in terms]
     compiled = []
     for label, pattern in patterns:
         try:
@@ -206,11 +228,14 @@ def scan_text(
     for number, line in enumerate(text.splitlines(), start=1):
         lowered_line = line.lower()
         for term, lowered_term in lowered_terms:
-            start = lowered_line.find(lowered_term)
-            if start >= 0:
+            if lowered_term in lowered_line:
+                # Neither the term nor the text around it is printed. Both are
+                # the private material this gate exists to contain, and the
+                # operator has the terms file: the line number locates it.
                 findings.append(Finding(
-                    layer="A", path=label_path, line=number, label=f"configured term {term!r}",
-                    excerpt=_excerpt(line, start, start + len(term)),
+                    layer="A", path=label_path, line=number,
+                    label=f"configured term at {terms_label}:{term.line} (match redacted)",
+                    excerpt="",
                 ))
         for label, expression in compiled:
             match = expression.search(line)
@@ -232,8 +257,9 @@ def scan_text(
 def check_candidate(
     paths: Sequence[Path],
     *,
-    terms: Sequence[str],
+    terms: Sequence[Term],
     exclude: Sequence[str] = (),
+    terms_label: str = "the terms file",
 ) -> tuple[tuple[Finding, ...], tuple[Path, ...], tuple[Path, ...]]:
     """Return the findings, the files not scanned as text, and the excluded."""
     findings: list[Finding] = []
@@ -244,7 +270,9 @@ def check_candidate(
         if text is None:
             unscanned.append(path)
             continue
-        findings.extend(scan_text(text, label_path=path.as_posix(), terms=terms))
+        findings.extend(scan_text(
+            text, label_path=path.as_posix(), terms=terms, terms_label=terms_label,
+        ))
     return tuple(findings), tuple(unscanned), excluded
 
 
@@ -267,6 +295,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-structural", action="store_true",
         help="report layer B findings without failing on them",
+    )
+    parser.add_argument(
+        "--allow-unscanned", action="store_true",
+        help=(
+            "publish although some files could not be read as text; they are "
+            "listed either way, and without this flag they are a finding"
+        ),
     )
     parser.add_argument(
         "--exclude", action="append", default=[], metavar="GLOB",
@@ -292,7 +327,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         terms = load_terms(arguments.terms) if arguments.terms else ()
         findings, unscanned, excluded = check_candidate(
-            arguments.paths, terms=terms, exclude=arguments.exclude,
+            arguments.paths,
+            terms=terms,
+            exclude=arguments.exclude,
+            terms_label=str(arguments.terms) if arguments.terms else "the terms file",
         )
     except EgressError as error:
         print(f"check_egress: EGRESS CHECK ERROR: {error}", file=sys.stderr)
@@ -310,11 +348,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     if blocking:
         print(f"check_egress: RESULT: {len(blocking)} finding(s); do not publish")
         return EXIT_FINDINGS
-    if findings:
+    if unscanned and not arguments.allow_unscanned:
+        # A file nobody decoded is not a file nobody needs to look at. The
+        # gate says what it checked, and "clean" would be a claim about bytes
+        # it never read. Pass --allow-unscanned once a person has decided
+        # those files are fit to publish.
         print(
-            f"check_egress: RESULT: clean, with {len(findings)} structural finding(s) "
-            "waved through by --allow-structural"
+            f"check_egress: RESULT: {len(unscanned)} file(s) could not be read as "
+            "text; they are unchecked, so this candidate is not cleared. Review "
+            "them and pass --allow-unscanned to publish anyway"
         )
+        return EXIT_FINDINGS
+    waved = []
+    if findings:
+        waved.append(f"{len(findings)} structural finding(s) waved through by --allow-structural")
+    if unscanned:
+        waved.append(f"{len(unscanned)} unscanned file(s) waved through by --allow-unscanned")
+    if waved:
+        print("check_egress: RESULT: clean, with " + ", and ".join(waved))
     else:
         print("check_egress: RESULT: clean")
     return EXIT_OK
