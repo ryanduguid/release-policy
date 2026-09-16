@@ -22,6 +22,11 @@ small:
      marked with it at the point it is written, and its presence in a
      publication candidate is decisive on its own.
 
+A file that describes this check carries the shapes it looks for, as does this
+module. --exclude is for those, and it is bounded on both sides: every excluded
+file is printed, and a pattern that matches nothing is an error rather than a
+no-op, so a stale exclusion cannot sit there protecting nothing.
+
 The exit status is a three-state contract:
 
     0   nothing to report
@@ -41,7 +46,7 @@ import re
 import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1
@@ -124,6 +129,38 @@ def candidate_files(paths: Sequence[Path]) -> tuple[Path, ...]:
     return tuple(sorted(set(found)))
 
 
+def partition_excluded(
+    files: Sequence[Path],
+    patterns: Sequence[str],
+) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """Split the candidate into the files to scan and the files excluded.
+
+    A document that describes this check necessarily contains the shapes it
+    looks for, and so does the check's own source. Those are the honest use
+    for an exclusion, and the two rules around it are what keep an exclusion
+    from quietly becoming a hole: every excluded file is printed, and a
+    pattern that matches nothing is an error rather than a no-op. A stale
+    exclusion protects nothing and hides the next file that needs looking at.
+    """
+    kept: list[Path] = []
+    excluded: list[Path] = []
+    unused = set(patterns)
+    for path in files:
+        posix = path.as_posix()
+        matched = [p for p in patterns if PurePath(posix).match(p) or posix.endswith("/" + p)]
+        if matched:
+            unused.difference_update(matched)
+            excluded.append(path)
+        else:
+            kept.append(path)
+    if unused:
+        raise EgressError(
+            "these --exclude pattern(s) matched no file in the candidate: "
+            + ", ".join(sorted(unused))
+        )
+    return tuple(kept), tuple(excluded)
+
+
 def _read_text(path: Path) -> str | None:
     if path.suffix.lower() not in TEXT_SUFFIXES:
         return None
@@ -196,17 +233,19 @@ def check_candidate(
     paths: Sequence[Path],
     *,
     terms: Sequence[str],
-) -> tuple[tuple[Finding, ...], tuple[Path, ...]]:
-    """Return the findings and the files that could not be scanned as text."""
+    exclude: Sequence[str] = (),
+) -> tuple[tuple[Finding, ...], tuple[Path, ...], tuple[Path, ...]]:
+    """Return the findings, the files not scanned as text, and the excluded."""
     findings: list[Finding] = []
     unscanned: list[Path] = []
-    for path in candidate_files(paths):
+    scanned, excluded = partition_excluded(candidate_files(paths), exclude)
+    for path in scanned:
         text = _read_text(path)
         if text is None:
             unscanned.append(path)
             continue
         findings.extend(scan_text(text, label_path=path.as_posix(), terms=terms))
-    return tuple(findings), tuple(unscanned)
+    return tuple(findings), tuple(unscanned), excluded
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -229,6 +268,14 @@ def _parser() -> argparse.ArgumentParser:
         "--allow-structural", action="store_true",
         help="report layer B findings without failing on them",
     )
+    parser.add_argument(
+        "--exclude", action="append", default=[], metavar="GLOB",
+        help=(
+            "skip a file that necessarily carries these shapes, such as this "
+            "check's own documentation; every exclusion is printed, and one "
+            "that matches nothing is an error"
+        ),
+    )
     return parser
 
 
@@ -244,12 +291,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "checked. Refusing to imply a clean result from an absent policy"
             )
         terms = load_terms(arguments.terms) if arguments.terms else ()
-        findings, unscanned = check_candidate(arguments.paths, terms=terms)
+        findings, unscanned, excluded = check_candidate(
+            arguments.paths, terms=terms, exclude=arguments.exclude,
+        )
     except EgressError as error:
         print(f"check_egress: EGRESS CHECK ERROR: {error}", file=sys.stderr)
         print("check_egress: nothing was checked; this candidate is unchecked, not clean")
         return EXIT_COULD_NOT_RUN
 
+    for path in excluded:
+        print(f"check_egress: excluded by --exclude, not checked: {path.as_posix()}")
     for path in unscanned:
         print(f"check_egress: not scanned as text: {path.as_posix()}")
     for finding in findings:

@@ -254,3 +254,55 @@ class EntryPointTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExclusionTests(unittest.TestCase):
+    """An exclusion is for a file that must carry the shapes, and it is loud."""
+
+    def test_an_excluded_file_is_printed_and_not_scanned(self) -> None:
+        with candidate({"guide.md": "the reserved prefix is x-internal-\n"}) as root:
+            code, out, _ = run([str(root), "--no-terms", "--exclude", "guide.md"])
+            self.assertEqual(code, 0, out)
+            self.assertIn("excluded by --exclude, not checked: ", out)
+            self.assertIn("guide.md", out)
+            self.assertNotIn("[C]", out)
+
+    def test_an_exclusion_does_not_cover_its_neighbours(self) -> None:
+        files = {
+            "guide.md": "the reserved prefix is x-internal-\n",
+            "other.md": "x-internal-ledger: 4\n",
+        }
+        with candidate(files) as root:
+            code, out, _ = run([str(root), "--no-terms", "--exclude", "guide.md"])
+            self.assertEqual(code, 1)
+            self.assertIn("other.md", out)
+            self.assertIn("[C]", out)
+
+    def test_a_pattern_that_matches_nothing_exits_2(self) -> None:
+        # A stale exclusion protects nothing and hides the next file that
+        # needs looking at, so it fails rather than passing quietly.
+        with candidate({"README.md": "clean\n"}) as root:
+            code, out, err = run([str(root), "--no-terms", "--exclude", "gone.md"])
+            self.assertEqual(code, 2)
+            self.assertIn("matched no file in the candidate: gone.md", err)
+            self.assertIn("unchecked, not clean", out)
+
+    def test_a_glob_excludes_a_family_of_files(self) -> None:
+        files = {"docs/a.md": "x-internal-one\n", "docs/b.md": "x-internal-two\n"}
+        with candidate(files) as root:
+            code, out, _ = run([str(root), "--no-terms", "--exclude", "*.md"])
+            self.assertEqual(code, 0, out)
+            self.assertEqual(out.count("excluded by --exclude"), 2)
+
+    def test_this_repository_can_check_its_own_published_prose(self) -> None:
+        # The gate's own documentation names the reserved namespace, so the
+        # CI invocation excludes it. This pins that the rest still passes and
+        # that the exclusion is still needed, because an exclusion that stops
+        # matching is an error.
+        root = Path(__file__).resolve().parents[1]
+        code, out, err = run([
+            str(root / "README.md"), str(root / "SECURITY.md"), str(root / "docs"),
+            "--no-terms", "--allow-structural", "--exclude", "egress-check.md",
+        ])
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("egress-check.md", out)

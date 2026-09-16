@@ -51,6 +51,19 @@ a clean result that silently skipped layer A is worse than no result. A terms
 file that exists but lists no terms is an error for the same reason: an
 emptied policy file is the likeliest way this gate would go quiet.
 
+## Excluding a file that has to carry the shapes
+
+This page names the reserved namespace, and the script's own source holds
+every structural pattern. Both would fail the check they describe, so
+`--exclude GLOB` skips a named file. Two rules keep an exclusion from becoming
+a hole: every excluded file is printed as `excluded by --exclude, not
+checked`, and a pattern that matches no file in the candidate is an error in
+the 2 band, because a stale exclusion protects nothing and hides the next file
+that needs looking at.
+
+Exclude a file because it must contain the shapes, never because it is
+inconvenient that it does.
+
 ## Use
 
 ```bash
@@ -70,7 +83,8 @@ between a scanned candidate and an assumed one.
 
 - the verifier, `scripts/check_egress.py`, with the three-state status above
 - a CI step in `.github/workflows/ci.yml` over this repository's own published
-  prose, layers B and C only, because the terms file is private
+  prose, layers B and C only, because the terms file is private, with this
+  page excluded and a test that fails if that exclusion stops being needed
 - `tests/test_egress.py`: a fixture for each layer, a near-miss negative for
   each one so the check does not train its reader to ignore it, and a fixture
   for each exit band including the ones that must report 2 rather than 1

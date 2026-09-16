@@ -114,10 +114,13 @@ jobs:
         # reaches CI, which is the point of keeping it out of the repository.
         # --allow-structural because SECURITY.md names a dotenv file in prose,
         # which is a shape layer B looks for and a person has already read.
+        # docs/egress-check.md is excluded because it documents the reserved
+        # namespace by naming it. The exclusion is printed, and it fails if it
+        # ever stops matching, so it cannot quietly become a hole.
         run: >-
           python scripts/check_egress.py
           README.md RELEASE_NOTES.md CONTRIBUTING.md SECURITY.md AGENTS.md docs
-          --no-terms --allow-structural
+          --no-terms --allow-structural --exclude egress-check.md
 
       - name: Run gate tests
         run: bash tests/test_gates.sh

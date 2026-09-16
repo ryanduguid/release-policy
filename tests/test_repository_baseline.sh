@@ -24,7 +24,7 @@ CANONICAL_SHA256 = {
     ".github/actions/no-ai-attribution/action.yml": "caab09af9770d353d0feb8819a8b4e19dd081e32ec9fe8d600fe3d70a17eb620",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
     ".github/dependabot.yml": "baf5bed4e5b960787d53ee5ea8d9d7376fbc54565d6a392604fb94afb6bc1b66",
-    ".github/workflows/ci.yml": "05296b7afc37a3e7b8dd42c72fa447d3fe3568548c214a73abf035373aca66c0",
+    ".github/workflows/ci.yml": "8d857b059e7c15dcf9792c9b48da7aa9ec16e19599c99b57b9edd2f7c76b3597",
     ".github/workflows/codeql.yml": "0d01772f298332e096e1c7508768f4417548e2f6ac8f6fb847aea47171c76405",
     ".github/workflows/no-ai-attribution.yml": "3a41017245f9e8c3e41de2d828c1bb2e5b49721391a177905dceb861277a0f5b",
     ".github/workflows/attribution-policy.yml": "cf0a5e5989ddbfe5f742d383180636b5336ece895ffb76f69fd6e0a27f7134ce",
@@ -40,7 +40,7 @@ CANONICAL_SHA256 = {
     "docs/skill-consumers.md": "41eaea2a6f4ec707de902d0d68c8cf4b82c82f3458fcf21752de646eb4fea9f2",
     "docs/consumer-prerequisites.md": "b078b5f82d0f9eba7134ad12cf5edd04cb6db8f71746e72138bb05e9fd33b9dc",
     "docs/guarantees-and-evidence.md": "6ee2355356476a168b28959cf7ed3696a5fa6e62c1d7a4265edc975b00699e16",
-    "docs/egress-check.md": "96cebdc1a72d5f369ab4405b426c9d591325be21878f50dd5894e6b72d5f968f",
+    "docs/egress-check.md": "4ef6e3c76dd2a70841b234406820ce5bbb6bd2f5ace83520d0d8cc23a7954938",
     "SECURITY.md": "9e7f9e17cf7c23e350ff08fbf25ff14a2e17071fad9b1b1d57c91a4a2e834594",
 }
 
