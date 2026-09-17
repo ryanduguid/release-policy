@@ -42,6 +42,8 @@ _WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
 _TRUSTED_EVENTS = frozenset({"push", "workflow_dispatch"})
 _RELEASE_BRANCH = "main"
 _PAGE_SIZE = 100
+# How many times to re-read a listing that moved underneath the pagination.
+_LISTING_ATTEMPTS = 3
 # GitHub caps the wait a caller may ask for; a release that needs longer than
 # this has something else wrong with it.
 MAX_WAIT_SECONDS = 1800
@@ -105,21 +107,57 @@ def parse_required_checks(text: str) -> tuple[RequiredCheck, ...]:
     return tuple(checks)
 
 
-def _paginate(
+def _read_pages(
     fetch_json: Callable[[str], object], endpoint: str, key: str
-) -> list[dict[str, object]]:
+) -> list[dict[str, object]] | None:
+    """One complete read, or None when the listing moved while it was read."""
     items: list[dict[str, object]] = []
+    seen: list[object] = []
+    total: object = None
     page = 1
     while True:
         joiner = "&" if "?" in endpoint else "?"
         payload = fetch_json(f"{endpoint}{joiner}per_page={_PAGE_SIZE}&page={page}")
         if not isinstance(payload, dict) or not isinstance(payload.get(key), list):
             raise RuntimeError(f"GitHub returned no {key!r} list for {endpoint}")
-        batch = [item for item in payload[key] if isinstance(item, dict)]
-        items.extend(batch)
+        if page == 1:
+            total = payload.get("total_count")
+        elif payload.get("total_count") != total:
+            return None
+        for entry in payload[key]:
+            seen.append(entry.get("id") if isinstance(entry, dict) else None)
+            if isinstance(entry, dict):
+                items.append(entry)
         if len(payload[key]) < _PAGE_SIZE:
-            return items
+            break
         page += 1
+    identifiers = [identity for identity in seen if isinstance(identity, int)]
+    if len(set(identifiers)) != len(identifiers):
+        # A page repeated an entry, so an entry shifted out of view unseen.
+        return None
+    if isinstance(total, int) and total != len(seen):
+        return None
+    return items
+
+
+def _paginate(
+    fetch_json: Callable[[str], object], endpoint: str, key: str
+) -> list[dict[str, object]]:
+    """Read every page, refusing a listing that changed while it was read.
+
+    Offset pagination is not a snapshot. A run started, re-run or removed while
+    the pages are being read shifts the rest, so one page can repeat an entry
+    and another can skip one. A skipped entry is what matters here, because it
+    could be the run whose check failed. Read again when the listing moves, and
+    fail closed rather than judge an incomplete set.
+    """
+    for _ in range(_LISTING_ATTEMPTS):
+        items = _read_pages(fetch_json, endpoint, key)
+        if items is not None:
+            return items
+    raise RuntimeError(
+        f"{endpoint}: the listing changed while it was read, {_LISTING_ATTEMPTS} times over"
+    )
 
 
 def _full_name(value: object) -> str:

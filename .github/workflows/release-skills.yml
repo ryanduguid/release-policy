@@ -25,7 +25,8 @@ permissions:
 
 jobs:
   guard:
-    timeout-minutes: 5
+    # Outlasts the gate's bounded wait, as the other families' checks jobs do.
+    timeout-minutes: 15
     name: guard skill-pack release mode
     runs-on: ubuntu-latest
     permissions:

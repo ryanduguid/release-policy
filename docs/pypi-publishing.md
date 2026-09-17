@@ -18,6 +18,9 @@ Set the input, then add a second job:
         uses: ryanduguid/release-policy/.github/workflows/release-python.yml@<full-40-char-commit-sha>
         with:
           upload-dist-artifact: true
+          required-checks: |
+            .github/workflows/ci.yml: lint
+            .github/workflows/ci.yml: test (3.12)
 
       pypi:
         name: publish to PyPI

@@ -61,15 +61,29 @@ class FakeGitHub:
         self.jobs = jobs
         self.page_size = page_size
         self.requests: list[str] = []
+        # Set to a page number to simulate a run appearing mid-pagination.
+        self.insert_before_page: int | None = None
+        # Whether that shift settles, so a re-read succeeds.
+        self.settle = True
 
     def __call__(self, endpoint: str) -> object:
         self.requests.append(endpoint)
         page = int(endpoint.rsplit("page=", 1)[1])
         start = (page - 1) * self.page_size
         if "/actions/runs?" in endpoint:
-            return {"workflow_runs": self.runs[start : start + self.page_size]}
+            runs = self.runs
+            if self.insert_before_page is not None and page >= self.insert_before_page:
+                # A run started while the pages were being read, shifting the
+                # rest down by one, exactly as offset pagination allows.
+                runs = [run(9999)] + runs
+                self.insert_before_page = None if self.settle else self.insert_before_page
+            return {
+                "workflow_runs": runs[start : start + self.page_size],
+                "total_count": len(runs),
+            }
         run_id = int(endpoint.split("/actions/runs/")[1].split("/")[0])
-        return {"jobs": self.jobs[run_id][start : start + self.page_size]}
+        found = self.jobs[run_id]
+        return {"jobs": found[start : start + self.page_size], "total_count": len(found)}
 
 
 def complete_success() -> FakeGitHub:
@@ -151,6 +165,34 @@ class TrustedRunTests(unittest.TestCase):
         self.assertEqual(
             [request.rsplit("page=", 1)[1] for request in github.requests], ["1", "2", "3"]
         )
+
+    def test_a_listing_that_shifts_mid_read_is_read_again(self) -> None:
+        """A run inserted while paginating pushes another off the page boundary."""
+        github = FakeGitHub([run(index) for index in range(1, 201)], {})
+        github.insert_before_page = 2
+        found = required_checks.trusted_runs(github, REPO, SHA)[CI]
+        self.assertEqual(len(found), 200)
+        self.assertEqual({entry.run_id for entry in found}, set(range(1, 201)))
+
+    def test_a_listing_that_keeps_shifting_fails_closed(self) -> None:
+        """Never judge an incomplete set: a skipped run could be the failing one."""
+        github = FakeGitHub([run(index) for index in range(1, 201)], {})
+        github.insert_before_page = 2
+        github.settle = False
+        with self.assertRaisesRegex(RuntimeError, "the listing changed while it was read"):
+            required_checks.trusted_runs(github, REPO, SHA)
+
+    def test_a_repeated_entry_is_detected_even_within_one_page(self) -> None:
+        github = FakeGitHub([run(1), run(1)], {})
+        with self.assertRaisesRegex(RuntimeError, "the listing changed while it was read"):
+            required_checks.trusted_runs(github, REPO, SHA)
+
+    def test_a_count_that_disagrees_with_the_entries_fails_closed(self) -> None:
+        def short(_endpoint: str) -> object:
+            return {"workflow_runs": [run(1)], "total_count": 2}
+
+        with self.assertRaisesRegex(RuntimeError, "the listing changed while it was read"):
+            required_checks.trusted_runs(short, REPO, SHA)
 
     def test_a_malformed_listing_is_an_error_not_an_empty_result(self) -> None:
         for payload in ({"workflow_runs": "x"}, [], {}):
@@ -405,14 +447,45 @@ class ConsumerGuideTests(unittest.TestCase):
             results.append((index + 1, granted))
         return results
 
+    def guides_with_release_callers(self) -> list[str]:
+        """Every guide that shows a release call, not a hand-listed few.
+
+        The PyPI guide was missed when `required-checks` became mandatory
+        precisely because the check named its guides instead of finding them.
+        """
+        found = [
+            path.name
+            for path in sorted(self.DOCS.glob("*.md"))
+            if self.CALLS_RELEASE in path.read_text(encoding="utf-8")
+        ]
+        self.assertIn("python-consumers.md", found)
+        self.assertIn("pypi-publishing.md", found)
+        return found
+
     def test_every_documented_release_caller_grants_actions_read(self) -> None:
-        for guide in ("python-consumers.md", "archive-consumers.md", "skill-consumers.md"):
+        for guide in self.guides_with_release_callers():
             callers = self.caller_grants(guide)
             with self.subTest(guide=guide):
                 self.assertTrue(callers, "no release caller example found")
             for line_number, granted in callers:
                 with self.subTest(guide=guide, line=line_number):
                     self.assertTrue(granted, "this caller example omits actions: read")
+
+    def test_every_documented_release_caller_supplies_required_checks(self) -> None:
+        """The input is mandatory, so an example without it is a call GitHub refuses."""
+        for guide in self.guides_with_release_callers():
+            lines = (self.DOCS / guide).read_text(encoding="utf-8").splitlines()
+            for index, line in enumerate(lines):
+                if self.CALLS_RELEASE not in line:
+                    continue
+                indent = len(line) - len(line.lstrip())
+                block = []
+                for following in lines[index + 1 :]:
+                    if following.strip() and (len(following) - len(following.lstrip())) < indent:
+                        break
+                    block.append(following)
+                with self.subTest(guide=guide, line=index + 1):
+                    self.assertIn("required-checks:", "\n".join(block))
 
     def test_the_verification_caller_needs_no_actions_read(self) -> None:
         """verify-skills.yml runs no API-backed gate, so it keeps the narrower grant."""

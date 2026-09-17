@@ -355,7 +355,10 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
             self.mapping_keys(guard, indent=4),
             ("timeout-minutes", "name", "runs-on", "permissions", "steps"),
         )
-        self.assertRegex(guard, r"(?m)^    timeout-minutes: 5$")
+        # The guard runs the gate, so it must outlast the gate's bounded wait.
+        self.assertRegex(guard, r"(?m)^    timeout-minutes: 15$")
+        wait = int(re.search(r"--wait-seconds (\d+)", guard).group(1))  # type: ignore[union-attr]
+        self.assertLess(wait, 15 * 60)
         self.assertEqual(
             self.permission_map(guard, indent=4),
             {"contents": "read", "actions": "read"},
