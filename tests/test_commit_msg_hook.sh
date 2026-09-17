@@ -190,6 +190,32 @@ git config core.commentString 'é'
 run block "a marker that folds under normalisation still peels" "$(printf 'Fix\n\xc3\xa9 Co-Authored-By: Claude <noreply@anthropic.com>')"
 git config --unset core.commentString
 
+
+# Both aliases are scanned even when their prefixes overlap. Neither marker
+# order may hide a credit, including when a marker consumes part of its name.
+for markers in 'a ab' 'ab a'; do
+    read -r first second <<< "$markers"
+    git config core.commentString "$first"
+    git config core.commentChar "$second"
+    run block "overlapping markers $markers: longer marker" 'Fix
+abCo-authored-by: Claude'
+    run block "overlapping markers $markers: repeated markers" 'Fix
+ababaCo-authored-by: Claude'
+    run allow "overlapping markers $markers: human credit" 'Fix
+abCo-authored-by: Ryan Duguid'
+    git config --unset core.commentString
+    git config --unset core.commentChar
+done
+
+git config core.commentString '#Co'
+git config core.commentChar '#'
+run block "a longer marker must not swallow the credit name" 'Fix
+#Co-authored-by: Claude'
+run allow "a longer marker preserves ordinary product prose" 'Fix
+#Co-author support for a Claude Code plugin'
+git config --unset core.commentString
+git config --unset core.commentChar
+
 echo
 echo "commit-msg hook: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
