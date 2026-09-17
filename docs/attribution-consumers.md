@@ -25,8 +25,22 @@ ships.
 Keep the consumer's `No AI attribution` workflow to one job:
 
 - `policy`, named `Attribution policy`, runs on `pull_request_target`, pushes
-  to `main` and manual dispatch, and grants the called workflow
+  to every branch and manual dispatch, and grants the called workflow
   `contents: read`, `pull-requests: read` and `statuses: write`.
+
+The push trigger covers every branch, not only `main`. A commit pushed straight
+to a side branch would otherwise go unaudited until it reached `main`, and a
+branch that never opens a pull request would never be audited at all. On a new
+branch the push event carries no base, so the action scans the branch's whole
+history; that is the intended behaviour and is why the trigger suits a
+repository whose history is already clean.
+
+A consumer that is a contribution fork omits the push trigger and runs on
+`pull_request_target` and manual dispatch only. A fork's history carries
+upstream authorship that the fork neither owns nor rewrites, so scanning an
+upstream sync would fail on commits that are not the fork's to fix. Pull
+requests opened in the fork are still checked, because the action reads only
+the pull request commit range.
 
 Keep the event types and the per-event concurrency group in the caller. A
 called workflow cannot set workflow-level concurrency, but concurrency on a job
