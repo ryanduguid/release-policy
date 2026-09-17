@@ -127,6 +127,9 @@ jobs:
       - name: Run gate tests
         run: bash tests/test_gates.sh
 
+      - name: Run commit-msg hook tests
+        run: bash tests/test_commit_msg_hook.sh
+
       - name: Run policy tests with scoped branch coverage
         run: >-
           python -m coverage run --branch --source=scripts
