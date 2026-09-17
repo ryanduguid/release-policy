@@ -172,6 +172,24 @@ else
 	echo "skip      core.commentString unsupported by this git"
 fi
 
+# The two names are aliases, so which one Git honours depends on the order
+# they were configured in and on the Git version. The hook scans both rather
+# than guessing, so a credit behind either marker is refused.
+git config core.commentString '//'
+git config core.commentChar ';'
+run block "the alias configured first is still scanned" 'Fix
+// Co-Authored-By: Claude <noreply@anthropic.com>'
+run block "the alias configured last is scanned too" 'Fix
+; Co-Authored-By: Claude <noreply@anthropic.com>'
+git config --unset core.commentString
+git config --unset core.commentChar
+
+# comparable() folds an accented marker down to its base letter. Peeling only
+# after that fold would leave the marker in place and hide the credit.
+git config core.commentString 'é'
+run block "a marker that folds under normalisation still peels" "$(printf 'Fix\n\xc3\xa9 Co-Authored-By: Claude <noreply@anthropic.com>')"
+git config --unset core.commentString
+
 echo
 echo "commit-msg hook: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
