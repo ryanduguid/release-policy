@@ -77,13 +77,17 @@ runs:
             carry no info string. Tracking the character and length stops a
             shorter or different fence from ending a block early, and stops an
             indented code line that merely looks like a fence from flipping the
-            state for the rest of the document.
+            state for the rest of the document. A backtick opener whose info
+            string contains a backtick is not a fence either, so it cannot open a
+            block that hides every credit after it.
             """
             bad = []
             open_char = None
             open_len = 0
             for n, line in enumerate(text.split("\n"), 1):
                 m = FENCE.match(line)
+                if m and open_char is None and m.group("fence")[0] == "`" and "`" in m.group("info"):
+                    m = None
                 if m:
                     ch = m.group("fence")[0]
                     length = len(m.group("fence"))
