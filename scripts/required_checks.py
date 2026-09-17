@@ -22,6 +22,12 @@ merely one of them. There is no most-recent run to prefer: re-running a workflow
 keeps its run id and adds an attempt, so the highest id is not the latest
 execution, and any rule that picks a single run lets a failing execution of a
 mandatory check sit beside a passing one and be ignored.
+
+A named check has to match exactly one job in each run. A display name is not an
+identifier: two jobs in the same run may carry the same one, and choosing
+between them would let a failed job hide behind a passing namesake. A name that
+matches more than one job is refused as ambiguous, even when every job it
+matches succeeded, so give each mandatory job a name of its own.
 """
 
 from __future__ import annotations
@@ -69,8 +75,15 @@ class Run:
 class Job:
     run_id: int
     job_id: int
+    # The run attempt GitHub reported, or 0 when it reported none. It appears in
+    # diagnostics only; nothing here decides anything from it.
+    attempt: int
     status: str
     conclusion: str
+
+    @property
+    def label(self) -> str:
+        return f"{self.job_id} (attempt {self.attempt})" if self.attempt else str(self.job_id)
 
 
 @dataclass(frozen=True)
@@ -166,10 +179,36 @@ def _paginate(
     )
 
 
-def _full_name(value: object) -> str:
-    if isinstance(value, dict) and isinstance(value.get("full_name"), str):
-        return value["full_name"].casefold()
-    return ""
+def _text(value: object, field: str, where: str) -> str:
+    """The field as text. Absent reads as empty; any other shape refuses.
+
+    GitHub documents these fields as nullable, and a run with no head branch or
+    no head repository cannot be a trusted run of this repository, so absence is
+    an exclusion the policy below makes. A value of some other type is not an
+    answer at all, and the run it describes might be the one whose mandatory
+    check failed, so it refuses the listing rather than quietly dropping out of
+    it.
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise RuntimeError(
+            f"{where}: {field} is {type(value).__name__}, not text; "
+            "refusing to judge a listing that cannot be read in full"
+        )
+    return value
+
+
+def _full_name(value: object, field: str, where: str) -> str:
+    """The repository's full name, folded for comparison. Absent reads as empty."""
+    if value is None:
+        return ""
+    if not isinstance(value, dict):
+        raise RuntimeError(
+            f"{where}: {field} is {type(value).__name__}, not a repository; "
+            "refusing to judge a listing that cannot be read in full"
+        )
+    return _text(value.get("full_name"), f"{field}.full_name", where).casefold()
 
 
 def trusted_runs(
@@ -186,27 +225,29 @@ def trusted_runs(
     wanted = repository.casefold()
     by_workflow: dict[str, list[Run]] = {}
     for run in runs:
+        where = f"{repository}: a workflow run for {commit}"
         path = run.get("path")
         run_id = run.get("id")
         # A run whose workflow cannot be read is a shape problem, not a run this
         # policy excludes, so it refuses the listing rather than vanishing from
-        # it. The conditions below are the policy: they exclude runs that are
-        # real but untrusted, such as a pull-request run or a fork's.
+        # it. Every field the trust decision reads is checked the same way.
         if not isinstance(path, str) or not isinstance(run_id, int):
             raise RuntimeError(
-                f"{repository}: a workflow run for {commit} has no readable path or id; "
+                f"{where} has no readable path or id; "
                 "refusing to judge a listing that cannot be read in full"
             )
+        # These comparisons are the policy. They exclude runs that are real and
+        # readable but untrusted, such as a pull-request run or a fork's.
         if (
-            run.get("head_sha") != commit
-            or run.get("event") not in _TRUSTED_EVENTS
-            or run.get("head_branch") != _RELEASE_BRANCH
-            or _full_name(run.get("repository")) != wanted
-            or _full_name(run.get("head_repository")) != wanted
+            _text(run.get("head_sha"), "head_sha", where) != commit
+            or _text(run.get("event"), "event", where) not in _TRUSTED_EVENTS
+            or _text(run.get("head_branch"), "head_branch", where) != _RELEASE_BRANCH
+            or _full_name(run.get("repository"), "repository", where) != wanted
+            or _full_name(run.get("head_repository"), "head_repository", where) != wanted
         ):
             continue
         by_workflow.setdefault(path, []).append(
-            Run(run_id=run_id, status=str(run.get("status") or ""))
+            Run(run_id=run_id, status=_text(run.get("status"), "status", where))
         )
     return {
         path: tuple(sorted(found, key=lambda run: run.run_id, reverse=True))
@@ -216,12 +257,20 @@ def trusted_runs(
 
 def run_jobs(
     fetch_json: Callable[[str], object], repository: str, run_id: int, commit: str
-) -> dict[str, Job]:
-    """The latest attempt of each job in one run, keyed by check name."""
+) -> dict[str, tuple[Job, ...]]:
+    """Every job of one run for this commit, grouped by the check name it reports.
+
+    ``filter=latest`` asks GitHub for the latest attempt of each job, so two
+    entries sharing a name are two distinct jobs rather than one job re-run. Both
+    are kept. A display name is not an identifier, and preferring one of them
+    here would let a failed job hide behind a passing namesake, so a required
+    check that matches more than one job is refused as ambiguous instead.
+    """
     jobs = _paginate(
         fetch_json, f"repos/{repository}/actions/runs/{run_id}/jobs?filter=latest", "jobs"
     )
-    latest: dict[str, Job] = {}
+    where = f"{repository}: run {run_id}"
+    found: dict[str, list[Job]] = {}
     for raw in jobs:
         name = raw.get("name")
         job_id = raw.get("id")
@@ -230,38 +279,44 @@ def run_jobs(
         # another commit is excluded rather than refused.
         if not isinstance(name, str) or not isinstance(job_id, int):
             raise RuntimeError(
-                f"{repository}: run {run_id} reported a job with no readable name or id; "
+                f"{where} reported a job with no readable name or id; "
                 "refusing to judge a listing that cannot be read in full"
             )
-        if raw.get("head_sha") != commit:
+        if _text(raw.get("head_sha"), "head_sha", where) != commit:
             continue
-        job = Job(
-            run_id=run_id,
-            job_id=job_id,
-            status=str(raw.get("status") or ""),
-            conclusion=str(raw.get("conclusion") or ""),
+        attempt = raw.get("run_attempt")
+        found.setdefault(name, []).append(
+            Job(
+                run_id=run_id,
+                job_id=job_id,
+                attempt=attempt if isinstance(attempt, int) else 0,
+                status=_text(raw.get("status"), "status", where),
+                conclusion=_text(raw.get("conclusion"), "conclusion", where),
+            )
         )
-        if name not in latest or job.job_id > latest[name].job_id:
-            latest[name] = job
-    return latest
+    return {
+        name: tuple(sorted(jobs_found, key=lambda job: job.job_id))
+        for name, jobs_found in found.items()
+    }
 
 
 def evaluate(
     required: Sequence[RequiredCheck],
     runs: dict[str, tuple[Run, ...]],
-    jobs: Callable[[int], dict[str, Job]],
+    jobs: Callable[[int], dict[str, tuple[Job, ...]]],
 ) -> Verdict:
     """Require every trusted run of a check's workflow to report it as a success.
 
     One run reporting success does not settle the check while another run of the
     same workflow, at the same commit, reports a failure, a cancellation, or
     nothing at all. A failure in any run refuses; otherwise a run that has not
-    finished reporting leaves the check pending.
+    finished reporting leaves the check pending. A check that names more than one
+    job in a run names nothing in particular, and refuses.
     """
     passed: list[str] = []
     pending: list[str] = []
     failed: list[str] = []
-    cache: dict[int, dict[str, Job]] = {}
+    cache: dict[int, dict[str, tuple[Job, ...]]] = {}
     for check in required:
         found_runs = runs.get(check.workflow, ())
         if not found_runs:
@@ -276,7 +331,18 @@ def evaluate(
         for run in found_runs:
             if run.run_id not in cache:
                 cache[run.run_id] = jobs(run.run_id)
-            job = cache[run.run_id].get(check.job)
+            matched = cache[run.run_id].get(check.job, ())
+            if len(matched) > 1:
+                # Only a selected name matters, so an unrelated duplicate
+                # elsewhere in the run never blocks a release.
+                refused.append(
+                    f"{check.label}: run {run.run_id} has {len(matched)} distinct jobs "
+                    f"named {check.job!r} (jobs {', '.join(job.label for job in matched)}); "
+                    "a required check must name exactly one job, so give each job "
+                    "a unique name"
+                )
+                continue
+            job = matched[0] if matched else None
             if job is None and run.status != "completed":
                 waiting.append(
                     f"{check.label}: run {run.run_id} is "
@@ -287,12 +353,12 @@ def evaluate(
                     f"{check.label}: run {run.run_id} completed without reporting this check"
                 )
             elif job.status != "completed":
-                waiting.append(f"{check.label}: run {run.run_id} job {job.job_id} is {job.status}")
+                waiting.append(f"{check.label}: run {run.run_id} job {job.label} is {job.status}")
             elif job.conclusion == "success":
-                witnesses.append(f"run {run.run_id} job {job.job_id}")
+                witnesses.append(f"run {run.run_id} job {job.label}")
             else:
                 refused.append(
-                    f"{check.label}: run {run.run_id} job {job.job_id} concluded "
+                    f"{check.label}: run {run.run_id} job {job.label} concluded "
                     f"{job.conclusion!r}, not 'success'"
                 )
         if refused:

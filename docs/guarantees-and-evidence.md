@@ -11,7 +11,10 @@
   pull-request run or a different workflow file stops the release before the
   consumer's tests. A failure in any run refuses even when another run of the
   same workflow passed, which is what a re-run of an earlier run produces. The
-  wait for a pending check is bounded at 10 minutes and ends in failure.
+  wait for a pending check is bounded at 10 minutes and ends in failure. A
+  named check that matches more than one job in a run is refused as ambiguous,
+  because a display name is not an identifier and choosing between the matched
+  jobs would let a failed job hide behind a passing namesake.
 - Consumer tests, wheel and sdist build run without repository write, OIDC or
   attestation authority. Publication receives only the immutable candidate
   artefact ID produced by that job.

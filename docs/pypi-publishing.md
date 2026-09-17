@@ -40,6 +40,10 @@ Set the input, then add a second job:
           - name: Publish to PyPI
             uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
 
+The `required-checks` selectors above are an example. Replace them with the
+consumer's own mandatory checks, each naming exactly one job of its run, as
+[the packaged-Python guide](python-consumers.md) describes.
+
 The `release` job exposes `stem` and `version` outputs so the caller can name
 the artefact without repeating the version logic. Consumer tests and the build
 run on separate `contents: read` jobs with sibling source and policy checkouts.

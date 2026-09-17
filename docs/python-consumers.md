@@ -93,6 +93,15 @@ Choose the listed checks from a real successful run of the consumer's own CI on
 lists the aggregate `<engine> / gates` context, which reports success when the
 engine's own jobs were skipped by a path filter.
 
+Give every mandatory job a name no other job in its run shares. A display name
+is not an identifier, and GitHub lets two jobs carry the same one, so a check
+that matches more than one job is refused as ambiguous even when both matched
+jobs succeeded. A matrix needs each dimension that distinguishes its jobs in the
+name, which is what `test (3.12)` and `payday-super-checker / test (3.12)` do:
+a matrix over Python versions and operating systems named only `test` reports
+several jobs under that one name and cannot be selected. Rename the colliding
+jobs; do not name an aggregate gates job to work around it.
+
 Projects whose `pyproject.toml` declares `dynamic = ["version"]` add:
 
         with:

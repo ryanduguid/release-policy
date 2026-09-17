@@ -37,7 +37,9 @@ component uses:
 [packaged-Python workflow](python-consumers.md): the named consumer checks must
 have succeeded in a `push` or `workflow_dispatch` run of `main` for the exact
 release commit, and every such run of the named workflow has to report it as a
-success, with a bounded wait for a pending check and no other exception. It runs in a separate `checks` job that
+success, with a bounded wait for a pending check and no other exception. Each named
+check must match exactly one job in the run, so mandatory jobs need names no
+other job in the run shares. It runs in a separate `checks` job that
 never fetches the consumer tree, and `consumer-tests` waits on it, so the
 Actions read scope the gate needs is never held by a job running consumer code.
 

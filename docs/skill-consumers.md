@@ -47,7 +47,9 @@ commit before committing either consumer workflow.
 as for the [packaged-Python workflow](python-consumers.md): the named consumer
 checks must have succeeded in a `push` or `workflow_dispatch` run of `main` for
 the exact release commit, and every such run of the named workflow has to report
-it as a success, with a bounded wait for a pending check and no other exception. The `guard` job runs the gate
+it as a success, with a bounded wait for a pending check and no other exception. Each
+named check must match exactly one job in the run, so mandatory jobs need names
+no other job in the run shares. The `guard` job runs the gate
 before the shared verifier starts, so a tag on a commit whose own checks did
 not pass never reaches verification or publication. The verification workflow
 takes no such input.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 import runpy
 import subprocess
 import sys
@@ -41,6 +42,7 @@ def job(job_id: int, name: str, conclusion: str = "success", **overrides: object
         "id": job_id,
         "name": name,
         "head_sha": SHA,
+        "run_attempt": 1,
         "status": "completed",
         "conclusion": conclusion,
     }
@@ -129,7 +131,6 @@ class TrustedRunTests(unittest.TestCase):
             run(5, head_branch="feature"),
             run(6, repository={"full_name": "someone/else"}),
             run(7, head_repository={"full_name": "fork/example"}),
-            run(12, repository="someone/else"),
         ]
         github = FakeGitHub(runs, {})
         self.assertEqual(
@@ -154,6 +155,46 @@ class TrustedRunTests(unittest.TestCase):
                 github = FakeGitHub([run(1), broken], {})  # type: ignore[list-item]
                 with self.assertRaisesRegex(RuntimeError, expected):
                     required_checks.trusted_runs(github, REPO, SHA)
+
+    def test_a_trust_field_of_the_wrong_shape_refuses_the_listing(self) -> None:
+        """A field this gate cannot read could be hiding the run whose check failed."""
+        for broken, expected in (
+            (run(1, head_sha=42), "head_sha is int, not text"),
+            (run(1, event=["push"]), "event is list, not text"),
+            (run(1, head_branch={"name": "main"}), "head_branch is dict, not text"),
+            (run(1, repository="ryanduguid/example"), "repository is str, not a repository"),
+            (run(1, repository={"full_name": 7}), "repository.full_name is int, not text"),
+            (run(1, head_repository=42), "head_repository is int, not a repository"),
+            (run(1, status=3), "status is int, not text"),
+        ):
+            with self.subTest(broken=broken):
+                github = FakeGitHub([run(2), broken], {})
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    required_checks.trusted_runs(github, REPO, SHA)
+
+    def test_a_malformed_failed_run_cannot_hide_behind_a_valid_success(self) -> None:
+        """The whole point: the excluded run is the one that failed."""
+        github = FakeGitHub([run(1), run(2, head_repository=42)], {1: [job(1, "lint")]})
+        with self.assertRaises(RuntimeError):
+            required_checks.check(
+                required_checks.parse_required_checks(f"{CI}: lint\n"),
+                repository=REPO,
+                commit=SHA,
+                fetch_json=github,
+            )
+
+    def test_an_absent_trust_field_excludes_the_run_without_refusing(self) -> None:
+        """GitHub documents these as nullable; a run with no head branch is not ours."""
+        for absent in (
+            run(1, head_sha=None),
+            run(1, event=None),
+            run(1, head_branch=None),
+            run(1, repository=None),
+            run(1, head_repository=None),
+            run(1, repository={"full_name": None}),
+        ):
+            with self.subTest(absent=absent):
+                self.assertEqual(required_checks.trusted_runs(FakeGitHub([absent], {}), REPO, SHA), {})
 
     def test_repository_names_compare_case_insensitively(self) -> None:
         github = FakeGitHub([run(1, repository={"full_name": "RyanDuguid/Example"})], {})
@@ -217,7 +258,8 @@ class TrustedRunTests(unittest.TestCase):
 
 
 class RunJobTests(unittest.TestCase):
-    def test_keeps_the_newest_job_per_name_for_the_exact_commit(self) -> None:
+    def test_groups_every_job_of_the_exact_commit_under_its_name(self) -> None:
+        """Nothing is dropped: two jobs sharing a name are two jobs, not one re-run."""
         github = FakeGitHub(
             [],
             {
@@ -234,10 +276,37 @@ class RunJobTests(unittest.TestCase):
         self.assertEqual(
             jobs,
             {
-                "lint": required_checks.Job(10, 2, "completed", "success"),
-                "quiet": required_checks.Job(10, 6, "", ""),
+                "lint": (
+                    required_checks.Job(10, 0, 1, "completed", "cancelled"),
+                    required_checks.Job(10, 1, 1, "completed", "failure"),
+                    required_checks.Job(10, 2, 1, "completed", "success"),
+                ),
+                "quiet": (required_checks.Job(10, 6, 1, "", ""),),
             },
         )
+
+    def test_an_unreported_attempt_reads_as_unknown_and_stays_out_of_messages(self) -> None:
+        github = FakeGitHub([], {10: [job(1, "lint", run_attempt=None), job(2, "other")]})
+        jobs = required_checks.run_jobs(github, REPO, 10, SHA)
+        self.assertEqual(jobs["lint"][0].attempt, 0)
+        self.assertEqual(jobs["lint"][0].label, "1")
+        self.assertEqual(jobs["other"][0].label, "2 (attempt 1)")
+
+    def test_an_attempt_of_the_wrong_shape_is_unknown_rather_than_a_refusal(self) -> None:
+        """It decides nothing, so an unreadable one must not block a release."""
+        github = FakeGitHub([], {10: [job(1, "lint", run_attempt="second")]})
+        self.assertEqual(required_checks.run_jobs(github, REPO, 10, SHA)["lint"][0].attempt, 0)
+
+    def test_a_job_field_of_the_wrong_shape_refuses_the_listing(self) -> None:
+        for broken, expected in (
+            (job(1, "lint", head_sha=7), "head_sha is int, not text"),
+            (job(1, "lint", status=["queued"]), "status is list, not text"),
+            (job(1, "lint", conclusion={"ok": True}), "conclusion is dict, not text"),
+        ):
+            with self.subTest(broken=broken):
+                github = FakeGitHub([], {10: [broken]})
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    required_checks.run_jobs(github, REPO, 10, SHA)
 
     def test_a_job_that_cannot_be_read_refuses_the_listing(self) -> None:
         """The name it lacks could be the mandatory check that failed."""
@@ -283,7 +352,7 @@ class EvaluateTests(unittest.TestCase):
         verdict = self.check(complete_success())
         self.assertTrue(verdict.ok)
         self.assertEqual(len(verdict.passed), 3)
-        self.assertIn(f"{CI}: lint: run 10 job 1", verdict.passed)
+        self.assertIn(f"{CI}: lint: run 10 job 1 (attempt 1)", verdict.passed)
 
     def test_a_missing_check_fails(self) -> None:
         github = FakeGitHub([run(10)], {10: [job(1, "lint")]})
@@ -336,7 +405,7 @@ class EvaluateTests(unittest.TestCase):
         github.jobs[12] = [job(9, "lint", "cancelled")]
         verdict = self.check(github)
         self.assertEqual(len(verdict.failed), 2)
-        self.assertIn("run 12 job 9 concluded 'cancelled'", verdict.failed[0])
+        self.assertIn("run 12 job 9 (attempt 1) concluded 'cancelled'", verdict.failed[0])
         self.assertIn("run 12 completed without reporting this check", verdict.failed[1])
 
     def test_a_failing_rerun_of_an_older_run_refuses(self) -> None:
@@ -351,15 +420,15 @@ class EvaluateTests(unittest.TestCase):
         github.jobs[10] = [job(1, "lint", "failure"), job(2, "payday-super-checker / test (3.12)")]
         verdict = self.check(github)
         self.assertEqual(len(verdict.failed), 1)
-        self.assertIn("run 10 job 1 concluded 'failure'", verdict.failed[0])
+        self.assertIn("run 10 job 1 (attempt 1) concluded 'failure'", verdict.failed[0])
         self.assertFalse(verdict.ok)
 
     def test_a_newer_run_that_never_reported_the_check_refuses_an_older_success(self) -> None:
         """The bypass: run 12 was cancelled before the job existed, run 10 had passed it.
 
-        Judging the check from whichever run happens to contain it lets that
-        older success authorise the release, which is exactly what naming the
-        newest run is supposed to prevent.
+        Judging the check from whichever run happens to contain it would let that
+        older success authorise the release. Every trusted run has to report the
+        check, so the run that never did refuses it.
         """
         github = complete_success()
         github.runs.append(run(12, conclusion="cancelled"))
@@ -438,6 +507,145 @@ class EvaluateTests(unittest.TestCase):
             self.check(broken)  # type: ignore[arg-type]
 
 
+class AmbiguousJobTests(unittest.TestCase):
+    """A required check that names two jobs in one run names nothing in particular."""
+
+    def check(self, github: FakeGitHub, text: str = f"{CI}: lint\n") -> required_checks.Verdict:
+        return required_checks.check(
+            required_checks.parse_required_checks(text),
+            repository=REPO,
+            commit=SHA,
+            fetch_json=github,
+        )
+
+    def collision(self, other: dict[str, object], reverse: bool) -> FakeGitHub:
+        rows = [other, job(102, "lint")]
+        if reverse:
+            rows.reverse()
+        return FakeGitHub([run(10)], {10: rows})
+
+    def test_a_passing_namesake_never_covers_a_job_that_did_not_pass(self) -> None:
+        for other in (
+            job(101, "lint", "failure"),
+            job(101, "lint", "cancelled"),
+            job(101, "lint", "skipped"),
+            job(101, "lint", conclusion=None, status="in_progress"),
+            job(103, "lint", "failure"),
+            job(103, "lint", conclusion=None, status="queued"),
+        ):
+            for reverse in (False, True):
+                with self.subTest(other=other, reverse=reverse):
+                    verdict = self.check(self.collision(other, reverse))
+                    self.assertFalse(verdict.ok, "an ambiguous check authorised release")
+                    self.assertEqual(verdict.pending, ())
+                    self.assertIn("2 distinct jobs named 'lint'", verdict.failed[0])
+
+    def test_two_successful_namesakes_are_still_ambiguous(self) -> None:
+        """Which one the selector meant is unknowable, so neither answers for it."""
+        verdict = self.check(self.collision(job(101, "lint"), reverse=False))
+        self.assertFalse(verdict.ok)
+        self.assertIn("jobs 101 (attempt 1), 102 (attempt 1)", verdict.failed[0])
+        self.assertIn("give each job a unique name", verdict.failed[0])
+
+    def test_a_collision_split_across_pages_is_detected(self) -> None:
+        fillers = [job(200 + index, f"filler-{index}") for index in range(99)]
+        github = FakeGitHub([run(10)], {10: [job(101, "lint", "failure"), *fillers, job(102, "lint")]})
+        verdict = self.check(github)
+        self.assertFalse(verdict.ok)
+        self.assertIn("2 distinct jobs named 'lint'", verdict.failed[0])
+
+    def test_a_duplicate_name_nobody_selected_does_not_block_the_release(self) -> None:
+        github = complete_success()
+        github.jobs[10].extend([job(8, "docs", "failure"), job(9, "docs")])
+        self.assertTrue(self.check(github, LIST).ok)
+
+    def test_unique_matrix_jobs_sharing_a_run_still_pass(self) -> None:
+        """Distinguishing dimensions in the name are what keep them unique."""
+        github = FakeGitHub(
+            [run(10)],
+            {10: [job(1, "test (3.11)"), job(2, "test (3.12)"), job(3, "test (3.13)")]},
+        )
+        verdict = self.check(github, f"{CI}: test (3.11)\n{CI}: test (3.12)\n{CI}: test (3.13)\n")
+        self.assertTrue(verdict.ok)
+        self.assertEqual(len(verdict.passed), 3)
+
+    def test_a_re_run_job_reports_once_and_is_not_a_collision(self) -> None:
+        """filter=latest returns the latest attempt, so supersession is one row."""
+        github = FakeGitHub([run(10)], {10: [job(1, "lint", run_attempt=2)]})
+        verdict = self.check(github)
+        self.assertTrue(verdict.ok)
+        self.assertIn("job 1 (attempt 2)", verdict.passed[0])
+
+    def test_the_command_refuses_an_ambiguous_check_with_an_actionable_message(self) -> None:
+        github = self.collision(job(101, "lint", "failure"), reverse=False)
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = required_checks.main(
+                ["--repository", REPO, "--commit", SHA, "--wait-seconds", "0"],
+                stdin=f"{CI}: lint\n",
+                fetch_json=github,
+            )
+        self.assertEqual(code, 1, "an ambiguous required selector authorised release")
+        self.assertIn("2 distinct jobs named 'lint'", err.getvalue())
+        self.assertIn("run 10", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+
+
+class GateTimeoutTests(unittest.TestCase):
+    """Each adapter's gate job has to outlast the wait the gate itself performs."""
+
+    WORKFLOWS = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+    # The gate's own wait plus room for the runner, checkout and interpreter.
+    SETUP_ALLOWANCE_SECONDS = 300
+
+    def gate_job(self, workflow: str) -> str:
+        text = (self.WORKFLOWS / workflow).read_text(encoding="utf-8")
+        blocks = re.split(r"(?m)^  (?=\S)", text[text.index("\njobs:\n") :])
+        for block in blocks:
+            if "required_checks.py" in block:
+                return block
+        raise AssertionError(f"{workflow} runs no gate job")
+
+    def test_every_adapter_allows_the_gate_its_full_wait(self) -> None:
+        for workflow in ("release-python.yml", "release-archive.yml", "release-skills.yml"):
+            with self.subTest(workflow=workflow):
+                block = self.gate_job(workflow)
+                timeout = int(re.search(r"(?m)^    timeout-minutes: (\d+)$", block).group(1))
+                wait = int(re.search(r"--wait-seconds (\d+)", block).group(1))
+                self.assertGreaterEqual(timeout * 60, wait + self.SETUP_ALLOWANCE_SECONDS)
+
+    def test_the_documented_wait_succeeds_late_and_fails_when_it_expires(self) -> None:
+        """The real 600 second wait, on a fake clock, in both directions."""
+        wait = int(re.search(r"--wait-seconds (\d+)", self.gate_job("release-skills.yml")).group(1))
+        for elapsed, expected in ((360.0, True), (wait + 30.0, False)):
+            with self.subTest(elapsed=elapsed):
+                github = complete_success()
+                github.jobs[10][0] = job(1, "lint", conclusion=None, status="queued")
+                now = 0.0
+
+                def clock() -> float:
+                    return now
+
+                def sleep(seconds: float) -> None:
+                    nonlocal now
+                    now += seconds
+                    if expected and now >= elapsed:
+                        github.jobs[10][0] = job(1, "lint")
+
+                verdict = required_checks.check(
+                    required_checks.parse_required_checks(LIST),
+                    repository=REPO,
+                    commit=SHA,
+                    fetch_json=github,
+                    wait_seconds=wait,
+                    poll_seconds=30,
+                    clock=clock,
+                    sleep=sleep,
+                )
+                self.assertIs(verdict.ok, expected)
+                self.assertLessEqual(now, wait)
+
+
 class ConsumerGuideTests(unittest.TestCase):
     """The caller must grant what the gate needs, because a called workflow cannot.
 
@@ -450,13 +658,16 @@ class ConsumerGuideTests(unittest.TestCase):
     DOCS = Path(__file__).resolve().parents[1] / "docs"
     CALLS_RELEASE = "uses: ryanduguid/release-policy/.github/workflows/release-"
 
-    def caller_grants(self, guide: str) -> list[tuple[int, bool]]:
+    def guide(self, name: str) -> str:
+        return (self.DOCS / name).read_text(encoding="utf-8")
+
+    def caller_grants(self, text: str) -> list[tuple[int, bool]]:
         """For each documented release caller, whether its job grants Actions read.
 
         Walks back from the `uses:` line to that job's `permissions:` block, so
         the answer comes from the example a consumer would copy.
         """
-        lines = (self.DOCS / guide).read_text(encoding="utf-8").splitlines()
+        lines = text.splitlines()
         results = []
         for index, line in enumerate(lines):
             if self.CALLS_RELEASE not in line:
@@ -488,9 +699,25 @@ class ConsumerGuideTests(unittest.TestCase):
         self.assertIn("pypi-publishing.md", found)
         return found
 
+    def caller_inputs(self, text: str) -> list[tuple[int, str]]:
+        """Each release caller's own indented block, so a neighbour cannot answer for it."""
+        lines = text.splitlines()
+        results = []
+        for index, line in enumerate(lines):
+            if self.CALLS_RELEASE not in line:
+                continue
+            indent = len(line) - len(line.lstrip())
+            block = []
+            for following in lines[index + 1 :]:
+                if following.strip() and (len(following) - len(following.lstrip())) < indent:
+                    break
+                block.append(following)
+            results.append((index + 1, "\n".join(block)))
+        return results
+
     def test_every_documented_release_caller_grants_actions_read(self) -> None:
         for guide in self.guides_with_release_callers():
-            callers = self.caller_grants(guide)
+            callers = self.caller_grants(self.guide(guide))
             with self.subTest(guide=guide):
                 self.assertTrue(callers, "no release caller example found")
             for line_number, granted in callers:
@@ -500,18 +727,49 @@ class ConsumerGuideTests(unittest.TestCase):
     def test_every_documented_release_caller_supplies_required_checks(self) -> None:
         """The input is mandatory, so an example without it is a call GitHub refuses."""
         for guide in self.guides_with_release_callers():
-            lines = (self.DOCS / guide).read_text(encoding="utf-8").splitlines()
-            for index, line in enumerate(lines):
-                if self.CALLS_RELEASE not in line:
-                    continue
-                indent = len(line) - len(line.lstrip())
-                block = []
-                for following in lines[index + 1 :]:
-                    if following.strip() and (len(following) - len(following.lstrip())) < indent:
-                        break
-                    block.append(following)
-                with self.subTest(guide=guide, line=index + 1):
-                    self.assertIn("required-checks:", "\n".join(block))
+            callers = self.caller_inputs(self.guide(guide))
+            for line_number, block in callers:
+                with self.subTest(guide=guide, line=line_number):
+                    self.assertIn("required-checks:", block)
+
+    def test_the_guide_checks_catch_a_deliberately_broken_example(self) -> None:
+        """A check that cannot fail proves nothing about the guides it passed."""
+        complete = """    jobs:
+      release:
+        permissions:
+          contents: write
+          actions: read
+        uses: ryanduguid/release-policy/.github/workflows/release-python.yml@0
+        with:
+          required-checks: |
+            .github/workflows/ci.yml: lint
+"""
+        self.assertEqual(self.caller_grants(complete), [(6, True)])
+        self.assertIn("required-checks:", self.caller_inputs(complete)[0][1])
+
+        without_permission = complete.replace("          actions: read\n", "")
+        self.assertEqual(self.caller_grants(without_permission), [(5, False)])
+
+        elsewhere = complete.replace(
+            "        permissions:\n          contents: write\n          actions: read\n",
+            "        permissions:\n          contents: write\n"
+            "        steps:\n          - run: echo actions: read\n",
+        )
+        self.assertEqual(self.caller_grants(elsewhere), [(7, False)])
+
+        without_input = complete[: complete.index("        with:")]
+        self.assertNotIn("required-checks:", self.caller_inputs(without_input)[0][1])
+
+        neighbour = without_input + """
+      other:
+        uses: ryanduguid/release-policy/.github/workflows/release-archive.yml@0
+        with:
+          required-checks: |
+            .github/workflows/ci.yml: lint
+"""
+        first, second = self.caller_inputs(neighbour)
+        self.assertNotIn("required-checks:", first[1])
+        self.assertIn("required-checks:", second[1])
 
     def test_the_verification_caller_needs_no_actions_read(self) -> None:
         """verify-skills.yml runs no API-backed gate, so it keeps the narrower grant."""
