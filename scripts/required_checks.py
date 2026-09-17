@@ -52,6 +52,12 @@ class RequiredCheck:
 
 
 @dataclass(frozen=True)
+class Run:
+    run_id: int
+    status: str
+
+
+@dataclass(frozen=True)
 class Job:
     run_id: int
     job_id: int
@@ -118,11 +124,17 @@ def _full_name(value: object) -> str:
 
 def trusted_runs(
     fetch_json: Callable[[str], object], repository: str, commit: str
-) -> dict[str, list[int]]:
-    """Map each workflow path to the ids of its trusted runs for the exact commit."""
+) -> dict[str, Run]:
+    """Map each workflow path to its newest trusted run for the exact commit.
+
+    Only the newest run decides. Returning it alone, rather than every trusted
+    run, is what stops an older success standing in for a newer run that was
+    cancelled or re-run before it reported the check at all. Run ids increase
+    over time within a repository, so the highest id is the newest run.
+    """
     runs = _paginate(fetch_json, f"repos/{repository}/actions/runs?head_sha={commit}", "workflow_runs")
     wanted = repository.casefold()
-    by_workflow: dict[str, list[int]] = {}
+    newest: dict[str, Run] = {}
     for run in runs:
         path = run.get("path")
         run_id = run.get("id")
@@ -136,8 +148,9 @@ def trusted_runs(
             or not isinstance(run_id, int)
         ):
             continue
-        by_workflow.setdefault(path, []).append(run_id)
-    return by_workflow
+        if path not in newest or run_id > newest[path].run_id:
+            newest[path] = Run(run_id=run_id, status=str(run.get("status") or ""))
+    return newest
 
 
 def run_jobs(
@@ -166,26 +179,39 @@ def run_jobs(
 
 def evaluate(
     required: Sequence[RequiredCheck],
-    runs: dict[str, list[int]],
+    runs: dict[str, Run],
     jobs: Callable[[int], dict[str, Job]],
 ) -> Verdict:
-    """Judge every required check from the newest trusted run of its workflow."""
+    """Judge every required check from the newest trusted run of its workflow.
+
+    Only that run counts. If it does not report the check, the answer is never
+    an older run's result: a run still in progress has not reported the check
+    yet, and a completed run that never reported it has refused to.
+    """
     passed: list[str] = []
     pending: list[str] = []
     failed: list[str] = []
     cache: dict[int, dict[str, Job]] = {}
     for check in required:
-        found: Job | None = None
-        # Newest run first: an older success must not stand in for a newer
-        # failure or cancellation of the same check for the same commit.
-        for run_id in sorted(runs.get(check.workflow, ()), reverse=True):
-            if run_id not in cache:
-                cache[run_id] = jobs(run_id)
-            if check.job in cache[run_id]:
-                found = cache[run_id][check.job]
-                break
-        if found is None:
-            failed.append(f"{check.label}: no trusted run of that workflow reported this check")
+        run = runs.get(check.workflow)
+        if run is None:
+            failed.append(
+                f"{check.label}: no push or workflow_dispatch run of that workflow on "
+                f"{_RELEASE_BRANCH} reported this commit"
+            )
+            continue
+        if run.run_id not in cache:
+            cache[run.run_id] = jobs(run.run_id)
+        found = cache[run.run_id].get(check.job)
+        if found is None and run.status != "completed":
+            pending.append(
+                f"{check.label}: run {run.run_id} is {run.status or 'in an unknown state'} "
+                "and has not reported this check yet"
+            )
+        elif found is None:
+            failed.append(
+                f"{check.label}: run {run.run_id} completed without reporting this check"
+            )
         elif found.status != "completed":
             pending.append(f"{check.label}: run {found.run_id} job {found.job_id} is {found.status}")
         elif found.conclusion == "success":

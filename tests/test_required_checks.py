@@ -28,6 +28,7 @@ def run(run_id: int, **overrides: object) -> dict[str, object]:
         "head_sha": SHA,
         "event": "push",
         "head_branch": "main",
+        "status": "completed",
         "repository": {"full_name": REPO},
         "head_repository": {"full_name": REPO},
     }
@@ -119,15 +120,35 @@ class TrustedRunTests(unittest.TestCase):
             "not a run",
         ]
         github = FakeGitHub(runs, {})  # type: ignore[arg-type]
-        self.assertEqual(required_checks.trusted_runs(github, REPO, SHA), {CI: [1, 2]})
+        self.assertEqual(
+            required_checks.trusted_runs(github, REPO, SHA),
+            {CI: required_checks.Run(2, "completed")},
+        )
 
     def test_repository_names_compare_case_insensitively(self) -> None:
         github = FakeGitHub([run(1, repository={"full_name": "RyanDuguid/Example"})], {})
-        self.assertEqual(required_checks.trusted_runs(github, REPO, SHA), {CI: [1]})
+        self.assertEqual(
+            required_checks.trusted_runs(github, REPO, SHA),
+            {CI: required_checks.Run(1, "completed")},
+        )
+
+    def test_an_older_run_never_replaces_the_newest_whatever_the_listing_order(self) -> None:
+        """GitHub lists newest first, so a later entry is the older run, and is dropped."""
+        for order in ([run(9), run(3)], [run(3), run(9)]):
+            with self.subTest(order=[entry["id"] for entry in order]):
+                github = FakeGitHub(order, {})
+                self.assertEqual(
+                    required_checks.trusted_runs(github, REPO, SHA),
+                    {CI: required_checks.Run(9, "completed")},
+                )
 
     def test_pagination_follows_full_pages_and_stops_on_a_short_one(self) -> None:
+        """The newest run can sit on any page, so every page has to be read."""
         github = FakeGitHub([run(index) for index in range(1, 202)], {})
-        self.assertEqual(len(required_checks.trusted_runs(github, REPO, SHA)[CI]), 201)
+        self.assertEqual(
+            required_checks.trusted_runs(github, REPO, SHA)[CI],
+            required_checks.Run(201, "completed"),
+        )
         self.assertEqual(
             [request.rsplit("page=", 1)[1] for request in github.requests], ["1", "2", "3"]
         )
@@ -202,7 +223,8 @@ class EvaluateTests(unittest.TestCase):
         verdict = self.check(github)
         self.assertFalse(verdict.ok)
         self.assertEqual(len(verdict.failed), 2)
-        self.assertIn("no trusted run", verdict.failed[0])
+        self.assertIn("completed without reporting this check", verdict.failed[0])
+        self.assertIn("no push or workflow_dispatch run", verdict.failed[1])
 
     def test_a_pending_check_fails_closed_when_the_wait_ends(self) -> None:
         github = complete_success()
@@ -225,6 +247,7 @@ class EvaluateTests(unittest.TestCase):
         github = complete_success()
         github.runs[0] = run(10, head_sha=OTHER_SHA)
         self.assertEqual(len(self.check(github).failed), 2)
+        self.assertIn("no push or workflow_dispatch run", self.check(github).failed[0])
         github = complete_success()
         github.jobs[10][0] = job(1, "lint", head_sha=OTHER_SHA)
         self.assertEqual(len(self.check(github).failed), 1)
@@ -244,8 +267,43 @@ class EvaluateTests(unittest.TestCase):
         github.runs.append(run(12, event="workflow_dispatch"))
         github.jobs[12] = [job(9, "lint", "cancelled")]
         verdict = self.check(github)
-        self.assertEqual(len(verdict.failed), 1)
+        # Run 12 is the newest CI run: it cancelled `lint` and never reported
+        # the other CI check at all. Both refuse, and run 10 is never consulted.
+        self.assertEqual(len(verdict.failed), 2)
         self.assertIn("run 12 job 9 concluded 'cancelled'", verdict.failed[0])
+        self.assertIn("run 12 completed without reporting this check", verdict.failed[1])
+        self.assertNotIn("/actions/runs/10/jobs", "".join(github.requests))
+
+    def test_a_newer_run_that_never_reported_the_check_refuses_an_older_success(self) -> None:
+        """The bypass: run 12 was cancelled before the job existed, run 10 had passed it.
+
+        Judging the check from whichever run happens to contain it lets that
+        older success authorise the release, which is exactly what naming the
+        newest run is supposed to prevent.
+        """
+        github = complete_success()
+        github.runs.append(run(12, conclusion="cancelled"))
+        github.jobs[12] = [job(9, "payday-super-checker / test (3.12)")]
+        verdict = self.check(github)
+        self.assertEqual(len(verdict.failed), 1)
+        self.assertIn("run 12 completed without reporting this check", verdict.failed[0])
+        self.assertIn(f"{CI}: lint", verdict.failed[0])
+
+    def test_a_newer_run_still_in_progress_is_pending_not_missing(self) -> None:
+        """A job GitHub has not created yet is not a refusal, and must be waited for."""
+        github = complete_success()
+        github.runs.append(run(12, status="in_progress"))
+        github.jobs[12] = []
+        verdict = self.check(github, wait_seconds=0)
+        self.assertEqual(verdict.failed, ())
+        self.assertEqual(len(verdict.pending), 2)
+        self.assertIn("run 12 is in_progress and has not reported this check yet", verdict.pending[0])
+
+    def test_a_workflow_with_no_trusted_run_at_all_fails(self) -> None:
+        github = FakeGitHub([run(10)], {10: [job(1, "lint")]})
+        verdict = self.check(github, text=f"{BOUNDARIES}: boundaries\n")
+        self.assertEqual(len(verdict.failed), 1)
+        self.assertIn("no push or workflow_dispatch run", verdict.failed[0])
 
     def test_only_the_named_skipped_checks_matter(self) -> None:
         """A path-skipped sibling engine never blocks a release that did not name it."""
