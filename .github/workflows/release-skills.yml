@@ -12,17 +12,26 @@ on:
         required: false
         type: string
         default: subcontractor-accounting-v1
+      required-checks:
+        description: >-
+          Mandatory consumer checks, one per line as "<workflow path>: <job name>",
+          that must have succeeded in a push or dispatch run of main for the exact
+          release commit before anything is verified or built. Fails closed when empty.
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   guard:
-    timeout-minutes: 5
+    # Outlasts the gate's bounded wait, as the other families' checks jobs do.
+    timeout-minutes: 15
     name: guard skill-pack release mode
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read # Read this repository's own workflow runs for the release commit.
     steps:
       - name: Check out release-policy at the calling pin
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,6 +61,18 @@ jobs:
           python policy/scripts/verify_skills.py guard-release
           --mode "$SKILLS_VERIFICATION_MODE"
           --tag "$RELEASE_TAG"
+      - name: Require the mandatory consumer checks for this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRED_CHECKS: ${{ inputs.required-checks }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$REQUIRED_CHECKS" \
+            | python policy/scripts/required_checks.py \
+                --repository "$GITHUB_REPOSITORY" \
+                --commit "$GITHUB_SHA" \
+                --wait-seconds 600
 
   verify:
     needs: guard

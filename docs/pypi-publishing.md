@@ -18,6 +18,9 @@ Set the input, then add a second job:
         uses: ryanduguid/release-policy/.github/workflows/release-python.yml@<full-40-char-commit-sha>
         with:
           upload-dist-artifact: true
+          required-checks: |
+            .github/workflows/ci.yml: lint
+            .github/workflows/ci.yml: test (3.12)
 
       pypi:
         name: publish to PyPI
@@ -36,6 +39,10 @@ Set the input, then add a second job:
               path: dist
           - name: Publish to PyPI
             uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+The `required-checks` selectors above are an example. Replace them with the
+consumer's own mandatory checks, each naming exactly one job of its run, as
+[the packaged-Python guide](python-consumers.md) describes.
 
 The `release` job exposes `stem` and `version` outputs so the caller can name
 the artefact without repeating the version logic. Consumer tests and the build

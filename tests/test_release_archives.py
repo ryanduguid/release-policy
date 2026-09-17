@@ -22,8 +22,8 @@ import build_release_archives as release_archives  # noqa: E402
 
 # The consumer-facing adapter takes no version-file input; the privileged core
 # it calls keeps its own, defaulted to VERSION.
-ADAPTER_INPUTS = ("artifact-stem", "source-directory", "tag-prefix")
-CORE_INPUTS = (*ADAPTER_INPUTS, "version-file")
+ADAPTER_INPUTS = ("artifact-stem", "source-directory", "tag-prefix", "required-checks")
+CORE_INPUTS = ("artifact-stem", "source-directory", "tag-prefix", "version-file")
 
 
 def _sha256(path: Path) -> str:
@@ -350,6 +350,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             (
                 "timeout-minutes",
                 "name",
+                "needs",
                 "runs-on",
                 "outputs",
                 "permissions",
@@ -389,6 +390,21 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertLess(consumer_checkout, policy_checkout)
         self.assertLess(policy_checkout, python_setup)
         self.assertLess(python_setup, pin_check)
+        # The gate runs in its own job, which holds the Actions read scope and
+        # never fetches the consumer tree; this job runs the consumer's code.
+        checks_job = self.mapping_block(
+            self.mapping_block(adapter, "jobs", indent=0), "checks", indent=2
+        )
+        self.assertIn("required_checks.py", checks_job)
+        self.assertIn("actions: read", checks_job)
+        self.assertNotIn("path: consumer", checks_job)
+        self.assertEqual(self.mapping_value(consumer_job, "needs", indent=4), "checks")
+        self.assertNotIn("required_checks.py", consumer_job)
+        self.assertNotIn("actions: read", consumer_job)
+        core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("required_checks.py", core)
         self.assertIn('python-version: "3.12"', consumer_job)
         self.assertIn("working-directory: consumer", consumer_job)
         self.assertEqual(1, consumer_job.count(test_command))
@@ -408,7 +424,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         jobs = self.mapping_block(adapter, "jobs", indent=0)
         self.assertEqual(
             self.mapping_keys(jobs, indent=2),
-            ("consumer-tests", "release"),
+            ("checks", "consumer-tests", "release"),
         )
         release_job = self.mapping_block(jobs, "release", indent=2)
         self.assertEqual(

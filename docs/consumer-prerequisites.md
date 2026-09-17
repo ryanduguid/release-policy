@@ -12,6 +12,20 @@
 - A pure-Python wheel; the `py3-none-any` wheel name is expected by the
   SBOM and attestation steps.
 - Releases cut from `main`; the main-match gate checks `heads/main`.
+- A non-empty `required-checks` list naming the consumer's own mandatory
+  checks as `<workflow path>: <job name>`. Those checks must have succeeded in
+  a `push` or `workflow_dispatch` run of `main` for the exact release commit;
+  the gate waits up to 10 minutes for a pending check and otherwise fails
+  closed. Each named check must match exactly one job in its run, so give
+  every mandatory job a name no other job in that run shares.
+- `actions: read` on the calling job, beside the write permissions it already
+  grants. The gate reads the consumer's own workflow runs and jobs. A called
+  workflow cannot hold a permission its caller did not grant, so the
+  `actions: read` the release workflows declare is a ceiling, not a grant: a
+  caller that omits it leaves the gate unable to list runs and the release
+  stops before the consumer's tests. The packaged-Python callers already grant
+  it for the publication job's artefact inspection; archive and skill-pack
+  callers must add it.
 
 Source-archive callers additionally require:
 

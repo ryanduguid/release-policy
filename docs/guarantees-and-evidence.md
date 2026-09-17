@@ -3,6 +3,18 @@
 - Fail closed: canonical semver tag, annotated tag object, tag commit equal
   to `main` via the GitHub API, clean tree, matching notes header, and no
   existing release for the tag, all verified before any build.
+- The consumer's named mandatory checks have each concluded `success` for the
+  exact release commit, in a `push` or `workflow_dispatch` run of `main` in the
+  consumer repository, in every run of the named workflow file rather than in
+  one chosen by recency. A missing, skipped, cancelled, failed or still-pending
+  check, a success for another commit, or a check reported only by a
+  pull-request run or a different workflow file stops the release before the
+  consumer's tests. A failure in any run refuses even when another run of the
+  same workflow passed, which is what a re-run of an earlier run produces. The
+  wait for a pending check is bounded at 10 minutes and ends in failure. A
+  named check that matches more than one job in a run is refused as ambiguous,
+  because a display name is not an identifier and choosing between the matched
+  jobs would let a failed job hide behind a passing namesake.
 - Consumer tests, wheel and sdist build run without repository write, OIDC or
   attestation authority. Publication receives only the immutable candidate
   artefact ID produced by that job.
