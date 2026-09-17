@@ -136,7 +136,10 @@ def trusted_runs(
             or not isinstance(run_id, int)
         ):
             continue
-        by_workflow.setdefault(path, []).append(run_id)
+        workflow_path = path.rsplit("@", 1)[0]
+        if not _WORKFLOW.fullmatch(workflow_path):
+            continue
+        by_workflow.setdefault(workflow_path, []).append(run_id)
     return by_workflow
 
 
@@ -176,14 +179,13 @@ def evaluate(
     cache: dict[int, dict[str, Job]] = {}
     for check in required:
         found: Job | None = None
-        # Newest run first: an older success must not stand in for a newer
-        # failure or cancellation of the same check for the same commit.
-        for run_id in sorted(runs.get(check.workflow, ()), reverse=True):
+        # Only the newest trusted run may satisfy this workflow's checks.
+        run_ids = sorted(runs.get(check.workflow, ()), reverse=True)
+        if run_ids:
+            run_id = run_ids[0]
             if run_id not in cache:
                 cache[run_id] = jobs(run_id)
-            if check.job in cache[run_id]:
-                found = cache[run_id][check.job]
-                break
+            found = cache[run_id].get(check.job)
         if found is None:
             failed.append(f"{check.label}: no trusted run of that workflow reported this check")
         elif found.status != "completed":
