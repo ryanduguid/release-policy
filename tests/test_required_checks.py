@@ -348,6 +348,64 @@ class EvaluateTests(unittest.TestCase):
             self.check(broken)  # type: ignore[arg-type]
 
 
+class ConsumerGuideTests(unittest.TestCase):
+    """The caller must grant what the gate needs, because a called workflow cannot.
+
+    A reusable workflow's `permissions:` block is a ceiling it may lower, never a
+    grant it may raise. The `actions: read` the release workflows declare for the
+    gate therefore does nothing unless the calling job grants it too, and a
+    caller that omits it stops at the gate instead of releasing.
+    """
+
+    DOCS = Path(__file__).resolve().parents[1] / "docs"
+    CALLS_RELEASE = "uses: ryanduguid/release-policy/.github/workflows/release-"
+
+    def caller_grants(self, guide: str) -> list[tuple[int, bool]]:
+        """For each documented release caller, whether its job grants Actions read.
+
+        Walks back from the `uses:` line to that job's `permissions:` block, so
+        the answer comes from the example a consumer would copy.
+        """
+        lines = (self.DOCS / guide).read_text(encoding="utf-8").splitlines()
+        results = []
+        for index, line in enumerate(lines):
+            if self.CALLS_RELEASE not in line:
+                continue
+            granted = False
+            for previous in reversed(lines[:index]):
+                stripped = previous.strip()
+                if stripped == "permissions:":
+                    break
+                if stripped.endswith(":") and not stripped.startswith("-") and ": " not in stripped:
+                    break  # reached the job header without meeting a permissions block
+                if stripped == "actions: read":
+                    granted = True
+            results.append((index + 1, granted))
+        return results
+
+    def test_every_documented_release_caller_grants_actions_read(self) -> None:
+        for guide in ("python-consumers.md", "archive-consumers.md", "skill-consumers.md"):
+            callers = self.caller_grants(guide)
+            with self.subTest(guide=guide):
+                self.assertTrue(callers, "no release caller example found")
+            for line_number, granted in callers:
+                with self.subTest(guide=guide, line=line_number):
+                    self.assertTrue(granted, "this caller example omits actions: read")
+
+    def test_the_verification_caller_needs_no_actions_read(self) -> None:
+        """verify-skills.yml runs no API-backed gate, so it keeps the narrower grant."""
+        text = (self.DOCS / "skill-consumers.md").read_text(encoding="utf-8")
+        start = text.index("shared-conformance:")
+        block = text[start : text.index("uses: ryanduguid/release-policy", start)]
+        self.assertIn("contents: read", block)
+        self.assertNotIn("actions: read", block)
+
+    def test_the_prerequisites_explain_why_the_caller_must_grant_it(self) -> None:
+        text = (self.DOCS / "consumer-prerequisites.md").read_text(encoding="utf-8")
+        self.assertIn("actions: read", text)
+        self.assertIn("cannot hold a permission its caller did not grant", text)
+
+
 class MainTests(unittest.TestCase):
     def main(self, argv: list[str], text: str = LIST, **options: object) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()

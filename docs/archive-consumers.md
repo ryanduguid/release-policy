@@ -5,6 +5,7 @@ Source-only callers use the separate family workflow:
     jobs:
       release:
         permissions:
+          actions: read
           attestations: write
           contents: write
           id-token: write
@@ -19,6 +20,11 @@ component uses:
 
     jobs:
       release:
+        permissions:
+          actions: read
+          attestations: write
+          contents: write
+          id-token: write
         uses: ryanduguid/release-policy/.github/workflows/release-archive.yml@<full-40-char-commit-sha>
         with:
           artifact-stem: accounting-excel-toolkit

@@ -28,6 +28,7 @@ Use the separate release adapter for annotated version tags:
     jobs:
       release:
         permissions:
+          actions: read
           attestations: write
           contents: write
           id-token: write

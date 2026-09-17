@@ -49,6 +49,11 @@ namespace explicitly:
         tags: ["payday-super-checker/v*"]
     jobs:
       release:
+        permissions:
+          actions: read
+          attestations: write
+          contents: write
+          id-token: write
         uses: ryanduguid/release-policy/.github/workflows/release-python.yml@<full-40-char-commit-sha>
         with:
           source-directory: packages/payday-super-checker

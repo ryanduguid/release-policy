@@ -17,6 +17,14 @@
   a `push` or `workflow_dispatch` run of `main` for the exact release commit;
   the gate waits up to 10 minutes for a pending check and otherwise fails
   closed.
+- `actions: read` on the calling job, beside the write permissions it already
+  grants. The gate reads the consumer's own workflow runs and jobs. A called
+  workflow cannot hold a permission its caller did not grant, so the
+  `actions: read` the release workflows declare is a ceiling, not a grant: a
+  caller that omits it leaves the gate unable to list runs and the release
+  stops before the consumer's tests. The packaged-Python callers already grant
+  it for the publication job's artefact inspection; archive and skill-pack
+  callers must add it.
 
 Source-archive callers additionally require:
 
