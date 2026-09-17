@@ -5,11 +5,13 @@
   existing release for the tag, all verified before any build.
 - The consumer's named mandatory checks have each concluded `success` for the
   exact release commit, in a `push` or `workflow_dispatch` run of `main` in the
-  consumer repository, judged from the newest such run of the named workflow
-  file. A missing, skipped, cancelled, failed or still-pending check, a
-  success for another commit, or a check reported only by a pull-request run
-  or a different workflow file stops the release before the consumer's tests.
-  The wait for a pending check is bounded at 10 minutes and ends in failure.
+  consumer repository, in every run of the named workflow file rather than in
+  one chosen by recency. A missing, skipped, cancelled, failed or still-pending
+  check, a success for another commit, or a check reported only by a
+  pull-request run or a different workflow file stops the release before the
+  consumer's tests. A failure in any run refuses even when another run of the
+  same workflow passed, which is what a re-run of an earlier run produces. The
+  wait for a pending check is bounded at 10 minutes and ends in failure.
 - Consumer tests, wheel and sdist build run without repository write, OIDC or
   attestation authority. Publication receives only the immutable candidate
   artefact ID produced by that job.

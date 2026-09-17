@@ -16,6 +16,12 @@ runs on ``main`` count, because those execute the workflow file at the commit
 itself; a ``pull_request`` run tests a merge ref instead. A skipped, cancelled,
 failed, missing or still-running check never authorises publication, and a
 bounded wait ends in failure, not in a retry.
+
+Every trusted run of a named workflow has to report the check as a success, not
+merely one of them. There is no most-recent run to prefer: re-running a workflow
+keeps its run id and adds an attempt, so the highest id is not the latest
+execution, and any rule that picks a single run lets a failing execution of a
+mandatory check sit beside a passing one and be ignored.
 """
 
 from __future__ import annotations
@@ -124,17 +130,17 @@ def _full_name(value: object) -> str:
 
 def trusted_runs(
     fetch_json: Callable[[str], object], repository: str, commit: str
-) -> dict[str, Run]:
-    """Map each workflow path to its newest trusted run for the exact commit.
+) -> dict[str, tuple[Run, ...]]:
+    """Group every trusted run of each workflow for the exact commit.
 
-    Only the newest run decides. Returning it alone, rather than every trusted
-    run, is what stops an older success standing in for a newer run that was
-    cancelled or re-run before it reported the check at all. Run ids increase
-    over time within a repository, so the highest id is the newest run.
+    All of them are kept, because all of them have to agree. Ordering is for
+    readable messages only, never for deciding which run counts: a re-run keeps
+    its run id and adds an attempt, so no field here identifies the latest
+    execution.
     """
     runs = _paginate(fetch_json, f"repos/{repository}/actions/runs?head_sha={commit}", "workflow_runs")
     wanted = repository.casefold()
-    newest: dict[str, Run] = {}
+    by_workflow: dict[str, list[Run]] = {}
     for run in runs:
         path = run.get("path")
         run_id = run.get("id")
@@ -148,9 +154,13 @@ def trusted_runs(
             or not isinstance(run_id, int)
         ):
             continue
-        if path not in newest or run_id > newest[path].run_id:
-            newest[path] = Run(run_id=run_id, status=str(run.get("status") or ""))
-    return newest
+        by_workflow.setdefault(path, []).append(
+            Run(run_id=run_id, status=str(run.get("status") or ""))
+        )
+    return {
+        path: tuple(sorted(found, key=lambda run: run.run_id, reverse=True))
+        for path, found in by_workflow.items()
+    }
 
 
 def run_jobs(
@@ -179,48 +189,59 @@ def run_jobs(
 
 def evaluate(
     required: Sequence[RequiredCheck],
-    runs: dict[str, Run],
+    runs: dict[str, tuple[Run, ...]],
     jobs: Callable[[int], dict[str, Job]],
 ) -> Verdict:
-    """Judge every required check from the newest trusted run of its workflow.
+    """Require every trusted run of a check's workflow to report it as a success.
 
-    Only that run counts. If it does not report the check, the answer is never
-    an older run's result: a run still in progress has not reported the check
-    yet, and a completed run that never reported it has refused to.
+    One run reporting success does not settle the check while another run of the
+    same workflow, at the same commit, reports a failure, a cancellation, or
+    nothing at all. A failure in any run refuses; otherwise a run that has not
+    finished reporting leaves the check pending.
     """
     passed: list[str] = []
     pending: list[str] = []
     failed: list[str] = []
     cache: dict[int, dict[str, Job]] = {}
     for check in required:
-        run = runs.get(check.workflow)
-        if run is None:
+        found_runs = runs.get(check.workflow, ())
+        if not found_runs:
             failed.append(
                 f"{check.label}: no push or workflow_dispatch run of that workflow on "
                 f"{_RELEASE_BRANCH} reported this commit"
             )
             continue
-        if run.run_id not in cache:
-            cache[run.run_id] = jobs(run.run_id)
-        found = cache[run.run_id].get(check.job)
-        if found is None and run.status != "completed":
-            pending.append(
-                f"{check.label}: run {run.run_id} is {run.status or 'in an unknown state'} "
-                "and has not reported this check yet"
-            )
-        elif found is None:
-            failed.append(
-                f"{check.label}: run {run.run_id} completed without reporting this check"
-            )
-        elif found.status != "completed":
-            pending.append(f"{check.label}: run {found.run_id} job {found.job_id} is {found.status}")
-        elif found.conclusion == "success":
-            passed.append(f"{check.label}: run {found.run_id} job {found.job_id}")
+        refused: list[str] = []
+        waiting: list[str] = []
+        witnesses: list[str] = []
+        for run in found_runs:
+            if run.run_id not in cache:
+                cache[run.run_id] = jobs(run.run_id)
+            job = cache[run.run_id].get(check.job)
+            if job is None and run.status != "completed":
+                waiting.append(
+                    f"{check.label}: run {run.run_id} is "
+                    f"{run.status or 'in an unknown state'} and has not reported this check yet"
+                )
+            elif job is None:
+                refused.append(
+                    f"{check.label}: run {run.run_id} completed without reporting this check"
+                )
+            elif job.status != "completed":
+                waiting.append(f"{check.label}: run {run.run_id} job {job.job_id} is {job.status}")
+            elif job.conclusion == "success":
+                witnesses.append(f"run {run.run_id} job {job.job_id}")
+            else:
+                refused.append(
+                    f"{check.label}: run {run.run_id} job {job.job_id} concluded "
+                    f"{job.conclusion!r}, not 'success'"
+                )
+        if refused:
+            failed.extend(refused)
+        elif waiting:
+            pending.extend(waiting)
         else:
-            failed.append(
-                f"{check.label}: run {found.run_id} job {found.job_id} concluded "
-                f"{found.conclusion!r}, not 'success'"
-            )
+            passed.append(f"{check.label}: {', '.join(witnesses)}")
     return Verdict(tuple(passed), tuple(pending), tuple(failed))
 
 

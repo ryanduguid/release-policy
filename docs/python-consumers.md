@@ -30,9 +30,12 @@ exact release commit, one per line as `<workflow path>: <job name>`, where the
 job name is the check name GitHub shows (`lint`, `test (3.12)`,
 `payday-super-checker / test (3.12)`). The gate reads the consumer's workflow
 runs for that commit, counts only `push` and `workflow_dispatch` runs of `main`
-in the consumer repository, judges each check from the newest such run of its
-workflow, and waits up to 10 minutes for a check that is still queued or in
-progress. A check that is missing, skipped, cancelled, failed, still pending
+in the consumer repository, and requires every such run of the named workflow to
+report that check as a success. It waits up to 10 minutes for a check that is
+still queued or in progress. There is no most-recent run to prefer: re-running a
+workflow keeps its run id and adds an attempt, so no field identifies the latest
+execution, and preferring one run would let a failing execution of a mandatory
+check sit beside a passing one and be ignored. A check that is missing, skipped, cancelled, failed, still pending
 after the wait, or reported only by a pull-request run or another workflow file
 stops the release before the consumer's tests or build run. The list may not be
 empty. The gate runs in its own `checks` job, which holds the Actions read
