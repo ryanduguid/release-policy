@@ -112,7 +112,7 @@ def _read_pages(
 ) -> list[dict[str, object]] | None:
     """One complete read, or None when the listing moved while it was read."""
     items: list[dict[str, object]] = []
-    seen: list[object] = []
+    seen: list[int] = []
     total: object = None
     page = 1
     while True:
@@ -125,14 +125,20 @@ def _read_pages(
         elif payload.get("total_count") != total:
             return None
         for entry in payload[key]:
-            seen.append(entry.get("id") if isinstance(entry, dict) else None)
-            if isinstance(entry, dict):
-                items.append(entry)
+            # Dropping an entry we cannot read would make the listing look
+            # complete while hiding whatever that entry said, and what it said
+            # might be that a mandatory check failed.
+            if not isinstance(entry, dict) or not isinstance(entry.get("id"), int):
+                raise RuntimeError(
+                    f"{endpoint}: GitHub returned an entry with no numeric id; "
+                    "refusing to judge a listing that cannot be read in full"
+                )
+            seen.append(entry["id"])
+            items.append(entry)
         if len(payload[key]) < _PAGE_SIZE:
             break
         page += 1
-    identifiers = [identity for identity in seen if isinstance(identity, int)]
-    if len(set(identifiers)) != len(identifiers):
+    if len(set(seen)) != len(seen):
         # A page repeated an entry, so an entry shifted out of view unseen.
         return None
     if isinstance(total, int) and total != len(seen):
@@ -182,14 +188,21 @@ def trusted_runs(
     for run in runs:
         path = run.get("path")
         run_id = run.get("id")
+        # A run whose workflow cannot be read is a shape problem, not a run this
+        # policy excludes, so it refuses the listing rather than vanishing from
+        # it. The conditions below are the policy: they exclude runs that are
+        # real but untrusted, such as a pull-request run or a fork's.
+        if not isinstance(path, str) or not isinstance(run_id, int):
+            raise RuntimeError(
+                f"{repository}: a workflow run for {commit} has no readable path or id; "
+                "refusing to judge a listing that cannot be read in full"
+            )
         if (
             run.get("head_sha") != commit
             or run.get("event") not in _TRUSTED_EVENTS
             or run.get("head_branch") != _RELEASE_BRANCH
             or _full_name(run.get("repository")) != wanted
             or _full_name(run.get("head_repository")) != wanted
-            or not isinstance(path, str)
-            or not isinstance(run_id, int)
         ):
             continue
         by_workflow.setdefault(path, []).append(
@@ -212,7 +225,15 @@ def run_jobs(
     for raw in jobs:
         name = raw.get("name")
         job_id = raw.get("id")
-        if not isinstance(name, str) or not isinstance(job_id, int) or raw.get("head_sha") != commit:
+        # Same rule as the run listing: an unreadable job refuses, because the
+        # name it lacks might be the mandatory check that failed. A job for
+        # another commit is excluded rather than refused.
+        if not isinstance(name, str) or not isinstance(job_id, int):
+            raise RuntimeError(
+                f"{repository}: run {run_id} reported a job with no readable name or id; "
+                "refusing to judge a listing that cannot be read in full"
+            )
+        if raw.get("head_sha") != commit:
             continue
         job = Job(
             run_id=run_id,

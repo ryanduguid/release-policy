@@ -120,6 +120,7 @@ class ParseTests(unittest.TestCase):
 
 class TrustedRunTests(unittest.TestCase):
     def test_keeps_only_push_and_dispatch_runs_of_this_repository_at_the_exact_commit(self) -> None:
+        """These runs are real and readable; the policy is what excludes them."""
         runs = [
             run(1),
             run(2, event="workflow_dispatch"),
@@ -128,16 +129,31 @@ class TrustedRunTests(unittest.TestCase):
             run(5, head_branch="feature"),
             run(6, repository={"full_name": "someone/else"}),
             run(7, head_repository={"full_name": "fork/example"}),
-            run(8, path=None),
             run(12, repository="someone/else"),
-            run(9, id="9"),
-            "not a run",
         ]
-        github = FakeGitHub(runs, {})  # type: ignore[arg-type]
+        github = FakeGitHub(runs, {})
         self.assertEqual(
             required_checks.trusted_runs(github, REPO, SHA),
             {CI: (required_checks.Run(2, "completed"), required_checks.Run(1, "completed"))},
         )
+
+    def test_a_run_that_cannot_be_read_refuses_the_listing(self) -> None:
+        """Dropping it would leave the listing looking complete without it.
+
+        The entry it hides could be the run whose mandatory check failed, so
+        an unreadable entry is a refusal rather than an exclusion.
+        """
+        for broken, expected in (
+            ("not a run", "no numeric id"),
+            ({"id": None}, "no numeric id"),
+            (run(9, id="9"), "no numeric id"),
+            (run(8, path=None), "no readable path or id"),
+            (run(8, path=123), "no readable path or id"),
+        ):
+            with self.subTest(broken=broken):
+                github = FakeGitHub([run(1), broken], {})  # type: ignore[list-item]
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    required_checks.trusted_runs(github, REPO, SHA)
 
     def test_repository_names_compare_case_insensitively(self) -> None:
         github = FakeGitHub([run(1, repository={"full_name": "RyanDuguid/Example"})], {})
@@ -209,8 +225,6 @@ class RunJobTests(unittest.TestCase):
                     job(1, "lint", "failure"),
                     job(2, "lint"),
                     job(3, "other", head_sha=OTHER_SHA),
-                    job(4, "no id", id=None),
-                    {"id": 5},
                     job(6, "quiet", status=None, conclusion=None),
                     job(0, "lint", "cancelled"),
                 ]
@@ -224,6 +238,18 @@ class RunJobTests(unittest.TestCase):
                 "quiet": required_checks.Job(10, 6, "", ""),
             },
         )
+
+    def test_a_job_that_cannot_be_read_refuses_the_listing(self) -> None:
+        """The name it lacks could be the mandatory check that failed."""
+        for broken, expected in (
+            ({"id": 5}, "no readable name or id"),
+            (job(4, "no id", id=None), "no numeric id"),
+            (job(4, 7), "no readable name or id"),
+        ):
+            with self.subTest(broken=broken):
+                github = FakeGitHub([], {10: [job(1, "lint"), broken]})
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    required_checks.run_jobs(github, REPO, 10, SHA)
 
     def test_the_gh_wrapper_returns_json_and_fails_on_errors(self) -> None:
         ok = subprocess.CompletedProcess([], 0, stdout='{"jobs": []}', stderr="")
