@@ -17,14 +17,68 @@ on:
         required: false
         type: string
         default: ""
+      required-checks:
+        description: >-
+          Mandatory consumer checks, one per line as "<workflow path>: <job name>",
+          that must have succeeded in a push or dispatch run of main for the exact
+          release commit before anything is built. Fails closed when empty.
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  checks:
+    timeout-minutes: 15
+    name: require the consumer's mandatory checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # Read this repository's own workflow runs for the release commit.
+    steps:
+      # This job never checks out or executes consumer code, so the Actions
+      # read scope the gate needs is not held by any job that runs it.
+      - name: Check out release-policy at the calling pin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ryanduguid/release-policy
+          ref: ${{ job.workflow_sha }}
+          path: policy
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Require an immutable policy pin
+        env:
+          MODULE_SHA: ${{ job.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
+          test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
+
+      - name: Require the mandatory consumer checks for this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRED_CHECKS: ${{ inputs.required-checks }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$REQUIRED_CHECKS" \
+            | python policy/scripts/required_checks.py \
+                --repository "$GITHUB_REPOSITORY" \
+                --commit "$GITHUB_SHA" \
+                --wait-seconds 600
+
   consumer-tests:
     timeout-minutes: 15
     name: run consumer source-archive tests
+    needs: checks
     runs-on: ubuntu-latest
     outputs:
       source-directory: ${{ steps.inputs.outputs.source-directory }}

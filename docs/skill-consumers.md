@@ -35,9 +35,21 @@ Use the separate release adapter for annotated version tags:
         with:
           artifact-stem: subcontractor-accounting-skills
           skills-verification-mode: subcontractor-accounting-v1
+          required-checks: |
+            .github/workflows/verify.yml: lint
+            .github/workflows/verify.yml: verify (3.12)
 
 Replace `<full-40-char-commit-sha>` with a reviewed literal 40-character
 commit before committing either consumer workflow.
+
+`required-checks` is required by the release adapter and has the same meaning
+as for the [packaged-Python workflow](python-consumers.md): the named consumer
+checks must have succeeded in a `push` or `workflow_dispatch` run of `main` for
+the exact release commit, judged from the newest such run, with a bounded wait
+for a pending check and no other exception. The `guard` job runs the gate
+before the shared verifier starts, so a tag on a commit whose own checks did
+not pass never reaches verification or publication. The verification workflow
+takes no such input.
 
 `skills-verification-mode` is optional and defaults to the only supported
 mode, `subcontractor-accounting-v1`. Both workflows still accept it, so the

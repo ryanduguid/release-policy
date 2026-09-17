@@ -12,6 +12,11 @@
 - A pure-Python wheel; the `py3-none-any` wheel name is expected by the
   SBOM and attestation steps.
 - Releases cut from `main`; the main-match gate checks `heads/main`.
+- A non-empty `required-checks` list naming the consumer's own mandatory
+  checks as `<workflow path>: <job name>`. Those checks must have succeeded in
+  a `push` or `workflow_dispatch` run of `main` for the exact release commit;
+  the gate waits up to 10 minutes for a pending check and otherwise fails
+  closed.
 
 Source-archive callers additionally require:
 

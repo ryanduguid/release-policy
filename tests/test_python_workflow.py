@@ -129,6 +129,36 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
             r"\$\{\{ github\.ref \}\}\n  cancel-in-progress: false$",
         )
 
+    def test_mandatory_checks_gate_is_required_and_scoped_away_from_consumer_code(self) -> None:
+        """The gate needs Actions read; no job that runs consumer code may hold it."""
+        checks = job_block(self.workflow, "checks")
+        test = job_block(self.workflow, "test")
+        build = job_block(self.workflow, "build")
+        publish = job_block(self.workflow, "publish")
+
+        self.assertRegex(
+            self.workflow,
+            r"(?ms)^      required-checks:\n.*?^        required: true$",
+        )
+        self.assertIn("required_checks.py", checks)
+        self.assertIn("REQUIRED_CHECKS: ${{ inputs.required-checks }}", checks)
+        self.assertIn('--commit "$GITHUB_SHA"', checks)
+        self.assertIn("--wait-seconds 600", checks)
+        self.assertIn("actions: read", checks)
+        self.assertIn("contents: read", checks)
+        for forbidden in ("contents: write", "attestations: write", "id-token: write"):
+            self.assertNotIn(forbidden, checks)
+        # It never fetches, and so never runs, the consumer's tree.
+        self.assertNotIn("path: source", checks)
+        for forbidden in ("uv run", "pytest", "python -m build"):
+            self.assertNotIn(forbidden, checks)
+
+        self.assertIn("needs: checks", test)
+        self.assertNotIn("actions: read", test)
+        self.assertNotIn("actions: read", build)
+        for job in (test, build, publish):
+            self.assertNotIn("required_checks.py", job)
+
     def test_release_dependencies_never_restore_shared_caches(self) -> None:
         self.assertNotIn("enable-cache: true", self.workflow)
         self.assertEqual(self.workflow.count("enable-cache: false"), 2)

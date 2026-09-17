@@ -327,9 +327,11 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
 
         self.assertEqual(
             tuple(inputs),
-            ("artifact-stem", "skills-verification-mode"),
+            ("artifact-stem", "skills-verification-mode", "required-checks"),
         )
         self.assertRegex(inputs["artifact-stem"], r"(?m)^        required: true$")
+        self.assertRegex(inputs["required-checks"], r"(?m)^        required: true$")
+        self.assertRegex(inputs["required-checks"], r"(?m)^        type: string$")
         self.assertRegex(inputs["artifact-stem"], r"(?m)^        type: string$")
         self.assertRegex(inputs["skills-verification-mode"], r"(?m)^        required: false$")
         self.assertRegex(inputs["skills-verification-mode"], r"(?m)^        type: string$")
@@ -354,7 +356,10 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
             ("timeout-minutes", "name", "runs-on", "permissions", "steps"),
         )
         self.assertRegex(guard, r"(?m)^    timeout-minutes: 5$")
-        self.assertEqual(self.permission_map(guard, indent=4), {"contents": "read"})
+        self.assertEqual(
+            self.permission_map(guard, indent=4),
+            {"contents": "read", "actions": "read"},
+        )
         self.assertEqual(self.mapping_keys(guard_step, indent=8), ("env", "run"))
         self.assertNotRegex(
             guard_step,
@@ -370,6 +375,13 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
             ),
         )
         self.assertIn("RELEASE_TAG: ${{ github.ref_name }}", guard_step)
+        checks_step = self.step_block(
+            guard, "Require the mandatory consumer checks for this exact commit"
+        )
+        self.assertLess(guard.index("guard-release"), guard.index("required_checks.py"))
+        self.assertIn("REQUIRED_CHECKS: ${{ inputs.required-checks }}", checks_step)
+        self.assertIn("--wait-seconds 600", checks_step)
+        self.assertNotIn("required_checks.py", self.read_workflow("verify-skills.yml"))
         self.assertIn(
             "SKILLS_VERIFICATION_MODE: ${{ inputs.skills-verification-mode }}",
             guard_step,
