@@ -160,17 +160,21 @@ def readings(text):
 
     Repeated markers are peeled in turn, so "## Co-authored-by: ..." is read
     down to the bare trailer rather than only to "# Co-authored-by: ...".
+    Explore every matching marker: either a shorter or a longer marker can
+    hide the credit if it is the only one tried. Deduplicating suffixes keeps
+    overlapping paths from repeating work.
     """
     found = [text]
-    rest = text.lstrip()
-    while True:
+    seen = {text}
+    for reading in found:
+        rest = reading.lstrip()
         for marker in MARKERS:
             if rest.startswith(marker):
-                rest = rest[len(marker):].lstrip()
-                found.append(rest)
-                break
-        else:
-            return found
+                candidate = rest[len(marker):].lstrip()
+                if candidate not in seen:
+                    seen.add(candidate)
+                    found.append(candidate)
+    return found
 
 
 raw = open(os.environ["MSG_FILE"], encoding="utf-8", errors="replace").read()
