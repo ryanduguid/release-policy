@@ -15,7 +15,7 @@
       "workflow_path": ".github/workflows/release.yml"
     },
     {
-      "current_policy_sha": "2adf9e19b7c73970a1dd6703afb3f9c27b7972d7",
+      "current_policy_sha": "171aa487dbc0a8f437ed84407f0d506f814548c1",
       "evidence": {
         "head_sha": "874e92d85458e87ebf726b1fc35ca3c333c88934",
         "policy_sha": "fcf25e532e9eb60056ae6e5c819cf3125c4f4b91",
@@ -30,7 +30,7 @@
       "workflow_path": ".github/workflows/release-review-ready-gate.yml"
     },
     {
-      "current_policy_sha": "2adf9e19b7c73970a1dd6703afb3f9c27b7972d7",
+      "current_policy_sha": "171aa487dbc0a8f437ed84407f0d506f814548c1",
       "evidence": {
         "head_sha": "527b0a22c8be5ce10855f12f052cd3bda7b7b827",
         "policy_sha": "99a6314ca2cd4ea21b465614b73d108fd8fe2077",
