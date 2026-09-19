@@ -494,5 +494,62 @@ class CanaryManifestTests(unittest.TestCase):
         self.assertEqual(len(groups), 3, "live audit must not share a cancellation group")
 
 
+    def test_live_finds_a_namespaced_run_hidden_behind_a_full_first_page(self) -> None:
+        recorded = run_payload(ref="example-tool/v1.2.3")
+        irrelevant = [
+            run_payload(run_id=900 + index, ref="other-tool/v1.0.0")
+            for index in range(100)
+        ]
+
+        def fetch_json(endpoint: str) -> object:
+            if "/compare/" in endpoint:
+                return {"status": "behind"}
+            if endpoint.endswith("/actions/runs/123"):
+                return recorded
+            if endpoint.endswith("page=1"):
+                return {"workflow_runs": irrelevant}
+            return {"workflow_runs": [recorded]}
+
+        result = check_canaries.check_live(
+            check_canaries.parse_manifest(
+                manifest(ref="example-tool/v1.2.3", tag_prefix="example-tool")
+            ),
+            fetch_json=fetch_json,
+            fetch_text=lambda _: (
+                "uses: ryanduguid/release-policy/.github/workflows/"
+                f"release-python.yml@{SHA}\n"
+            ),
+        )
+        self.assertEqual(result.errors, ())
+        self.assertEqual(result.warnings, ())
+
+    def test_live_reports_its_own_condition_when_every_page_is_searched(self) -> None:
+        def fetch_json(endpoint: str) -> object:
+            if "/compare/" in endpoint:
+                return {"status": "behind"}
+            return {"workflow_runs": [
+                run_payload(run_id=900 + index, ref="other-tool/v1.0.0")
+                for index in range(100)
+            ]}
+
+        result = check_canaries.check_live(
+            check_canaries.parse_manifest(
+                manifest(ref="example-tool/v1.2.3", tag_prefix="example-tool")
+            ),
+            fetch_json=fetch_json,
+            fetch_text=lambda _: (
+                "uses: ryanduguid/release-policy/.github/workflows/"
+                f"release-python.yml@{SHA}\n"
+            ),
+        )
+        self.assertTrue(
+            any("pages of successful runs" in error for error in result.errors),
+            result.errors,
+        )
+        self.assertFalse(
+            any("no relevant successful workflow run" in error for error in result.errors),
+            result.errors,
+        )
+
 if __name__ == "__main__":
     unittest.main()

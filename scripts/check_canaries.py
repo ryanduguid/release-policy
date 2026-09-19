@@ -25,6 +25,12 @@ _FAMILIES = {"archive", "python", "skills", "verify"}
 # manifest stale within a day of every consumer push and proved nothing the
 # current-pin check does not prove directly.
 _RELEASE_FAMILIES = frozenset(_FAMILIES - {"verify"})
+# Successful runs are read page by page until the relevant namespaced run
+# appears, because a repository with busy sibling namespaces can hide the
+# recorded run behind newer successes from other namespaces. Ten pages of a
+# hundred successes is far beyond anything the estate produces; a search that
+# exhausts them is reported as its own condition rather than as a missing run.
+MAX_RUN_PAGES = 10
 # GitHub's compare API reports the pin relative to release-policy main. Only
 # these 2 statuses mean the pin is an ancestor of main. GitHub refuses a
 # reusable-workflow call at a commit no branch or tag reaches, before any job
@@ -340,17 +346,39 @@ def check_live(
                 )
 
         workflow_name = Path(canary.workflow_path).name
-        runs_endpoint = (
-            f"repos/{canary.repository}/actions/workflows/{workflow_name}/runs"
-            "?status=success&per_page=100"
-        )
+        # Page through the successes until the relevant run appears or the
+        # pages run out. Reading one page let a namespaced release run hide
+        # behind newer successes from other namespaces.
+        latest = None
+        partial_page_seen = False
         try:
-            latest = _latest_relevant_run(fetch_json(runs_endpoint), canary)
+            for page in range(1, MAX_RUN_PAGES + 1):
+                runs_endpoint = (
+                    f"repos/{canary.repository}/actions/workflows/{workflow_name}/runs"
+                    f"?status=success&per_page=100&page={page}"
+                )
+                payload = fetch_json(runs_endpoint)
+                latest = _latest_relevant_run(payload, canary)
+                runs = payload.get("workflow_runs") if isinstance(payload, dict) else None
+                if latest is not None:
+                    break
+                if not isinstance(runs, list) or len(runs) < 100:
+                    partial_page_seen = True
+                    break
+            if latest is None and not partial_page_seen:
+                errors.append(
+                    f"{prefix}: more than {MAX_RUN_PAGES} pages of successful runs "
+                    "were searched without finding the relevant one"
+                )
         except RuntimeError as error:
             errors.append(f"{prefix}: could not read latest successes: {error}")
             latest = None
-        if latest is None:
+        if latest is None and partial_page_seen:
             errors.append(f"{prefix}: no relevant successful workflow run was returned")
+        elif latest is None:
+            # The pagination-exceeded error above already names this condition;
+            # nothing more can be compared without a run.
+            pass
         elif canary.family in _RELEASE_FAMILIES:
             if latest.get("id") != canary.evidence.run_id:
                 errors.append(
