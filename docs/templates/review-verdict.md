@@ -7,7 +7,7 @@
 | Repository | owner/name |
 | Commit | full 40-character SHA |
 | Release | vX.Y.Z or none |
-| Scope | ACT_YEAR_s_SECTION, one per provision reviewed |
+| Scope | the index scope list, joined by comma and space |
 | Reviewer | Name, credential |
 | Relationship | author or independent |
 | Verdict | ACCEPT, REJECT or FIX |
@@ -17,8 +17,9 @@
 ## 1. Headline verdict
 
 VERDICT. One paragraph. State what the subject encodes correctly for the scope
-above and, for REJECT or FIX, what is wrong in plain words. No hedging here;
-the hedges belong in sections 3 and 4.
+above and, for REJECT or FIX, what is wrong in plain words. An author verdict
+says here that it is a self-review. No hedging here; the hedges belong in
+sections 3 and 4.
 
 ## 2. Citation audit
 
@@ -53,9 +54,9 @@ Provisions the subject should cite and does not:
 
 ## 5. Required changes
 
-Present only for FIX. Delete this section for ACCEPT and REJECT.
-
-- Defect: plain words. Change: plain words. Re-review: yes or no.
+- Defect: plain words, FIX only; delete the whole section for ACCEPT and REJECT.
+  Change: plain words.
+  Re-review: yes or no
 
 ## 6. Method
 
