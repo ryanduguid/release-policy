@@ -4,7 +4,11 @@ The composite action at `.github/actions/no-ai-attribution/action.yml` checks
 pull request titles and bodies, commit messages, and raw author and committer
 identities. It retains the existing matcher and its executable title regression
 cases. Technical product references and fenced examples keep their current
-treatment.
+treatment. Commit messages and pull request text are read as written and again
+with Git comment markers peeled and whitespace-indented trailer continuations
+joined onto their trailer, so a credit kept behind a `#` line by
+`--cleanup=whitespace` or split across a folded trailer is caught by the action
+as well as by the local `.githooks/commit-msg` guard.
 
 The reusable workflow at `.github/workflows/attribution-policy.yml` wraps the
 action with the status reporting every consumer needs: a pending `Attribution
