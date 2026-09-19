@@ -20,8 +20,8 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents. Keeping action pins and permission maps inside the exact
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
-    "docs/attribution-consumers.md": "ce98729896c4fecef449039cdd750f2b7698fe7dc3d1893f57b4f39b51ec32b9",
-    ".github/actions/no-ai-attribution/action.yml": "735528a813e1598aed2fbf41173a1fdc0c8359f7e620b0a984acaa77cf827196",
+    "docs/attribution-consumers.md": "ce684ef5b9e80e2bc6aa4f1247fa99d9ee78b20788ef48feb2ae5ba42d651371",
+    ".github/actions/no-ai-attribution/action.yml": "10fc97e8b60789284bf7f1f27c9a8185af22ee379b01707731a90e5ccf2443b8",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
     ".github/dependabot.yml": "baf5bed4e5b960787d53ee5ea8d9d7376fbc54565d6a392604fb94afb6bc1b66",
     ".github/workflows/ci.yml": "c4bfb79c6254f0d365bdd9db117ebbf36e283bce27dd282728899b8223a968b7",

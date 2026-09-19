@@ -69,6 +69,39 @@ runs:
 
         FENCE = re.compile(r"^(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 
+        # A trailer key, so a whitespace-indented line after it can be read as
+        # its continuation. Git lets a trailer value continue on such a line.
+        TRAILER_START = re.compile(r"^\s*[A-Za-z][A-Za-z0-9-]*:")
+
+        # The default comment marker plus every character Git may pick for
+        # `core.commentChar = auto`. A stored message keeps its comment lines
+        # when the commit used `--cleanup=whitespace` or `verbatim` (what `-m`
+        # and `-F` use), and this scanner cannot know which marker the writing
+        # clone had configured, so every candidate is peeled. Scanning a marker
+        # Git was not using costs nothing; missing the one it was using would
+        # let a credit through.
+        MARKERS = tuple("#;@!$%^&|:")
+
+        def readings(text):
+            """The line as written, then again with each comment marker peeled.
+
+            Repeated markers are peeled in turn, so "## Co-authored-by: ..." is
+            read down to the bare trailer, and every matching marker is tried,
+            since a shorter or a longer one can be the reading that exposes the
+            credit.
+            """
+            found = [text]
+            seen = {text}
+            for reading in found:
+                rest = reading.lstrip()
+                for marker in MARKERS:
+                    if rest.startswith(marker):
+                        candidate = rest[len(marker):].lstrip()
+                        if candidate not in seen:
+                            seen.add(candidate)
+                            found.append(candidate)
+            return found
+
         def scan(label, text):
             """Report every credit line outside fenced code blocks.
 
@@ -80,11 +113,22 @@ runs:
             state for the rest of the document. A backtick opener whose info
             string contains a backtick is not a fence either, so it cannot open a
             block that hides every credit after it.
+
+            Fence state is resolved over the physical lines first, so an
+            indented closing fence closes its block instead of being folded into
+            the trailer above it. Every physical line is then scanned on its
+            own, and a whitespace-indented line is scanned a second time joined
+            onto the trailer it continues, so a credit split across a folded
+            trailer is read whole. Each candidate is read as written and again
+            with comment markers peeled, in both orders relative to the Unicode
+            folding, because either order can be the one that exposes a credit.
+            Every extra reading can only add a detection, never remove one.
             """
-            bad = []
+            lines = text.split("\n")
+            skip = [False] * len(lines)
             open_char = None
             open_len = 0
-            for n, line in enumerate(text.split("\n"), 1):
+            for index, line in enumerate(lines):
                 m = FENCE.match(line)
                 if m and open_char is None and m.group("fence")[0] == "`" and "`" in m.group("info"):
                     m = None
@@ -93,17 +137,43 @@ runs:
                     length = len(m.group("fence"))
                     if open_char is None:
                         open_char, open_len = ch, length
+                        skip[index] = True
                         continue
                     if ch == open_char and length >= open_len and not m.group("info").strip():
                         open_char, open_len = None, 0
+                        skip[index] = True
                         continue
-                if open_char is not None:
+                skip[index] = open_char is not None
+
+            bad = []
+            reported = set()
+            folded, folded_at = None, 0
+            for n, line in enumerate(lines, 1):
+                if skip[n - 1]:
+                    folded, folded_at = None, 0
                     continue
-                for name, rx in RX:
-                    if rx.match(comparable(line)):
+                candidates = [(line, n)]
+                if folded is not None and line[:1] in (" ", "\t"):
+                    folded = folded + " " + line.strip()
+                    candidates.append((folded, folded_at))
+                elif TRAILER_START.match(line):
+                    folded, folded_at = line, n
+                else:
+                    folded, folded_at = None, 0
+                for candidate, at in candidates:
+                    hit = None
+                    for reading in readings(candidate) + readings(comparable(candidate)):
+                        reading = comparable(reading)
+                        for name, rx in RX:
+                            if rx.match(reading):
+                                hit = name
+                                break
+                        if hit:
+                            break
+                    if hit and (at, hit) not in reported:
+                        reported.add((at, hit))
                         bad.append("%s line %d: %s (%s)"
-                                   % (label, n, line.strip()[:120], name))
-                        break
+                                   % (label, at, lines[at - 1].strip()[:120], hit))
             return bad
 
         # Titles are plain text. Whole-word names and one separator grammar
