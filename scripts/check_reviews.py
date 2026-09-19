@@ -391,27 +391,23 @@ def _check_subject(lines: Sequence[str], review: Review, *, label: str) -> None:
         raise VerificationError(f"{label} Subject must be a Field | Value table")
     if any(len(row) != 2 for row in rows):
         raise VerificationError(f"{label} Subject rows must have two cells")
-    expected = dict(
-        zip(
-            SUBJECT_ROWS,
-            (
-                review.repository,
-                review.commit,
-                review.release or "none",
-                ", ".join(review.scope),
-                f"{review.name}, {review.credential}",
-                review.relationship,
-                review.verdict,
-                review.confidence,
-                review.date,
-            ),
-        )
+    if [row[0] for row in rows[1:]] != list(SUBJECT_ROWS):
+        raise VerificationError(f"{label} Subject rows must be exactly {list(SUBJECT_ROWS)} in order")
+    expected = (
+        review.repository,
+        review.commit,
+        review.release or "none",
+        ", ".join(review.scope),
+        f"{review.name}, {review.credential}",
+        review.relationship,
+        review.verdict,
+        review.confidence,
+        review.date,
     )
-    actual = {field: value for field, value in rows[1:]}
-    if actual != expected:
-        differing = sorted(
-            field for field in set(expected) | set(actual) if expected.get(field) != actual.get(field)
-        )
+    differing = [
+        field for field, value, (_, actual) in zip(SUBJECT_ROWS, expected, rows[1:]) if value != actual
+    ]
+    if differing:
         raise VerificationError(f"{label} Subject rows differ from the index: {differing}")
 
 
@@ -430,7 +426,8 @@ def _check_citations(lines: Sequence[str], *, label: str) -> None:
         raise VerificationError(f"{label} citation audit has no rows")
 
 
-def check_verdict(root: Path, review: Review) -> None:
+def check_verdict(root: Path, review: Review) -> tuple[str, ...]:
+    """Check one verdict file and return its open questions, for the register check."""
     label = f"verdict {review.id}"
     raw = require_tracked_regular_file(root, review.path, label=label).read_bytes()
     text = canonical_text(raw, label=label)
@@ -470,16 +467,20 @@ def check_verdict(root: Path, review: Review) -> None:
     if review.verdict == "ACCEPT" and critical:
         raise VerificationError(f"{label} is ACCEPT and lists a CRITICAL finding")
 
+    questions: list[str] = []
     for head, continuation in _list_section(lines, QUESTIONS_HEADING, label=label):
         if not head.endswith("?"):
             raise VerificationError(f"{label} open question must end with a question mark: {head}")
         _fields(continuation, QUESTION_FIELDS, label=f"{label} question '{head}'")
+        questions.append(head)
 
     if review.verdict == "FIX":
         changes = _list_section(lines, CHANGES_HEADING, label=label)
         if not changes:
             raise VerificationError(f"{label} is FIX and must list at least one required change")
         for head, continuation in changes:
+            if re.match(r"Defect: \S", head) is None:
+                raise VerificationError(f"{label} required change must open with 'Defect: ': {head}")
             fields = _fields(continuation, CHANGE_FIELDS, label=f"{label} change '{head}'")
             if fields["Re-review"] not in {"yes", "no"}:
                 raise VerificationError(f"{label} change '{head}' Re-review must be yes or no")
@@ -492,6 +493,7 @@ def check_verdict(root: Path, review: Review) -> None:
         raise VerificationError(f"{label} attestation must contain the fixed sentence")
     if f"Name: {review.name}" not in attestation or f"Date: {review.date}" not in attestation:
         raise VerificationError(f"{label} attestation must be signed with the index name and date")
+    return tuple(questions)
 
 
 def parse_known_unknowns(text: str) -> dict[str, KnownUnknown]:
@@ -609,9 +611,10 @@ def check_consumer(root: Path, *, base: str | None = None) -> str:
     raw = require_tracked_regular_file(root, INDEX_PATH, label="review index").read_bytes()
     document = load_index_document(raw, label="review index")
     reviews = parse_index(document)
+    questions: list[tuple[str, str]] = []
     for review in reviews:
         require_not_after(review.date, bound, label=f"review {review.id} date")
-        check_verdict(root, review)
+        questions.extend((review.id, question) for question in check_verdict(root, review))
         require_subject_commit(root, review)
     label = "known-unknowns register"
     raw = require_tracked_regular_file(root, KNOWN_UNKNOWNS_PATH, label=label).read_bytes()
@@ -619,6 +622,12 @@ def check_consumer(root: Path, *, base: str | None = None) -> str:
     check_known_unknowns(
         register, verdict_ids=frozenset(review.id for review in reviews), bound=bound
     )
+    registered = {entry.question for entry in register.values()}
+    for review_id, question in questions:
+        if question not in registered:
+            raise VerificationError(
+                f"verdict {review_id} open question is not in {KNOWN_UNKNOWNS_PATH}: {question}"
+            )
     if base is not None:
         require_append_only(root, base, document, register)
     open_count = sum(entry.open for entry in register.values())

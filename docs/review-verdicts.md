@@ -132,8 +132,9 @@ without a name continues the previous named line.
 5. `## 4. Open questions`: questions the reviewer could not settle from the
    law and public guidance, each ending with a question mark and carrying
    `Why it matters:` and `Resolution path:` lines. The maintainer copies each
-   one into `docs/known-unknowns.md` in the same pull request that lists the
-   verdict.
+   one, word for word, as an entry heading in `docs/known-unknowns.md` in
+   the same pull request that lists the verdict; the checker refuses a
+   question that is not registered.
 6. `## 5. Required changes`: present only for `FIX`, at least one item. Each
    item opens with `Defect:` and carries `Change:` and `Re-review:` lines,
    the last `yes` or `no`. A change marked `yes` is not complete until a
@@ -195,7 +196,8 @@ Refusals, in the order met:
   pointing at another commit;
 - a verdict file whose title is wrong or whose `## ` headings are not exactly
   the required set in order, including section 5 present without `FIX` or
-  absent with it; a Subject table whose rows differ from the index;
+  absent with it; a Subject table whose rows are not exactly the nine named
+  ones in order, or whose values differ from the index;
 - a headline that does not open with the listed verdict word, or an `author`
   headline without `self-review`; a citation audit without the `Claimed`
   table, with a row whose `Correct` is not `yes` or `no`, a `no` row with
@@ -204,15 +206,17 @@ Refusals, in the order met:
   a finding not opening with `CRITICAL.`, `WARNING.` or `NOTE.`, an item
   missing one of its named lines or with text before its first named line, a
   `REJECT` without a `CRITICAL` finding, an `ACCEPT` with one, an open
-  question without a question mark, a `FIX` with no required change or a
-  `Re-review` other than `yes` or `no`, an empty Method, an attestation
+  question without a question mark, a `FIX` with no required change, a
+  change not opening with `Defect:` or a `Re-review` other than `yes` or
+  `no`, an empty Method, an attestation
   without the fixed sentence, or a `Name:` or `Date:` line that differs from
   the index;
 - a known-unknowns file that is not a tracked regular file, a heading that is
   not `## KU-NNN: question?`, a reused id, an entry whose lines are not
   exactly the five named ones in order, a malformed date or status, a date
-  later than the checked commit's date, or a status resolved by a verdict id
-  the index does not list;
+  later than the checked commit's date, a status resolved by a verdict id
+  the index does not list, or a verdict's open question with no entry of
+  the same wording;
 - with `--base`: a revision that is not a commit in the checkout, a listed
   review that changed or disappeared, a registered known unknown that
   disappeared, changed anything but its `Status`, or moved its `Status` any

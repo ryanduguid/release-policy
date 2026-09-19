@@ -24,7 +24,7 @@ SIGNED = "2026-01-15"
 NOTE = "- NOTE. Minor wording.\n  Why it matters: readers may misread it.\n  Remedy: disclaim in the documentation."
 WARNING = "- WARNING. A defensible reading is undisclosed.\n  Why it matters: another reading exists.\n  Remedy: disclaim in the documentation."
 CRITICAL = "- CRITICAL. Wrong output for a lawful input.\n  Why it matters: money.\n  Remedy: refuse with an error."
-QUESTION = "- Which export column is the receipt date?\n  Why it matters: a sent date can read as on time.\n  Resolution path: a real header row."
+QUESTION = "- Does the export label the receipt date?\n  Why it matters: a sent date can read as on time.\n  Resolution path: a real header row."
 CHANGE = "- Defect: no year label on the output.\n  Change: add an income_year field.\n  Re-review: no"
 
 
@@ -398,6 +398,7 @@ class CheckReviewsTests(unittest.TestCase):
             (("| Field | Value |", "| Name | Value |"), "Subject must be a Field"),
             (("| Verdict | FIX |", "| Verdict | FIX | extra |"), "Subject rows must have two cells"),
             (("| Confidence | MEDIUM |", "| Confidence | HIGH |"), r"Subject rows differ from the index: \['Confidence'\]"),
+            ((f"| Date | {SIGNED} |", f"| Date | 2026-01-01 |\n| Date | {SIGNED} |"), "Subject rows must be exactly"),
             (("FIX. The encoding", "ACCEPT. The encoding"), "headline must open with FIX"),
             (("FIX. The encoding matches the scope.", ""), "headline must open with FIX"),
             (("| Claimed | Correct | Correction |", "| Section | Correct | Note |"), "must open with the Claimed table"),
@@ -406,8 +407,10 @@ class CheckReviewsTests(unittest.TestCase):
             (("- WARNING. A defensible", "- Soft. A defensible"), "finding must open with"),
             (("  Remedy: disclaim in the documentation.", "  Remedy:"), "needs a non-empty 'Remedy:' line"),
             (("  Why it matters: another reading exists.", "  stray sentence"), "text before its first named line"),
-            (("- Which export column is the receipt date?", "- Which export column is the receipt date"), "must end with a question mark"),
+            (("- Does the export label the receipt date?", "- Does the export label the receipt date"), "must end with a question mark"),
             (("  Resolution path: a real header row.", ""), "needs a non-empty 'Resolution path:' line"),
+            (("- Does the export label the receipt date?", "- Is the rate ever rounded?"), "open question is not in docs/known-unknowns.md: Is the rate ever rounded"),
+            (("- Defect: no year label on the output.", "- No year label on the output."), "required change must open with 'Defect: '"),
             (("- Defect: no year label on the output.", "- Defect: no year label on the output.\nstray"), "line outside any list item"),
             (("  Re-review: no", "  Re-review: later"), "Re-review must be yes or no"),
             (("Read the brief and the source at the commit above. Two hours. No tools.", ""), "Method must describe"),
@@ -517,6 +520,7 @@ class CheckReviewsTests(unittest.TestCase):
             "reviews valid: 1 verdicts, 2 known unknowns (0 open)",
         )
         self.known_unknowns = "# Known unknowns\n\nNo entries yet.\n"
+        self.render_overrides = {"questions": "none"}
         self._install()
         self.assertTrue(check_reviews.check_consumer(self.root).endswith("0 known unknowns (0 open)"))
         self._write("docs/known-unknowns.md", b"\xef\xbb\xbf# Known unknowns\n")
