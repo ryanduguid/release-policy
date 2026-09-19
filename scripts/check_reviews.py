@@ -16,7 +16,7 @@ import subprocess
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from itertools import takewhile
 from pathlib import Path
 
@@ -51,6 +51,9 @@ HEADINGS_AFTER_FIX = ("## 6. Method", "## 7. Attestation")
 KNOWN_UNKNOWN_LINES = ("Raised", "Affects", "Why it matters", "Resolution path", "Status")
 
 _ID = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+_PROVISION_SECTION = r"[A-Za-z0-9]+(?:\([A-Za-z0-9]+\)(?:-[A-Za-z0-9]+(?:\([A-Za-z0-9]+\))?)*)*"
+_NON_STATUTORY = r"(?:APES_[0-9]+|TPB_GS_[0-9]+)"
+
 _HEX_64 = re.compile(r"[0-9a-f]{64}\Z")
 _FULL_SHA = re.compile(r"[0-9a-f]{40}\Z")
 _REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
@@ -59,7 +62,7 @@ _RELEASE = re.compile(
     r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
 )
 _PROVISION = re.compile(
-    r"[A-Z][A-Z0-9]*_[0-9]{4}_(?:s|Div|Subdiv|Pt)_[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*\Z"
+    rf"(?:[A-Z][A-Z0-9]*_[0-9]{{4}}_(?:s|Div|Subdiv|Pt)_{_PROVISION_SECTION}|{_NON_STATUTORY})\Z"
 )
 _FINDING = re.compile(r"- (CRITICAL|WARNING|NOTE)\. \S")
 _KNOWN_UNKNOWN_HEADING = re.compile(r"## (KU-[0-9]{3}): (.+\?)\Z")
@@ -73,6 +76,9 @@ class Review:
     sha256: str
     commit: str
     verdict: str
+    relationship: str
+    release: str | None
+    review_date: str
 
 
 def canonical_text(raw: bytes, *, label: str) -> str:
@@ -141,6 +147,7 @@ def parse_index(document: object) -> tuple[Review, ...]:
         review_id = _pattern(
             entry["id"], label=f"{label}.id", pattern=_ID, form="YYYY-MM-DD-hyphenated-words"
         )
+        _date(review_id[:10], label=f"{label}.id date")
         if review_id in seen:
             raise VerificationError(f"duplicate review id: {review_id}")
         label = f"review {review_id}"
@@ -193,17 +200,17 @@ def parse_index(document: object) -> tuple[Review, ...]:
         )
         _text(reviewer["name"], label=f"{label} reviewer.name")
         _text(reviewer["credential"], label=f"{label} reviewer.credential")
-        _choice(
+        relationship = _choice(
             reviewer["relationship"], label=f"{label} reviewer.relationship", allowed=RELATIONSHIPS
         )
         verdict = _choice(entry["verdict"], label=f"{label} verdict", allowed=VERDICTS)
         _choice(entry["confidence"], label=f"{label} confidence", allowed=CONFIDENCES)
-        _date(entry["date"], label=f"{label} date")
+        review_date = _date(entry["date"], label=f"{label} date")
         supersedes = entry["supersedes"]
         if supersedes is not None and supersedes not in seen:
             raise VerificationError(f"{label} supersedes must name an earlier listed review")
         seen.append(review_id)
-        reviews.append(Review(review_id, path, digest, commit, verdict))
+        reviews.append(Review(review_id, path, digest, commit, verdict, relationship, subject["release"], review_date))
 
     if seen != sorted(seen):
         raise VerificationError("review index must be sorted by id")
@@ -244,6 +251,20 @@ def check_verdict(root: Path, review: Review) -> None:
     headings = [line for line in lines if line.startswith("## ")]
     if headings != expected:
         raise VerificationError(f"{label} sections must be exactly {expected}")
+    subject = _section(lines, "## Subject")
+    subject_text = "\n".join(subject)
+    relationship_words = re.findall(r"relationship\s*\|\s*(author|independent)", subject_text, re.I)
+    if len(relationship_words) != 1 or relationship_words[0].lower() != review.relationship:
+        raise VerificationError(f"{label} Subject must disclose reviewer relationship")
+    if review.relationship == "author" and ("self-review" not in subject_text.lower() or "independent" in subject_text.lower()):
+        raise VerificationError(f"{label} author review must explicitly disclose self-review")
+    citation = _section(lines, "## 2. Citation audit")
+    if not any(line.startswith("| Claimed | Correct | Correction |") for line in citation) or not any(line.startswith("| ") and "| yes |" in line or line.startswith("| ") and "| no |" in line for line in citation):
+        raise VerificationError(f"{label} citation audit must contain its table and rows")
+    method = [line for line in _section(lines, "## 6. Method") if line.strip()]
+    attestation = [line for line in _section(lines, "## 7. Attestation") if line.strip()]
+    if not method or not any(line.startswith("Name: ") for line in attestation) or not any(line.startswith("Date: ") for line in attestation):
+        raise VerificationError(f"{label} method and attestation are incomplete")
     headline = [line for line in _section(lines, "## 1. Headline verdict") if line.strip()]
     if not headline or re.match(rf"{review.verdict}\b", headline[0]) is None:
         raise VerificationError(f"{label} headline must open with {review.verdict}")
@@ -263,6 +284,15 @@ def check_verdict(root: Path, review: Review) -> None:
 
 
 def require_ancestor(root: Path, review: Review) -> None:
+    commit_date = subprocess.run(["git", "show", "-s", "--format=%cI", review.commit], cwd=root, check=False, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if commit_date.returncode != 0:
+        raise VerificationError(f"verdict {review.id} subject.commit is not available locally; fetch full history")
+    try:
+        cutoff = datetime.fromisoformat(commit_date.stdout.strip()).date()
+    except ValueError as error:
+        raise VerificationError(f"verdict {review.id} subject.commit has no valid commit date") from error
+    if date.fromisoformat(review.review_date) > cutoff:
+        raise VerificationError(f"verdict {review.id} date is later than subject.commit date")
     result = subprocess.run(
         ["git", "merge-base", "--is-ancestor", review.commit, "HEAD"],
         cwd=root,
