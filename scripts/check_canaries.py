@@ -367,8 +367,8 @@ def check_live(
                     break
             if latest is None and not partial_page_seen:
                 errors.append(
-                    f"{prefix}: more than {MAX_RUN_PAGES} pages of successful runs "
-                    "were searched without finding the relevant one"
+                    f"{prefix}: search limit reached after {MAX_RUN_PAGES} pages of "
+                    "successful runs without finding the relevant one"
                 )
         except RuntimeError as error:
             errors.append(f"{prefix}: could not read latest successes: {error}")

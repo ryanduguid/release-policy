@@ -542,8 +542,13 @@ class CanaryManifestTests(unittest.TestCase):
                 f"release-python.yml@{SHA}\n"
             ),
         )
-        self.assertTrue(
-            any("pages of successful runs" in error for error in result.errors),
+        self.assertIn(
+            "python (ryanduguid/example): search limit reached after 10 pages of "
+            "successful runs without finding the relevant one",
+            result.errors,
+        )
+        self.assertFalse(
+            any("more than 10 pages" in error for error in result.errors),
             result.errors,
         )
         self.assertFalse(
