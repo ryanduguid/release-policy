@@ -15,6 +15,7 @@ runs:
         PR_BODY: ${{ github.event.pull_request.body }}
         BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '0000000000000000000000000000000000000000' }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       shell: bash
       run: |
         python - <<'PY'
@@ -536,9 +537,25 @@ runs:
                                          capture_output=True, text=True)
                 if fetched.returncode:
                     sys.exit("Could not read the commit range: commit fetch failed")
-        commit_range = head if base == "0" * 40 else base + ".." + head
+        if base == "0" * 40:
+            # A new branch's first push has no `before`. Scan what the branch
+            # adds to the default branch, which is what a push to the default
+            # branch would have scanned commit by commit; the whole history is
+            # scanned only when the head already sits on the default branch,
+            # as on a repository's first push.
+            selection = [head]
+            default = os.environ.get("DEFAULT_BRANCH", "")
+            tip = "origin/" + default if default else ""
+            if tip and subprocess.run(["git", "rev-parse", "--verify", "--quiet", tip + "^{commit}"],
+                                      capture_output=True).returncode == 0:
+                on_default = subprocess.run(["git", "merge-base", "--is-ancestor", head, tip],
+                                            capture_output=True).returncode == 0
+                if not on_default:
+                    selection = [head, "--not", tip]
+        else:
+            selection = [base + ".." + head]
         proc = subprocess.run(
-            ["git", "rev-list", commit_range], capture_output=True, text=True)
+            ["git", "rev-list", *selection], capture_output=True, text=True)
         if proc.returncode != 0:
             # Fail closed: an unscannable range must not read as clean.
             print("Could not read the commit range %s..%s" % (base[:12], head[:12]))

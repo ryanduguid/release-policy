@@ -131,6 +131,32 @@ class AttributionActionTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("co-author trailer", result.stdout)
 
+    def test_a_new_branch_push_scans_only_what_the_branch_adds(self) -> None:
+        # main carries a commit whose message quotes a credit as an example;
+        # a branch's first push must not re-scan it, and a push whose head is
+        # already on main still scans the whole history.
+        quoted = self.commit("Explain the scanner\n\nA line such as\nCo-Authored-By: Claude <...>` reached history before the peeling rule.")
+        self.git("update-ref", "refs/remotes/origin/main", quoted)
+        self.git("checkout", "--quiet", "-b", "topic")
+        self.head = self.commit("Tidy the guide")
+        zeros = "0" * 40
+
+        result = self.run_policy(BASE_SHA=zeros, DEFAULT_BRANCH="main")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        self.head = self.commit("Update\n\nCo-authored-by: Codex <example@example.invalid>")
+        result = self.run_policy(BASE_SHA=zeros, DEFAULT_BRANCH="main")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("co-author trailer", result.stdout)
+
+        self.head = quoted
+        result = self.run_policy(BASE_SHA=zeros, DEFAULT_BRANCH="main")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(quoted[:12], result.stdout)
+
+        result = self.run_policy(BASE_SHA=zeros, DEFAULT_BRANCH="")
+        self.assertEqual(result.returncode, 1)
+
     def test_comment_marker_and_folded_trailer_credits_in_commits_fail(self) -> None:
         cases = (
             ("credit behind a comment marker", "Fix\n# Co-Authored-By: Claude <noreply@anthropic.com>\n"),
