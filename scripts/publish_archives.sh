@@ -83,7 +83,8 @@ for attempt in 1 2 3 4 5; do
 done
 # Keep raw jq output byte-exact on Windows; allow only CRLF/LF equivalence in notes.
 jq -bj '.body' /tmp/created-release.json > /tmp/created-release-notes.md
-diff -u --strip-trailing-cr "$source_path/RELEASE_NOTES.md" /tmp/created-release-notes.md
+diff -u <(perl -0777 -pe 's/\r\n/\n/g' "$source_path/RELEASE_NOTES.md") \
+  <(perl -0777 -pe 's/\r\n/\n/g' /tmp/created-release-notes.md)
 
 upload_asset() {
   file="$1"
@@ -141,7 +142,8 @@ test "$draft_ready" = true
 draft_assets="$(jq -br '.assets[].name' /tmp/draft-release.json | LC_ALL=C sort)"
 test "$draft_assets" = "$expected_assets"
 jq -bj '.body' /tmp/draft-release.json > /tmp/draft-release-notes.md
-diff -u --strip-trailing-cr "$source_path/RELEASE_NOTES.md" /tmp/draft-release-notes.md
+diff -u <(perl -0777 -pe 's/\r\n/\n/g' "$source_path/RELEASE_NOTES.md") \
+  <(perl -0777 -pe 's/\r\n/\n/g' /tmp/draft-release-notes.md)
 
 # Leave the identified draft untouched if the release tag or main
 # moved while the draft was being inspected.
@@ -183,7 +185,8 @@ test "$(git ls-remote \
   "https://github.com/$GITHUB_REPOSITORY.git" \
   "refs/tags/$tag^{}" | cut -f1)" = "$expected_commit"
 jq -bj '.body' /tmp/published-release.json > /tmp/published-release-notes.md
-diff -u --strip-trailing-cr "$source_path/RELEASE_NOTES.md" /tmp/published-release-notes.md
+diff -u <(perl -0777 -pe 's/\r\n/\n/g' "$source_path/RELEASE_NOTES.md") \
+  <(perl -0777 -pe 's/\r\n/\n/g' /tmp/published-release-notes.md)
 published_assets="$(jq -br '.assets[].name' /tmp/published-release.json | LC_ALL=C sort)"
 test "$published_assets" = "$expected_assets"
 jq -br '.assets[] | [.name, .digest] | @tsv' /tmp/published-release.json \
