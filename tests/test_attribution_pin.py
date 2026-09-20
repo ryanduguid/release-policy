@@ -1,0 +1,71 @@
+"""The shared attribution workflow must run the action this repository ships.
+
+`attribution-policy.yml` pins the composite action by commit. Every consumer
+calls the workflow at a release-policy commit, so the action they execute is
+whatever that pin names, not the working tree. On 20 September 2026 the pin
+named a commit that had been squashed away and carried an older scanner than
+main, so every consumer ran the weaker check while the unit tests passed
+against the newer one. These checks stop that recurring.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github" / "workflows" / "attribution-policy.yml"
+ACTION = ".github/actions/no-ai-attribution/action.yml"
+PIN = re.compile(r"uses: ryanduguid/release-policy/" + re.escape(ACTION.removesuffix("/action.yml")) + r"@([0-9a-f]{40})$")
+
+
+def git(*arguments: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(ROOT), *arguments],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def pinned_sha() -> str:
+    pins = [match.group(1) for line in WORKFLOW.read_text(encoding="utf-8").splitlines() if (match := PIN.search(line.strip()))]
+    if len(pins) != 1:
+        raise AssertionError(f"expected exactly one full-SHA action pin in {WORKFLOW.name}, found {pins}")
+    return pins[0]
+
+
+class AttributionPinTests(unittest.TestCase):
+    def test_the_pin_is_a_commit_reachable_from_head(self) -> None:
+        sha = pinned_sha()
+        result = git("merge-base", "--is-ancestor", sha, "HEAD")
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"{sha} is not an ancestor of HEAD; a pin must name a commit on main, "
+            "never a pull request head that a squash merge discards",
+        )
+
+    def test_the_pinned_action_is_the_action_on_disk(self) -> None:
+        # A pull request that changes the action cannot know its own merge
+        # commit, so this comparison runs on pushes and locally. A red push
+        # run on main after such a merge means the repin is owed.
+        if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+            self.skipTest("the repin follows the merge that changes the action")
+        sha = pinned_sha()
+        shown = git("show", f"{sha}:{ACTION}")
+        self.assertEqual(shown.returncode, 0, shown.stderr)
+        on_disk = (ROOT / ACTION).read_bytes().decode("utf-8").replace("\r\n", "\n")
+        self.assertEqual(
+            shown.stdout.replace("\r\n", "\n"),
+            on_disk,
+            f"the action at {sha} differs from the working tree; repin the workflow to "
+            "the main commit that carries the current action",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
