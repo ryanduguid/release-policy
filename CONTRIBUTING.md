@@ -27,9 +27,12 @@ bash tests/test_determinism.sh
 ```
 
 `attribution-policy.yml` pins `.github/actions/no-ai-attribution` by commit.
-After a change to that action merges, open a second pull request that repins
-the workflow to the merge commit; `tests/test_attribution_pin.py` fails on
-push until it lands, and every consumer then moves to the new policy commit.
+Coordinate action rollouts with the governance repository: after this change
+merges, first add the merge commit to portfolio-governance's
+`release_policy_pins` allowlist while retaining the old pin. Then open a
+second pull request to repin this workflow, and have consumers move to that
+policy commit. Once migration is complete, remove the old allowlisted pin.
+`tests/test_attribution_pin.py` fails on push until the repin lands.
 
 CI also runs pinned ShellCheck and actionlint over `scripts/*.sh`, `tests/*.sh`
 and the workflows. Changed lines in `scripts/*.py` need complete branch

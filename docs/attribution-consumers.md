@@ -78,9 +78,12 @@ The workflow pins the composite action to a commit on `main`, and
 and carries the action on disk. A change to the action therefore lands in two
 steps: merge the action change, then repin the workflow to that merge commit.
 
-Publish the shared workflow first, then pin callers to that exact commit.
-Verify clean and rejected pull requests, including a fork pull request, on
-GitHub before broad rollout.
+Coordinate publication with portfolio-governance: first add the shared
+workflow's merge commit to its `release_policy_pins` attribution-policy
+allowlist while retaining the old approved pin. Then publish the shared
+workflow and pin callers to that exact commit. After all consumers migrate,
+remove the old allowlisted pin. Verify clean and rejected pull requests,
+including a fork pull request, on GitHub before broad rollout.
 
 Local checks do not prove GitHub's workflow resolution, token permissions or
 required-check reporting. Those need hosted validation after publication is
