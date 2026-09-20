@@ -73,6 +73,11 @@ action, the reusable workflow and this guide. Action steps require Bash,
 Python 3 and Git; the status steps also require the GitHub CLI. Current callers
 use `ubuntu-latest`.
 
+A branch's first push has no `before` commit. The action then scans the
+commits the branch adds to the repository's default branch, which is what a
+push to that branch would have scanned; only a head that already sits on the
+default branch, as on a repository's first push, is scanned in full.
+
 The workflow pins the composite action to a commit on `main`, and
 `tests/test_attribution_pin.py` checks on every push that the pin is reachable
 and carries the action on disk. A change to the action therefore lands in two
