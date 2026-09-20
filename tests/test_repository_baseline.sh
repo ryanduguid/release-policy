@@ -20,14 +20,14 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents. Keeping action pins and permission maps inside the exact
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
-    "docs/attribution-consumers.md": "ce684ef5b9e80e2bc6aa4f1247fa99d9ee78b20788ef48feb2ae5ba42d651371",
+    "docs/attribution-consumers.md": "ec5492dfe49cdd4a6179638473abbc06b41525d24ddbdf673748afedf993b31c",
     ".github/actions/no-ai-attribution/action.yml": "10fc97e8b60789284bf7f1f27c9a8185af22ee379b01707731a90e5ccf2443b8",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
     ".github/dependabot.yml": "baf5bed4e5b960787d53ee5ea8d9d7376fbc54565d6a392604fb94afb6bc1b66",
     ".github/workflows/ci.yml": "c4bfb79c6254f0d365bdd9db117ebbf36e283bce27dd282728899b8223a968b7",
     ".github/workflows/codeql.yml": "0d01772f298332e096e1c7508768f4417548e2f6ac8f6fb847aea47171c76405",
     ".github/workflows/no-ai-attribution.yml": "2c517d6f7eda8667c8a2eba186ef15d9e27b4c91d4617a39083b0a31f26f2834",
-    ".github/workflows/attribution-policy.yml": "cf0a5e5989ddbfe5f742d383180636b5336ece895ffb76f69fd6e0a27f7134ce",
+    ".github/workflows/attribution-policy.yml": "f9562a8196bbabe3edd894f84166ca925a445d0d074577c240dd646dad977773",
     ".github/workflows/publish-archives.yml": "0748621dfb8f3b7535c69875c26e7d73c72d8bafc1b96a8b5484298eea47b18c",
     ".github/workflows/release-archive.yml": "86da36d16073d91c138ff9dc2777b1bb0fae5a6d8e2d8b221a3bdbeed429f39f",
     ".github/workflows/release-python.yml": "f8ce82748fc5ffa5728d4c48dc21d25b25859b094c91f4a9d7f75979bdfce372",

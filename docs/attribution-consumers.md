@@ -73,6 +73,11 @@ action, the reusable workflow and this guide. Action steps require Bash,
 Python 3 and Git; the status steps also require the GitHub CLI. Current callers
 use `ubuntu-latest`.
 
+The workflow pins the composite action to a commit on `main`, and
+`tests/test_attribution_pin.py` checks on every push that the pin is reachable
+and carries the action on disk. A change to the action therefore lands in two
+steps: merge the action change, then repin the workflow to that merge commit.
+
 Publish the shared workflow first, then pin callers to that exact commit.
 Verify clean and rejected pull requests, including a fork pull request, on
 GitHub before broad rollout.

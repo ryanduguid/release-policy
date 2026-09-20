@@ -26,6 +26,11 @@ diff-cover coverage.xml --compare-branch=origin/main --branch-coverage --fail-un
 bash tests/test_determinism.sh
 ```
 
+`attribution-policy.yml` pins `.github/actions/no-ai-attribution` by commit.
+After a change to that action merges, open a second pull request that repins
+the workflow to the merge commit; `tests/test_attribution_pin.py` fails on
+push until it lands, and every consumer then moves to the new policy commit.
+
 CI also runs pinned ShellCheck and actionlint over `scripts/*.sh`, `tests/*.sh`
 and the workflows. Changed lines in `scripts/*.py` need complete branch
 coverage.
