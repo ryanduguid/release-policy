@@ -19,7 +19,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "attribution-policy.yml"
 ACTION = ".github/actions/no-ai-attribution/action.yml"
-PIN = re.compile(r"uses: ryanduguid/release-policy/" + re.escape(ACTION.removesuffix("/action.yml")) + r"@([0-9a-f]{40})$")
+# Anchored to a live step line: a commented copy or a block scalar carrying
+# the same text is not a pin.
+PIN = re.compile(
+    r"^(?:- )?uses: ryanduguid/release-policy/"
+    + re.escape(ACTION.removesuffix("/action.yml"))
+    + r"@([0-9a-f]{40})$"
+)
 
 
 def git(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -31,21 +37,44 @@ def git(*arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def pinned_sha() -> str:
-    pins = [match.group(1) for line in WORKFLOW.read_text(encoding="utf-8").splitlines() if (match := PIN.search(line.strip()))]
+def pinned_sha(workflow_text: str) -> str:
+    pins = [match.group(1) for line in workflow_text.splitlines() if (match := PIN.match(line.strip()))]
     if len(pins) != 1:
-        raise AssertionError(f"expected exactly one full-SHA action pin in {WORKFLOW.name}, found {pins}")
+        raise AssertionError(f"expected exactly one live full-SHA action pin, found {pins}")
     return pins[0]
 
 
+def integration_tip() -> str:
+    # In pull request CI, HEAD is a synthetic merge that already contains the
+    # branch, so a branch could pin its own head and pass. The base branch is
+    # the reference that survives a squash merge.
+    if git("rev-parse", "--verify", "--quiet", "origin/main").returncode == 0:
+        return "origin/main"
+    return "HEAD"
+
+
+class PinParsingTests(unittest.TestCase):
+    def test_a_commented_or_quoted_pin_is_not_a_pin(self) -> None:
+        sha = "0" * 40
+        live = f"      - uses: ryanduguid/release-policy/.github/actions/no-ai-attribution@{sha}\n"
+        commented = "      # - uses: ryanduguid/release-policy/.github/actions/no-ai-attribution@" + "1" * 40 + "\n"
+        scalar = "        note: uses: ryanduguid/release-policy/.github/actions/no-ai-attribution@" + "2" * 40 + "\n"
+        self.assertEqual(pinned_sha(live + commented + scalar), sha)
+        with self.assertRaises(AssertionError):
+            pinned_sha(commented + scalar)
+        with self.assertRaises(AssertionError):
+            pinned_sha(live + live)
+
+
 class AttributionPinTests(unittest.TestCase):
-    def test_the_pin_is_a_commit_reachable_from_head(self) -> None:
-        sha = pinned_sha()
-        result = git("merge-base", "--is-ancestor", sha, "HEAD")
+    def test_the_pin_is_a_commit_on_the_base_branch(self) -> None:
+        sha = pinned_sha(WORKFLOW.read_text(encoding="utf-8"))
+        tip = integration_tip()
+        result = git("merge-base", "--is-ancestor", sha, tip)
         self.assertEqual(
             result.returncode,
             0,
-            f"{sha} is not an ancestor of HEAD; a pin must name a commit on main, "
+            f"{sha} is not an ancestor of {tip}; a pin must name a commit on main, "
             "never a pull request head that a squash merge discards",
         )
 
@@ -55,7 +84,7 @@ class AttributionPinTests(unittest.TestCase):
         # run on main after such a merge means the repin is owed.
         if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
             self.skipTest("the repin follows the merge that changes the action")
-        sha = pinned_sha()
+        sha = pinned_sha(WORKFLOW.read_text(encoding="utf-8"))
         shown = git("show", f"{sha}:{ACTION}")
         self.assertEqual(shown.returncode, 0, shown.stderr)
         on_disk = (ROOT / ACTION).read_bytes().decode("utf-8").replace("\r\n", "\n")
