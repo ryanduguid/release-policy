@@ -24,7 +24,7 @@ CANONICAL_SHA256 = {
     ".github/actions/no-ai-attribution/action.yml": "976d2207ea576ba28a742058930863ad51f41df1b5f25dfd7cf49b1cca212684",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
     ".github/dependabot.yml": "baf5bed4e5b960787d53ee5ea8d9d7376fbc54565d6a392604fb94afb6bc1b66",
-    ".github/workflows/ci.yml": "c4bfb79c6254f0d365bdd9db117ebbf36e283bce27dd282728899b8223a968b7",
+    ".github/workflows/ci.yml": "cf4c2d4f02a85af42a65d2941fba2255a5baabf9b24abb3f2fd2698a17a3afa2",
     ".github/workflows/codeql.yml": "0d01772f298332e096e1c7508768f4417548e2f6ac8f6fb847aea47171c76405",
     ".github/workflows/no-ai-attribution.yml": "2c517d6f7eda8667c8a2eba186ef15d9e27b4c91d4617a39083b0a31f26f2834",
     ".github/workflows/attribution-policy.yml": "2ab4ddab593f7b2b76d9caaf4d10fa6f20d269d3627b852224963dd2e2ee894e",

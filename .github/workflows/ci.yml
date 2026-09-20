@@ -142,3 +142,41 @@ jobs:
 
       - name: Run determinism test
         run: bash tests/test_determinism.sh
+
+  windows:
+    timeout-minutes: 15
+    name: shell tests (Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHON: python
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the pinned build tool
+        run: python -m pip install "build==1.2.2"
+
+      - name: Check repository baseline
+        run: bash tests/test_repository_baseline.sh
+
+      - name: Run gate and publication tests
+        # test_gates.sh runs test_publish_releases.sh for both release families.
+        # Its byte-exact fixtures exercise CRLF regardless of checkout settings.
+        run: bash tests/test_gates.sh
+
+      - name: Run commit-msg hook tests
+        run: bash tests/test_commit_msg_hook.sh
+
+      - name: Run determinism test
+        run: bash tests/test_determinism.sh

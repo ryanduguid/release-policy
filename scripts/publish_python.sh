@@ -77,8 +77,9 @@ for attempt in 1 2 3 4 5; do
   gh api -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$GITHUB_REPOSITORY/releases/$release_id" > /tmp/created-release.json
 done
-jq -j '.body' /tmp/created-release.json > /tmp/created-release-notes.md
-diff -u "$source_path/RELEASE_NOTES.md" /tmp/created-release-notes.md
+# Keep raw jq output byte-exact on Windows; allow only CRLF/LF equivalence in notes.
+jq -bj '.body' /tmp/created-release.json > /tmp/created-release-notes.md
+diff -u --strip-trailing-cr "$source_path/RELEASE_NOTES.md" /tmp/created-release-notes.md
 
 upload_asset() {
   file="$1"
@@ -115,7 +116,7 @@ for _ in 1 2 3 4 5; do
     -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$GITHUB_REPOSITORY/releases/$release_id" \
     > /tmp/draft-release.json
-  jq -r '.assets[] | [.name, .digest] | @tsv' \
+  jq -br '.assets[] | [.name, .digest] | @tsv' \
     /tmp/draft-release.json | LC_ALL=C sort > /tmp/draft-digests
   if jq -e \
       --argjson release_id "$release_id" \
@@ -132,10 +133,10 @@ for _ in 1 2 3 4 5; do
   sleep 5
 done
 test "$draft_ready" = true
-draft_assets="$(jq -r '.assets[].name' /tmp/draft-release.json | LC_ALL=C sort)"
+draft_assets="$(jq -br '.assets[].name' /tmp/draft-release.json | LC_ALL=C sort)"
 test "$draft_assets" = "$expected_assets"
-jq -j '.body' /tmp/draft-release.json > /tmp/draft-release-notes.md
-diff -u "$source_path/RELEASE_NOTES.md" /tmp/draft-release-notes.md
+jq -bj '.body' /tmp/draft-release.json > /tmp/draft-release-notes.md
+diff -u --strip-trailing-cr "$source_path/RELEASE_NOTES.md" /tmp/draft-release-notes.md
 
 final_tag_commit="$(git ls-remote \
   "https://github.com/$GITHUB_REPOSITORY.git" \
@@ -166,7 +167,7 @@ for _ in 1 2 3 4 5; do
     -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$GITHUB_REPOSITORY/releases/$release_id" \
     > /tmp/published-release.json
-  jq -r '.assets[] | [.name, .digest] | @tsv' \
+  jq -br '.assets[] | [.name, .digest] | @tsv' \
     /tmp/published-release.json | LC_ALL=C sort > /tmp/published-digests
   if jq -e \
       --argjson release_id "$release_id" \
@@ -185,11 +186,11 @@ test "$published_ready" = true
 test "$(git ls-remote \
   "https://github.com/$GITHUB_REPOSITORY.git" \
   "refs/tags/$tag^{}" | cut -f1)" = "$expected_commit"
-published_assets="$(jq -r '.assets[].name' \
+published_assets="$(jq -br '.assets[].name' \
   /tmp/published-release.json | LC_ALL=C sort)"
 test "$published_assets" = "$expected_assets"
-jq -j '.body' /tmp/published-release.json > /tmp/published-release-notes.md
-diff -u "$source_path/RELEASE_NOTES.md" /tmp/published-release-notes.md
+jq -bj '.body' /tmp/published-release.json > /tmp/published-release-notes.md
+diff -u --strip-trailing-cr "$source_path/RELEASE_NOTES.md" /tmp/published-release-notes.md
 
 # Another component can become latest while this release is being verified.
 # Release identity, immutability and asset checks above remain authoritative.
