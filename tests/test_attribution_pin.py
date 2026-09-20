@@ -19,7 +19,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "attribution-policy.yml"
 ACTION = ".github/actions/no-ai-attribution/action.yml"
-PIN = re.compile(r"uses: ryanduguid/release-policy/" + re.escape(ACTION.removesuffix("/action.yml")) + r"@([0-9a-f]{40})$")
+PIN = re.compile(
+    r"^\\s*-\\s+uses:\\s+ryanduguid/release-policy/"
+    + re.escape(ACTION.removesuffix("/action.yml"))
+    + r"@([0-9a-f]{40})\\s*$"
+)
 
 
 def git(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -32,7 +36,11 @@ def git(*arguments: str) -> subprocess.CompletedProcess[str]:
 
 
 def pinned_sha() -> str:
-    pins = [match.group(1) for line in WORKFLOW.read_text(encoding="utf-8").splitlines() if (match := PIN.search(line.strip()))]
+    pins = [
+        match.group(1)
+        for line in WORKFLOW.read_text(encoding="utf-8").splitlines()
+        if (match := PIN.match(line))
+    ]
     if len(pins) != 1:
         raise AssertionError(f"expected exactly one full-SHA action pin in {WORKFLOW.name}, found {pins}")
     return pins[0]
@@ -41,11 +49,14 @@ def pinned_sha() -> str:
 class AttributionPinTests(unittest.TestCase):
     def test_the_pin_is_a_commit_reachable_from_head(self) -> None:
         sha = pinned_sha()
-        result = git("merge-base", "--is-ancestor", sha, "HEAD")
+        ref = "origin/main" if os.environ.get("GITHUB_EVENT_NAME") == "pull_request" else "HEAD"
+        if ref == "origin/main" and git("rev-parse", "--verify", ref).returncode != 0:
+            self.fail("origin/main is required for pull-request pin validation")
+        result = git("merge-base", "--is-ancestor", sha, ref)
         self.assertEqual(
             result.returncode,
             0,
-            f"{sha} is not an ancestor of HEAD; a pin must name a commit on main, "
+            f"{sha} is not an ancestor of {ref}; a pin must name a commit on main, "
             "never a pull request head that a squash merge discards",
         )
 
