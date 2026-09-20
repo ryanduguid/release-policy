@@ -570,7 +570,9 @@ def _inventory_from_manifest(document: Any) -> CandidateInventory:
         )
         if not all(isinstance(asset[key], str) for key in ("media_type", "name", "sha256")):
             raise ValueError("candidate manifest asset text fields are invalid")
-        if not isinstance(asset["size"], int):
+        # bool is a subclass of int, so isinstance admitted `true`, and a
+        # one-byte asset then compared equal to it. Exact type only.
+        if type(asset["size"]) is not int:
             raise ValueError("candidate manifest asset size is invalid")
         assets.append(
             CandidateAsset(

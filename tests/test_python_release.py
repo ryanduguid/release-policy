@@ -514,6 +514,33 @@ class CandidateInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "source ref"):
             python_release._inventory_from_manifest(manifest)
 
+    def test_rejects_a_boolean_size_that_equals_a_one_byte_asset(self) -> None:
+        """bool is an int subclass, so `true` once verified against size 1."""
+        wheel_name = f"{self.STEM}-{self.VERSION}-py3-none-any.whl"
+        (self.dist / wheel_name).write_bytes(b"w")
+        self.create()
+        self.verify()  # the honest integer 1 stays acceptable
+
+        manifest_path = self.dist / "release-manifest.json"
+        document = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for asset in document["assets"]:
+            if asset["name"] == wheel_name:
+                self.assertEqual(asset["size"], 1)
+                asset["size"] = True
+        # write_bytes: write_text would give the manifest CRLF on Windows
+        # and fail the canonical-bytes check before the size check is reached.
+        manifest_path.write_bytes(
+            (json.dumps(document, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        )
+        names = sorted(name for name in os.listdir(self.dist) if name != "SHA256SUMS")
+        (self.dist / "SHA256SUMS").write_bytes(
+            "".join(
+                f"{python_release._digest(self.dist / name)}  {name}\n" for name in names
+            ).encode("utf-8")
+        )
+        with self.assertRaisesRegex(ValueError, "size is invalid"):
+            self.verify()
+
     def test_rejects_tamper_extra_file_and_context_mismatch(self) -> None:
         self.create()
         wheel = self.dist / f"{self.STEM}-{self.VERSION}-py3-none-any.whl"
