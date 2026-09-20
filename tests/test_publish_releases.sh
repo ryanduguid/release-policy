@@ -66,12 +66,17 @@ gh() {
         settles|never-settles) created_tag=untagged-pending ;;
         changed-tag) created_tag=v9.9.9 ;;
       esac
-      jq -n --arg tag "$created_tag" --rawfile body "$FIXTURE/consumer/RELEASE_NOTES.md" \
+      local notes="$FIXTURE/consumer/RELEASE_NOTES.md"
+      [ "$CASE" != notes ] || notes="$FIXTURE/created-notes"
+      # Native jq reads --rawfile in text mode; preserve CRLF and final newlines.
+      local body
+      body="$(cat "$notes"; printf .)"
+      jq -n --arg tag "$created_tag" --arg body "${body%.}" \
         '{id:7,tag_name:$tag,name:"v1.2.3",draft:true,prerelease:false,body:$body}'
       ;;
     POST\ https://uploads.github.com/repos/example/fixture/releases/7/assets\?*)
       # The ID must be known even when the first upload fails.
-      [[ "$CASE" = success || "$CASE" = settles || "$CASE" = superseded || "$CASE" = published-* || "$CASE" = *verification-fails ]] || return 1
+      [[ "$CASE" = success || "$CASE" = settles || "$CASE" = superseded || "$CASE" = notes || "$CASE" = published-* || "$CASE" = *verification-fails ]] || return 1
       local name="${endpoint#*name=}" expected_media
       name="${name%%&*}"
       case "$name" in
@@ -99,11 +104,18 @@ gh() {
         return
       fi
       case "$CASE" in
-        success|settles|superseded|published-*|*verification-fails)
+        success|settles|superseded|notes|published-*|*verification-fails)
           local draft=true
           [ ! -f "$FIXTURE/published" ] || draft=false
+          local notes="$FIXTURE/consumer/RELEASE_NOTES.md"
+          if [ "$CASE" = notes ]; then
+            notes="$FIXTURE/draft-notes"
+            [ "$draft" = true ] || notes="$FIXTURE/published-notes"
+          fi
+          local body
+          body="$(cat "$notes"; printf .)"
           jq -n --arg case "$CASE" --argjson draft "$draft" --slurpfile assets "$FIXTURE/assets" \
-            --rawfile body "$FIXTURE/consumer/RELEASE_NOTES.md" \
+            --arg body "${body%.}" \
             '{id:7,tag_name:"v1.2.3",name:"v1.2.3",draft:$draft,prerelease:false,immutable:true,body:$body,assets:$assets}
              | if $draft then .
                elif $case == "published-mutable" then .immutable = false
@@ -213,4 +225,66 @@ if [ "$expected_status" = 0 ]; then
   fi
 fi
 done
+# Use byte-exact fixtures so checkout settings and native jq output cannot hide
+# newline differences. Check each verification stage, including failures that
+# must reach the draft or published release before rejecting the changed body.
+CASE=notes
+export CASE
+for stage in created draft published; do
+  for variant in crlf-source crlf-body content space tab trailing-space added-blank removed-blank added-newline removed-newline embedded-cr final-cr; do
+    printf 'Release notes.\n\nEnd.' > "$FIXTURE/consumer/RELEASE_NOTES.md"
+    for notes_stage in created draft published; do
+      cp "$FIXTURE/consumer/RELEASE_NOTES.md" "$FIXTURE/$notes_stage-notes"
+    done
+    expected_status=1
+    case "$variant" in
+      crlf-source)
+        printf 'Release notes.\r\n\r\nEnd.' > "$FIXTURE/consumer/RELEASE_NOTES.md"
+        expected_status=0 ;;
+      crlf-body)
+        printf 'Release notes.\r\n\r\nEnd.' > "$FIXTURE/$stage-notes"
+        expected_status=0 ;;
+      content) printf 'Changed notes.\n\nEnd.' > "$FIXTURE/$stage-notes" ;;
+      space) printf 'Release  notes.\n\nEnd.' > "$FIXTURE/$stage-notes" ;;
+      tab) printf 'Release\tnotes.\n\nEnd.' > "$FIXTURE/$stage-notes" ;;
+      trailing-space) printf 'Release notes. \n\nEnd.' > "$FIXTURE/$stage-notes" ;;
+      added-blank) printf 'Release notes.\n\n\nEnd.' > "$FIXTURE/$stage-notes" ;;
+      removed-blank) printf 'Release notes.\nEnd.' > "$FIXTURE/$stage-notes" ;;
+      added-newline) printf 'Release notes.\n\nEnd.\n' > "$FIXTURE/$stage-notes" ;;
+      removed-newline)
+        printf 'Release notes.\n\nEnd.\n' > "$FIXTURE/consumer/RELEASE_NOTES.md"
+        for notes_stage in created draft published; do
+          [ "$notes_stage" = "$stage" ] || cp "$FIXTURE/consumer/RELEASE_NOTES.md" "$FIXTURE/$notes_stage-notes"
+        done ;;
+      embedded-cr) printf 'Release\r notes.\n\nEnd.' > "$FIXTURE/$stage-notes" ;;
+      final-cr) printf 'Release notes.\n\nEnd.\r' > "$FIXTURE/$stage-notes" ;;
+    esac
+    rm -f "$FIXTURE/published"
+    : > "$FIXTURE/calls"
+    : > "$FIXTURE/deleted"
+    : > "$FIXTURE/uploads"
+    status=0
+    bash "$POLICY/scripts/publish_$family.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3 \
+      "$FIXTURE/consumer" > "$FIXTURE/output" 2>&1 || status=$?
+    if [ "$expected_status" = 0 ]; then
+      if [ "$status" = 0 ] && [ -f "$FIXTURE/published" ] && [ ! -s "$FIXTURE/deleted" ] \
+          && [ "$(grep -c '^release verify ' "$FIXTURE/calls")" = 1 ] \
+          && [ "$(grep -c '^release verify-asset ' "$FIXTURE/calls")" = "${#asset_names[@]}" ]; then
+        echo "ok   $family $stage $variant verifies the release and every asset"
+        continue
+      fi
+    elif [ "$status" = 1 ] && grep -q "/tmp/$stage-release-notes.md" "$FIXTURE/output"; then
+      if { [ "$stage" = published ] && [ -f "$FIXTURE/published" ] && [ ! -s "$FIXTURE/deleted" ]; } \
+          || { [ "$stage" != published ] && [ ! -f "$FIXTURE/published" ] \
+            && [ "$(cat "$FIXTURE/deleted")" = repos/example/fixture/releases/7 ]; }; then
+        echo "ok   $family $stage $variant rejects changed notes at the expected stage"
+        continue
+      fi
+    fi
+    echo "FAIL $family $stage $variant: release-note verification or cleanup was incorrect"
+    cat "$FIXTURE/output"
+    failures=$((failures+1))
+  done
+done
+
 test "$failures" -eq 0

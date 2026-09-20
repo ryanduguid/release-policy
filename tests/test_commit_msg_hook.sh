@@ -164,7 +164,8 @@ run block "auto resolves to any marker git may pick" 'Fix
 ; Co-Authored-By: Claude <noreply@anthropic.com>'
 git config --unset core.commentChar
 
-if git config core.commentString '//' 2>/dev/null; then
+# Git Bash must pass the comment marker literally, without path conversion.
+if MSYS_NO_PATHCONV=1 git config core.commentString '//' 2>/dev/null; then
 	run block "core.commentString is read too" 'Fix
 // Co-Authored-By: Claude <noreply@anthropic.com>'
 	git config --unset core.commentString
@@ -175,7 +176,7 @@ fi
 # The two names are aliases, so which one Git honours depends on the order
 # they were configured in and on the Git version. The hook scans both rather
 # than guessing, so a credit behind either marker is refused.
-git config core.commentString '//'
+MSYS_NO_PATHCONV=1 git config core.commentString '//'
 git config core.commentChar ';'
 run block "the alias configured first is still scanned" 'Fix
 // Co-Authored-By: Claude <noreply@anthropic.com>'
