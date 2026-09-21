@@ -18,12 +18,22 @@ def job_block(workflow: str, name: str) -> str:
     return match.group(0)
 
 
+def publication_shell_code(entry: str) -> str:
+    """The trusted publication code: the family entry script and the core it sources.
+
+    `scripts/publish_common.sh` holds the draft, upload, inspection and
+    publication sequence both families run; the entry script holds only that
+    family's assets. Every assertion below is about the pair.
+    """
+    return (ROOT / "scripts" / entry).read_text(encoding="utf-8") + (
+        ROOT / "scripts" / "publish_common.sh"
+    ).read_text(encoding="utf-8")
+
+
 class PythonWorkflowBoundaryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.publication_script = (
-            ROOT / "scripts" / "publish_python.sh"
-        ).read_text(encoding="utf-8")
+        self.publication_script = publication_shell_code("publish_python.sh")
 
     def test_exposes_only_closed_release_inputs_with_root_compatible_defaults(self) -> None:
         self.assertNotIn("version-command", self.workflow)
@@ -245,7 +255,7 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
         script = ROOT / "scripts" / "publish_python.sh"
 
         self.assertTrue(script.is_file(), "the trusted Python publication script is missing")
-        script_text = script.read_text(encoding="utf-8")
+        script_text = publication_shell_code("publish_python.sh")
         self.assertIn('bash "$GITHUB_WORKSPACE/policy/scripts/publish_python.sh"', publish)
         self.assertNotIn("cleanup_current_draft()", publish)
         self.assertIn("cleanup_current_draft()", script_text)
