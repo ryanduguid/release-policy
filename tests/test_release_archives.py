@@ -52,6 +52,18 @@ def _tar_files(path: Path) -> dict[str, bytes]:
     return files
 
 
+def publication_shell_code(entry: str) -> str:
+    """The trusted publication code: the family entry script and the core it sources.
+
+    `scripts/publish_common.sh` holds the draft, upload, inspection and
+    publication sequence both families run; the entry script holds only that
+    family's assets. Every assertion below is about the pair.
+    """
+    return (ROOT / "scripts" / entry).read_text(encoding="utf-8") + (
+        ROOT / "scripts" / "publish_common.sh"
+    ).read_text(encoding="utf-8")
+
+
 class ReleaseArchiveBuilderTests(unittest.TestCase):
     def test_parser_defaults_to_the_repository_root(self) -> None:
         arguments = release_archives._parser().parse_args(
@@ -589,9 +601,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn(
             "SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}", publish
         )
-        publication_script = (
-            ROOT / "scripts" / "publish_archives.sh"
-        ).read_text(encoding="utf-8")
+        publication_script = publication_shell_code("publish_archives.sh")
         self.assertIn('dist="$source_path/dist"', publication_script)
         self.assertIn(
             '--rawfile body "$source_path/RELEASE_NOTES.md"', publication_script
@@ -660,7 +670,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         script = ROOT / "scripts" / "publish_archives.sh"
 
         self.assertTrue(script.is_file(), "the trusted publication script is missing")
-        script_text = script.read_text(encoding="utf-8")
+        script_text = publication_shell_code("publish_archives.sh")
         self.assertIn("working-directory: consumer", publish)
         self.assertIn(
             '"$GITHUB_WORKSPACE/policy/scripts/publish_archives.sh"', publish
@@ -706,9 +716,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
             encoding="utf-8"
         )
-        publication_script = (
-            ROOT / "scripts" / "publish_archives.sh"
-        ).read_text(encoding="utf-8")
+        publication_script = publication_shell_code("publish_archives.sh")
         policy_code = core + publication_script
 
         self.assertRegex(
@@ -744,9 +752,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
             encoding="utf-8"
         )
-        publication_script = (
-            ROOT / "scripts" / "publish_archives.sh"
-        ).read_text(encoding="utf-8")
+        publication_script = publication_shell_code("publish_archives.sh")
         upload_start = core.index("uses: actions/upload-artifact@")
         upload_end = core.index("      - name:", upload_start)
         upload = core[upload_start:upload_end]
@@ -781,9 +787,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
             encoding="utf-8"
         )
-        publication_script = (
-            ROOT / "scripts" / "publish_archives.sh"
-        ).read_text(encoding="utf-8")
+        publication_script = publication_shell_code("publish_archives.sh")
         policy_code = core + publication_script
 
         for required in (
