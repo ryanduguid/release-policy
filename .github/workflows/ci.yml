@@ -92,12 +92,14 @@ jobs:
           "mypy==2.3.1"
 
       - name: Ruff the policy scripts and tests
+        if: matrix.python == '3.12'
         run: python -m ruff check .
 
       - name: Type-check the policy scripts
         run: python -m mypy
 
       - name: Validate the release-family canary manifest
+        if: matrix.python == '3.12'
         run: python scripts/check_canaries.py
 
       - name: Audit live canary pins and successful-run evidence
@@ -107,9 +109,11 @@ jobs:
         run: python scripts/check_canaries.py --live
 
       - name: Check repository baseline
+        if: matrix.python == '3.12'
         run: bash tests/test_repository_baseline.sh
 
       - name: Check the published prose for egress findings
+        if: matrix.python == '3.12'
         # Layers B and C only: the layer A terms file is private and never
         # reaches CI, which is the point of keeping it out of the repository.
         # --allow-structural because SECURITY.md names a dotenv file in prose,
