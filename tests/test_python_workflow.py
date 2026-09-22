@@ -35,6 +35,20 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
         self.workflow = WORKFLOW.read_text(encoding="utf-8")
         self.publication_script = publication_shell_code("publish_python.sh")
 
+    def test_pypi_handoff_carries_bound_candidate_evidence(self) -> None:
+        upload = self.workflow.split("- name: Upload the distribution for a caller-side publish", 1)[1].split("\n  publish:", 1)[0]
+        for name in (".whl", ".tar.gz", ".spdx.json", "release-manifest.json", "SHA256SUMS"):
+            self.assertIn(name, upload)
+        self.assertIn("id: dist", upload)
+        for output in ("dist-id", "dist-digest", "policy-sha"):
+            self.assertIn(f"value: ${{{{ jobs.build.outputs.{output} }}}}", self.workflow)
+        guide = (ROOT / "docs/pypi-publishing.md").read_text(encoding="utf-8")
+        self.assertIn("artifact-ids: ${{ needs.release.outputs.dist-id }}", guide)
+        self.assertIn("python policy/scripts/python_release.py verify-candidate", guide)
+        self.assertIn("gh attestation verify", guide)
+        pypi_permissions = guide.split("\n      pypi:", 1)[1].split("        steps:", 1)[0]
+        self.assertIn("attestations: read", pypi_permissions)
+
     def test_exposes_only_closed_release_inputs_with_root_compatible_defaults(self) -> None:
         self.assertNotIn("version-command", self.workflow)
         self.assertNotIn("bash -c", self.workflow)

@@ -151,11 +151,13 @@ jobs:
   release:
     needs: consumer-tests
     permissions:
+      actions: read
       attestations: write
       contents: write
       id-token: write
     uses: ./.github/workflows/publish-archives.yml
     with:
+      required-checks: ${{ inputs.required-checks }}
       artifact-stem: ${{ inputs.artifact-stem }}
       source-directory: ${{ needs.consumer-tests.outputs.source-directory }}
       tag-prefix: ${{ needs.consumer-tests.outputs.tag-prefix }}

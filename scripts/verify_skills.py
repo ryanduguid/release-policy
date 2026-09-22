@@ -127,7 +127,7 @@ def read_canonical_version(path: Path) -> str:
 
 def verification_commands(*, python: str = sys.executable) -> tuple[Command, ...]:
     return (
-        (python, "-m", "pip", "install", "--isolated", "--disable-pip-version-check", "--no-input", "--no-deps", "--requirement", "requirements-test.txt"),
+        (python, "-m", "pip", "install", "--isolated", "--disable-pip-version-check", "--no-input", "--no-deps", "--only-binary", ":all:", "--requirement", "requirements-test.txt"),
         (python, "-B", "-m", "unittest", "discover", "-s", "tests", "-v"),
         (python, "scripts/validate_validation.py"),
         (python, "tests/verify_skills_cli.py"),

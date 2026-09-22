@@ -2,8 +2,8 @@
 
 The composite action at `.github/actions/no-ai-attribution/action.yml` checks
 pull request titles and bodies, commit messages, and raw author and committer
-identities. It retains the existing matcher and its executable title regression
-cases. Technical product references and fenced examples keep their current
+identities. It applies the same prose-credit matcher to titles, unfenced body lines and
+commit messages, and retains the executable title regression cases. Technical product references and fenced examples keep their current
 treatment. Commit messages and pull request text are read as written and again
 with Git comment markers peeled and whitespace-indented trailer continuations
 joined onto their trailer, so a credit kept behind a `#` line by

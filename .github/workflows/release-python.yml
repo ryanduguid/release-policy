@@ -38,6 +38,15 @@ on:
         required: true
         type: string
     outputs:
+      dist-id:
+        description: Immutable caller-side distribution artefact ID.
+        value: ${{ jobs.build.outputs.dist-id }}
+      dist-digest:
+        description: SHA256 digest of the caller-side distribution artefact.
+        value: ${{ jobs.build.outputs.dist-digest }}
+      policy-sha:
+        description: Exact release policy revision that built this candidate.
+        value: ${{ jobs.build.outputs.policy-sha }}
       stem:
         description: Normalised package stem used in release asset filenames.
         value: ${{ jobs.build.outputs.stem }}
@@ -189,6 +198,9 @@ jobs:
       artifact-tag: ${{ steps.release.outputs.artifact-tag }}
       candidate-digest: ${{ steps.candidate.outputs.artifact-digest }}
       candidate-id: ${{ steps.candidate.outputs.artifact-id }}
+      dist-id: ${{ steps.dist.outputs.artifact-id }}
+      dist-digest: ${{ steps.dist.outputs.artifact-digest }}
+      policy-sha: ${{ job.workflow_sha }}
       commit: ${{ steps.release.outputs.commit }}
       stem: ${{ steps.release.outputs.stem }}
       source-directory: ${{ steps.release.outputs.source-directory }}
@@ -328,6 +340,7 @@ jobs:
           compression-level: 0
 
       - name: Upload the distribution for a caller-side publish
+        id: dist
         if: inputs.upload-dist-artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -335,6 +348,9 @@ jobs:
           path: |
             ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-py3-none-any.whl
             ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+            ${{ steps.inputs.outputs.source-root }}/dist/release-manifest.json
+            ${{ steps.inputs.outputs.source-root }}/dist/SHA256SUMS
           if-no-files-found: error
           overwrite: false
           # Must outlive a required-reviewer approval window on the caller's

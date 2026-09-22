@@ -22,6 +22,8 @@ EXPECTED_COMMANDS = (
         "--disable-pip-version-check",
         "--no-input",
         "--no-deps",
+        "--only-binary",
+        ":all:",
         "--requirement",
         "requirements-test.txt",
     ),

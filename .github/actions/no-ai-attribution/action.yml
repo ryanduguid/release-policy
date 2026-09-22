@@ -169,6 +169,8 @@ runs:
                             if rx.match(reading):
                                 hit = name
                                 break
+                        if not hit and prose_credits(reading):
+                            hit = "authorship credit"
                         if hit:
                             break
                     if hit and (at, hit) not in reported:
@@ -214,8 +216,8 @@ runs:
             r"\b(?P<relation>by|with|via|using|and)" + SEP + DESCRIPTOR + TOOL +
             name_end, re.I)
 
-        def scan_pr(title, body):
-            text = comparable(title or "").replace("_", " ")
+        def prose_credits(text):
+            text = comparable(text or "").replace("_", " ")
             bad = []
             # Classify each match in the original text; removing words can join clauses.
             objects = list(technical.finditer(text))
@@ -277,7 +279,10 @@ runs:
                 if explicit or (context and not product_words.search(local)):
                     bad.append("pull request title: trailing authorship credit")
             # ponytail: explicit credit grammar; ambiguous prose still needs review.
-            return bad + scan("pull request body", body or "")
+            return bad
+
+        def scan_pr(title, body):
+            return prose_credits(title) + scan("pull request body", body or "")
 
         # Keep the reviewed title regressions executable in every installed copy.
         for title, blocked in (

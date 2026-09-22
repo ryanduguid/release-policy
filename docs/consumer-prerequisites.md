@@ -1,5 +1,10 @@
 ## Prerequisites in the consumer
 
+Publication supports public GitHub repositories only. The final tag checks use
+unauthenticated `git ls-remote`; private repositories fail closed. Do not use
+these release adapters for a private consumer. Supporting private publication
+requires a separately reviewed authentication and attestation contract.
+
 - Annotated tags only; the human-created annotated tag is the release
   approval act. The module never creates tags.
 - `RELEASE_NOTES.md` whose first line is `# vX.Y.Z` for the tag.

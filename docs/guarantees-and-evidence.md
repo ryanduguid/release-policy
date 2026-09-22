@@ -49,7 +49,7 @@ marker proves neither release phase.
 verification consumer. Each entry binds the consumer's current literal policy
 pin to the latest successful production-shaped run and the reusable workflow
 SHA GitHub recorded for that run. `python scripts/check_canaries.py` validates
-the manifest offline; the scheduled CI run adds `--live` to detect pin drift,
+the manifest offline; the scheduled CI run adds `--live --require-current-evidence` to detect pin drift,
 release evidence that has been overtaken, and a pin that no branch or tag of
 this repository reaches any more. GitHub refuses a reusable-workflow call at
 such a commit before any job starts, so after a history rewrite here a
@@ -79,10 +79,16 @@ Python release, and Australian Accounting Skills' release and read-only shared
 verification workflow. Existing published releases supply the
 release evidence; migrating these references does not require new releases.
 
-A release family's current pin can temporarily be newer than its latest
-release evidence. The live audit reports that state explicitly, as a warning
-rather than a failure, without inventing a privileged dry run. It becomes
-current evidence only when that consumer completes its next authorised release
-through the pinned workflow. The verification entry carries no such warning:
-it publishes nothing to wait for, and its next push already proves or
-disproves the current pin.
+A release family's current pin may be newer than its last authorised release.
+The scheduled audit fails while that pin lacks release evidence. Record the next
+authorised release before claiming the current pin is verified. An offline
+manifest check validates structure only; it does not clear that failure or
+authorise a release to manufacture evidence.
+
+## Baseline scope
+
+The digest baseline detects changes to its listed documents. The repository
+owner can change both a document and its expected digest. It does not protect
+against that owner, and does not cover scripts or `canaries.json`. Script tests,
+branch coverage, manifest validation and live canary checks cover separate
+contracts. None is proof of a consumer release unless its run is recorded.
