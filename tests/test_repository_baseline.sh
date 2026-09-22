@@ -35,7 +35,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/verify-skills.yml": "38643ef4697d2a2c8820b20953b16372391563e16eea6ccf36c770f4e1749357",
     "README.md": "5ebb962cb7cb28e3928c8da1b8d1049695f8741fdf5cd2f1a615ca64fc519f6d",
     "docs/python-consumers.md": "2c80ac89e6d98c9c077865592883f96eaed72f9b27fd40c7c055ce27c4e33166",
-    "docs/pypi-publishing.md": "99d63f8c15ac7639be843fc913e9b8bc306d7fa20a368caaa776ed8b6c3879e5",
+    "docs/pypi-publishing.md": "419a92d216cde938ab0f0711a3d1fca56842396ca973058a4ca3796a6068b694",
     "docs/archive-consumers.md": "4e0693916a88f51edffb980b3ae343bc09c67475d608b3939d8a8e554a9478ed",
     "docs/skill-consumers.md": "1bd40fdd13f6feafa077f83ed019ba8296a64eb698d9a18ca42a5d3651760146",
     "docs/consumer-prerequisites.md": "05c160dfd2cb4797e046a88f7bc6d850db87e9b4b29f070e63b7284bfdf9c90d",

@@ -46,6 +46,8 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
         self.assertIn("artifact-ids: ${{ needs.release.outputs.dist-id }}", guide)
         self.assertIn("python policy/scripts/python_release.py verify-candidate", guide)
         self.assertIn("gh attestation verify", guide)
+        pypi_permissions = guide.split("\n      pypi:", 1)[1].split("        steps:", 1)[0]
+        self.assertIn("attestations: read", pypi_permissions)
 
     def test_exposes_only_closed_release_inputs_with_root_compatible_defaults(self) -> None:
         self.assertNotIn("version-command", self.workflow)

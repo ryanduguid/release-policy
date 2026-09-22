@@ -31,7 +31,8 @@ Set the input, then add a second job:
           url: https://pypi.org/p/<distribution-name>
         permissions:
           actions: read # Inspect the exact artefact.
-          contents: read # Read policy and attestations.
+          attestations: read # Read the package attestations.
+          contents: read # Read the pinned policy.
           id-token: write # Mint the OIDC token PyPI Trusted Publishing verifies.
         steps:
           - name: Check out the policy that built the candidate
