@@ -33,7 +33,7 @@ jobs:
             -f description='Checking commit identities and authorship credits' \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --silent
 
-      - uses: ryanduguid/release-policy/.github/actions/no-ai-attribution@9de7c3db78d24f6d81aea5e7cf8e9bea48e0a6ac
+      - uses: ryanduguid/release-policy/.github/actions/no-ai-attribution@d19c3db7450488fc349726f6300319f9a1830126
 
       - name: Publish the result on the head commit
         if: ${{ always() && !cancelled() }}
