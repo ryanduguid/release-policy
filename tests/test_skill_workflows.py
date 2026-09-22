@@ -253,6 +253,7 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
         self.assertEqual(
             self.permission_map(publish, indent=4),
             {
+                "actions": "read",
                 "attestations": "write",
                 "contents": "write",
                 "id-token": "write",
@@ -262,7 +263,7 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
             publish,
             r"(?m)^    uses: \./\.github/workflows/publish-archives\.yml$",
         )
-        self.assertEqual(self.with_keys(publish), ("artifact-stem",))
+        self.assertEqual(self.with_keys(publish), ("required-checks", "artifact-stem"))
 
     def test_verification_workflow_has_closed_interface_and_permissions(self) -> None:
         workflow = self.read_workflow("verify-skills.yml")

@@ -23,7 +23,7 @@ import build_release_archives as release_archives  # noqa: E402
 # The consumer-facing adapter takes no version-file input; the privileged core
 # it calls keeps its own, defaulted to VERSION.
 ADAPTER_INPUTS = ("artifact-stem", "source-directory", "tag-prefix", "required-checks")
-CORE_INPUTS = ("artifact-stem", "source-directory", "tag-prefix", "version-file")
+CORE_INPUTS = ("required-checks", "artifact-stem", "source-directory", "tag-prefix", "version-file")
 
 
 def _sha256(path: Path) -> str:
@@ -416,7 +416,11 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
             encoding="utf-8"
         )
-        self.assertNotIn("required_checks.py", core)
+        self.assertIn("required_checks.py", core)
+        core_jobs = self.mapping_block(core, "jobs", indent=0)
+        core_publish = self.mapping_block(core_jobs, "publish", indent=2)
+        self.assertEqual(self.mapping_value(core_publish, "needs", indent=4), "checks")
+        self.assertNotIn("actions: read", core_publish)
         self.assertIn('python-version: "3.12"', consumer_job)
         self.assertIn("working-directory: consumer", consumer_job)
         self.assertEqual(1, consumer_job.count(test_command))
@@ -450,6 +454,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertEqual(
             self.permission_map(release_job, indent=4),
             {
+                "actions": "read",
                 "attestations": "write",
                 "contents": "write",
                 "id-token": "write",
@@ -462,7 +467,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         inputs = self.mapping_block(release_job, "with", indent=4)
         self.assertEqual(
             self.mapping_keys(inputs, indent=6),
-            ("artifact-stem", "source-directory", "tag-prefix"),
+            ("required-checks", "artifact-stem", "source-directory", "tag-prefix"),
         )
         self.assertEqual(
             self.mapping_value(inputs, "artifact-stem", indent=6),
@@ -479,11 +484,16 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
 
     def assert_publication_core_permission_contract(self, core: str) -> None:
         jobs = self.mapping_block(core, "jobs", indent=0)
-        self.assertEqual(self.mapping_keys(jobs, indent=2), ("publish",))
+        self.assertEqual(self.mapping_keys(jobs, indent=2), ("checks", "publish"))
+        checks = self.mapping_block(jobs, "checks", indent=2)
+        self.assertEqual(self.permission_map(checks, indent=4), {"contents": "read", "actions": "read"})
+        self.assertIn("required_checks.py", checks)
+        self.assertNotIn("Check out the tagged consumer", checks)
         publish_job = self.mapping_block(jobs, "publish", indent=2)
         self.assertEqual(
             self.mapping_keys(publish_job, indent=4),
             (
+                "needs",
                 "timeout-minutes",
                 "name",
                 "runs-on",

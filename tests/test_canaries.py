@@ -479,7 +479,7 @@ class CanaryManifestTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("python scripts/check_canaries.py", workflow)
         self.assertIn("if: github.event_name == 'schedule'", workflow)
-        self.assertIn("python scripts/check_canaries.py --live", workflow)
+        self.assertIn("python scripts/check_canaries.py --live --require-current-evidence", workflow)
         group = next(
             line.strip().removeprefix("group: ")
             for line in workflow.splitlines()

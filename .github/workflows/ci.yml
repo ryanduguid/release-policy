@@ -106,7 +106,7 @@ jobs:
         if: github.event_name == 'schedule' && matrix.python == '3.12'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python scripts/check_canaries.py --live
+        run: python scripts/check_canaries.py --live --require-current-evidence
 
       - name: Check repository baseline
         if: matrix.python == '3.12'
