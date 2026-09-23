@@ -205,7 +205,20 @@ handling = re.compile(
     r"pars(?:e|es|ed|ing)|validat(?:e|es|ed|ing)|reject(?:s|ed|ing)?|block(?:s|ed|ing)?|"
     r"detect(?:s|ed|ing)?|filter(?:s|ed|ing)?|remov(?:e|es|ed|ing)|ignor(?:e|es|ed|ing)|"
     r"test(?:s|ed|ing)?|prevent(?:s|ed|ing)?|support(?:s|ed|ing)?|enabl(?:e|es|ed|ing))\b\s*[:\-]?\s*(?:(?!\s+-\s)[^.!?,:;|\n])*$", re.I)
-handling_starts = re.compile(r"(?=(" + handling.pattern + r"))", re.I)
+handling_verbs = re.compile(
+    r"\b(?:add(?:s|ed|ing)?|updat(?:e|es|ed|ing)|fix(?:es|ed|ing)?|handl(?:e|es|ed|ing)|"
+    r"pars(?:e|es|ed|ing)|validat(?:e|es|ed|ing)|reject(?:s|ed|ing)?|block(?:s|ed|ing)?|"
+    r"detect(?:s|ed|ing)?|filter(?:s|ed|ing)?|remov(?:e|es|ed|ing)|ignor(?:e|es|ed|ing)|"
+    r"test(?:s|ed|ing)?|prevent(?:s|ed|ing)?|support(?:s|ed|ing)?|enabl(?:e|es|ed|ing))\b", re.I)
+def last_handling(text):
+    # A handling clause cannot cross a clause delimiter. Inspect only the final
+    # clause, then validate its last verb once instead of rescanning suffixes.
+    clause = re.split(r"[.!?,:;|\n]|\s+-\s", text)[-1]
+    verbs = list(handling_verbs.finditer(clause))
+    if not verbs:
+        return None
+    match = handling.match(clause[verbs[-1].start():])
+    return match[0] if match else None
 output_phrase = re.compile(
     TOOL + r"\s*[-:]\s*" + CREDIT_VERB + r"(?!\w)|" +
     TOOL + SEP + r"(?:code" + SEP + r")?review" + SEP + r"implemented", re.I)
@@ -241,8 +254,7 @@ def prose_credits(text):
                 continue
             bad.append("pull request title: co-author credit")
     for match in reverse_credit.finditer(text):
-        actions = list(handling_starts.finditer(text[:match.start()]))
-        action = actions[-1][1] if actions else None
+        action = last_handling(text[:match.start()])
         policy_action = (action and action.casefold().startswith(
             ("reject", "block", "detect", "filter", "remov", "ignor", "test", "validat", "prevent"))
             and re.match(SEP + r"(?:commits?|PRs?|pull requests?|credits?|attributions?|authorship|trailers?|identities|contributors?)\b",
