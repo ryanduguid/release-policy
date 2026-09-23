@@ -102,6 +102,15 @@ run block "non-printable character in the author name" 'Publish' "$(printf 'Ryan
 run block "non-printable character in the committer name" 'Publish' \
 	'Ryan Duguid' 'ryan@duguid.com.au' "$(printf 'Ryan\tDuguid')" 'ryan@duguid.com.au'
 
+echo "--- prose credits (parity with the shared action's commit scan) ---"
+run block "a subject naming an agent as author" 'Claude Code authored this change'
+run block "a subject crediting an agent fix" 'Claude fixed this bug'
+run block "a body line crediting an agent" 'Fix rounding
+
+Written with Claude help'
+run allow "a product reference in a subject" 'Publish the skills as a Claude Code plugin'
+run allow "a task on an agent product" 'Handle Claude API errors in the importer'
+
 echo "--- messages that must be allowed ---"
 run allow "product reference in a subject" 'feat: publish the skills as a Claude Code plugin'
 run allow "human co-author" 'Fix
@@ -155,7 +164,9 @@ echo "--- comment marker configuration ---"
 git config core.commentChar ';'
 run block "the configured marker is peeled" 'Fix
 ; Co-Authored-By: Claude <noreply@anthropic.com>'
-run allow "another character is ordinary text" 'Fix
+# Git keeps this line under a ';' marker, and the push audit peels every
+# candidate marker and scans prose, so the hook must refuse it too.
+run block "a credit behind another character is still refused" 'Fix
 # Generated with Claude Code'
 git config --unset core.commentChar
 
