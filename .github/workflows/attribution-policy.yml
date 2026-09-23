@@ -35,8 +35,12 @@ jobs:
 
       - uses: ryanduguid/release-policy/.github/actions/no-ai-attribution@d19c3db7450488fc349726f6300319f9a1830126
 
+      # always(), not always() && !cancelled(). The pending status above is posted
+      # before the audit runs, so skipping the terminal update on cancellation left
+      # the required context pending for ever and the pull request merge-blocked.
+      # job.status is 'cancelled' there, so STATE below resolves to failure.
       - name: Publish the result on the head commit
-        if: ${{ always() && !cancelled() }}
+        if: ${{ always() }}
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
