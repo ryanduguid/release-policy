@@ -284,9 +284,14 @@ runs:
 
         def scan_pr(title, body):
             # The title grammar is reviewed case by case below, so a title
-            # credit still fails; body prose is only a warning.
+            # credit still fails; body prose is only a warning. Of the line
+            # patterns, only the session trailer and robot emoji credit are
+            # narrow enough for titles; the others flag product references.
             bad, warn = scan("pull request body", body or "")
-            return prose_credits(title) + bad, warn
+            text = comparable(title or "")
+            titled = ["pull request title: " + name for name, rx in RX
+                      if name in ("session trailer", "robot emoji credit") and rx.match(text)]
+            return titled + prose_credits(title) + bad, warn
 
         # Keep the reviewed title regressions executable in every installed copy.
         for title, blocked in (

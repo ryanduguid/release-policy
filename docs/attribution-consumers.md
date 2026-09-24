@@ -2,11 +2,13 @@
 
 The composite action at `.github/actions/no-ai-attribution/action.yml` checks
 pull request titles and bodies, commit messages, and raw author and committer
-identities. Structured credits fail the check: co-author and agent by-line
-trailers, session trailers, generated-with footers, robot emoji credits, bare
-vendor URLs and AI identities. The prose-credit matcher runs on titles, unfenced
-body lines and commit messages. A prose match in a title fails, and the title
-grammar keeps its executable regression cases. A prose match in a body line or
+identities. In body lines and commit messages, structured credits fail the
+check: co-author and agent by-line trailers, session trailers, generated-with
+footers, robot emoji credits and bare vendor URLs. AI identities fail too. A
+title fails on a session trailer, a robot emoji credit or the title prose
+grammar, which keeps its executable regression cases; the other line patterns
+are too broad for titles. The prose-credit matcher also runs on unfenced body
+lines and commit messages. A prose match in a body line or
 commit message is printed as a warning and does not fail, because the same
 grammar also matches sentences that only name a review bot, such as "Reported
 by the Qodo review on #118". The local `.githooks/commit-msg` guard still
