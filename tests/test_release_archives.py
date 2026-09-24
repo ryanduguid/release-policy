@@ -421,7 +421,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         core_publish = self.mapping_block(core_jobs, "publish", indent=2)
         self.assertEqual(self.mapping_value(core_publish, "needs", indent=4), "checks")
         self.assertNotIn("actions: read", core_publish)
-        self.assertIn('python-version: "3.12"', consumer_job)
+        self.assertIn('python-version: "3.14"', consumer_job)
         self.assertIn("working-directory: consumer", consumer_job)
         self.assertEqual(1, consumer_job.count(test_command))
 

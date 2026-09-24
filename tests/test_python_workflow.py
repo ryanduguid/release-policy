@@ -121,7 +121,7 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
         publish = job_block(self.workflow, "publish")
 
         self.assertIn("permissions:\n      contents: read", test)
-        self.assertIn("uv run --locked --extra dev --python 3.12 pytest", test)
+        self.assertIn("uv run --locked --extra dev --python 3.14 pytest", test)
         for forbidden in ("contents: write", "attestations: write", "id-token: write"):
             self.assertNotIn(forbidden, test)
 

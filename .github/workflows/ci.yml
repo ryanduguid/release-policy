@@ -25,7 +25,7 @@ jobs:
       matrix:
         # scripts/python_release.py reads pyproject metadata with tomllib,
         # which arrived in Python 3.11, so 3.11 is the floor under test.
-        python: ["3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
     env:
       ACTIONLINT_VERSION: "1.7.12"
       ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
@@ -166,7 +166,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install the pinned build tool
         run: python -m pip install "build==1.2.2"
