@@ -313,11 +313,11 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn('[[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]]', verify)
         self.assertIn('test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"', verify)
 
-    def test_verification_workflow_runs_the_fixed_python_312_verifier(self) -> None:
+    def test_verification_workflow_runs_the_fixed_python_314_verifier(self) -> None:
         verify = self.job_block(self.read_workflow("verify-skills.yml"), "verify")
 
         self.assertIn(f"uses: actions/setup-python@{SETUP_PYTHON_SHA}", verify)
-        self.assertRegex(verify, r'(?m)^          python-version: "3\.12"$')
+        self.assertRegex(verify, r'(?m)^          python-version: "3\.14"$')
         self.assertRegex(verify, r"(?m)^        working-directory: consumer$")
         self.assertIn("python ../policy/scripts/verify_skills.py verify", verify)
         self.assertIn('--mode "$SKILLS_VERIFICATION_MODE"', verify)
