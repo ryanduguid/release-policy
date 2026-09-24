@@ -10,8 +10,8 @@ reviewed schedule.
 ## Local checks
 
 Python 3.11 or newer; `scripts/python_release.py` reads pyproject metadata
-with `tomllib`, which arrived in 3.11, and CI runs the suite on 3.11, 3.12 and
-3.13. Install the pinned tools, then run what `.github/workflows/ci.yml` runs:
+with `tomllib`, which arrived in 3.11, and CI runs the suite on 3.11, 3.12, 3.13
+and 3.14. Install the pinned tools, then run what `.github/workflows/ci.yml` runs:
 
 ```bash
 python -m pip install "build==1.2.2" "coverage==7.15.4" "diff-cover==10.5.1" "ruff==0.16.6" "mypy==2.3.1"
