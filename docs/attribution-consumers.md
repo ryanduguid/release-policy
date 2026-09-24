@@ -2,9 +2,18 @@
 
 The composite action at `.github/actions/no-ai-attribution/action.yml` checks
 pull request titles and bodies, commit messages, and raw author and committer
-identities. It applies the same prose-credit matcher to titles, unfenced body lines and
-commit messages, and retains the executable title regression cases. Technical product references and fenced examples keep their current
-treatment. Commit messages and pull request text are read as written and again
+identities. In body lines and commit messages, structured credits fail the
+check: co-author and agent by-line trailers, session trailers, generated-with
+footers, robot emoji credits and bare vendor URLs. AI identities fail too. A
+title fails on a session trailer, a robot emoji credit or the title prose
+grammar, which keeps its executable regression cases; the other line patterns
+are too broad for titles. The prose-credit matcher also runs on unfenced body
+lines and commit messages. A prose match in a body line or
+commit message is printed as a warning and does not fail, because the same
+grammar also matches sentences that only name a review bot, such as "Reported
+by the Qodo review on #118". The local `.githooks/commit-msg` guard still
+refuses prose credits, so it stays at least as strict as the action. Technical
+product references and fenced examples keep their current treatment. Commit messages and pull request text are read as written and again
 with Git comment markers peeled and whitespace-indented trailer continuations
 joined onto their trailer, so a credit kept behind a `#` line by
 `--cleanup=whitespace` or split across a folded trailer is caught by the action
@@ -34,10 +43,9 @@ Keep the consumer's `No AI attribution` workflow to one job:
 
 The push trigger covers every branch, not only `main`. A commit pushed straight
 to a side branch would otherwise go unaudited until it reached `main`, and a
-branch that never opens a pull request would never be audited at all. On a new
-branch the push event carries no base, so the action scans the branch's whole
-history; that is the intended behaviour and is why the trigger suits a
-repository whose history is already clean.
+branch that never opens a pull request would never be audited at all. A new
+branch's push carries no base, so the action scans what the branch adds to the
+default branch, as described under Verification and rollout.
 
 A consumer that is a contribution fork omits the push trigger and runs on
 `pull_request_target` and manual dispatch only. A fork's history carries
@@ -75,8 +83,11 @@ use `ubuntu-latest`.
 
 A branch's first push has no `before` commit. The action then scans the
 commits the branch adds to the repository's default branch, which is what a
-push to that branch would have scanned; only a head that already sits on the
-default branch, as on a repository's first push, is scanned in full.
+push to that branch would have scanned. A side branch whose head already sits
+on the default branch adds nothing, so no commit is scanned; the default
+branch's own pushes audited that history. A head on the default branch is
+scanned in full only when the pushed ref is the default branch itself or is
+unknown, as on a repository's first push.
 
 The workflow pins the composite action to a commit on `main`, and
 `tests/test_attribution_pin.py` checks on every push that the pin is reachable

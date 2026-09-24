@@ -106,6 +106,10 @@ runs:
         def scan(label, text):
             """Report every credit line outside fenced code blocks.
 
+            Returns the lines that match a structured credit pattern, which
+            fail the check, and the lines that only the prose matcher flags,
+            which are warnings.
+
             Fence state tracks the opening character and length, per CommonMark:
             a closing fence must use the same character, be at least as long, and
             carry no info string. Tracking the character and length stops a
@@ -146,7 +150,7 @@ runs:
                         continue
                 skip[index] = open_char is not None
 
-            bad = []
+            bad, warn = [], []
             reported = set()
             folded, folded_at = None, 0
             for n, line in enumerate(lines, 1):
@@ -162,22 +166,19 @@ runs:
                 else:
                     folded, folded_at = None, 0
                 for candidate, at in candidates:
-                    hit = None
-                    for reading in readings(candidate) + readings(comparable(candidate)):
-                        reading = comparable(reading)
-                        for name, rx in RX:
-                            if rx.match(reading):
-                                hit = name
-                                break
-                        if not hit and prose_credits(reading):
-                            hit = "authorship credit"
-                        if hit:
-                            break
+                    texts = [comparable(reading) for reading in
+                             readings(candidate) + readings(comparable(candidate))]
+                    hit = next((name for reading in texts for name, rx in RX if rx.match(reading)), None)
+                    found = bad
+                    # Prose matching cannot tell a credit from a sentence that
+                    # names a review bot, so a prose-only match is a warning.
+                    if not hit and any(prose_credits(reading) for reading in texts):
+                        hit, found = "authorship credit", warn
                     if hit and (at, hit) not in reported:
                         reported.add((at, hit))
-                        bad.append("%s line %d: %s (%s)"
-                                   % (label, at, lines[at - 1].strip()[:120], hit))
-            return bad
+                        found.append("%s line %d: %s (%s)"
+                                     % (label, at, lines[at - 1].strip()[:120], hit))
+            return bad, warn
 
         # Titles are plain text. Whole-word names and one separator grammar
         # keep punctuation variants consistent without matching human surnames.
@@ -282,7 +283,18 @@ runs:
             return bad
 
         def scan_pr(title, body):
-            return prose_credits(title) + scan("pull request body", body or "")
+            # The title grammar is reviewed case by case below, so a title
+            # credit still fails; body prose is only a warning. Of the line
+            # patterns, only the session trailer and robot emoji credit are
+            # narrow enough for titles; the others flag product references.
+            bad, warn = scan("pull request body", body or "")
+            title = title or ""
+            texts = [comparable(reading) for reading in
+                     readings(title) + readings(comparable(title))]
+            titled = ["pull request title: " + name for name, rx in RX
+                      if name in ("session trailer", "robot emoji credit")
+                      and any(rx.match(text) for text in texts)]
+            return titled + prose_credits(title) + bad, warn
 
         # Keep the reviewed title regressions executable in every installed copy.
         for title, blocked in (
@@ -523,10 +535,10 @@ runs:
             ('Implemented with Claude API integration as co-author', True),
             ('Implemented with Claude API client as co-author', True),
         ):
-            if bool(scan_pr(title, "")) != blocked:
+            if bool(scan_pr(title, "")[0]) != blocked:
                 sys.exit("Attribution policy self-test failed")
 
-        failures = scan_pr(os.environ.get("PR_TITLE"), os.environ.get("PR_BODY"))
+        failures, warnings = scan_pr(os.environ.get("PR_TITLE"), os.environ.get("PR_BODY"))
 
         base, head = os.environ["BASE_SHA"], os.environ["HEAD_SHA"]
         # The policy runs from the base branch. Fetch PR objects as data only.
@@ -545,9 +557,12 @@ runs:
         if base == "0" * 40:
             # A new branch's first push has no `before`. Scan what the branch
             # adds to the default branch, which is what a push to the default
-            # branch would have scanned commit by commit; the whole history is
-            # scanned only when the head already sits on the default branch,
-            # as on a repository's first push.
+            # branch would have scanned commit by commit. A head already on the
+            # default branch is scanned in full when the pushed ref is that
+            # branch or unknown, as on a repository's first push. A new side
+            # branch whose head is already on the default branch adds no
+            # commits, so nothing is scanned; the default branch's own pushes
+            # audited that history.
             selection = [head]
             default = os.environ.get("DEFAULT_BRANCH", "")
             tip = "origin/" + default if default else ""
@@ -555,19 +570,25 @@ runs:
                                       capture_output=True).returncode == 0:
                 on_default = subprocess.run(["git", "merge-base", "--is-ancestor", head, tip],
                                             capture_output=True).returncode == 0
+                ref = os.environ.get("GITHUB_REF", "")
                 if not on_default:
                     selection = [head, "--not", tip]
+                elif ref.startswith("refs/heads/") and ref != "refs/heads/" + default:
+                    selection = None
         else:
             selection = [base + ".." + head]
-        proc = subprocess.run(
-            ["git", "rev-list", *selection], capture_output=True, text=True)
-        if proc.returncode != 0:
-            # Fail closed: an unscannable range must not read as clean.
-            print("Could not read the commit range %s..%s" % (base[:12], head[:12]))
-            print(proc.stderr.strip()[:500])
-            sys.exit(1)
+        commits = []
+        if selection is not None:
+            proc = subprocess.run(
+                ["git", "rev-list", *selection], capture_output=True, text=True)
+            if proc.returncode != 0:
+                # Fail closed: an unscannable range must not read as clean.
+                print("Could not read the commit range %s..%s" % (base[:12], head[:12]))
+                print(proc.stderr.strip()[:500])
+                sys.exit(1)
+            commits = proc.stdout.splitlines()
 
-        for sha in proc.stdout.splitlines():
+        for sha in commits:
             raw = subprocess.run(["git", "cat-file", "commit", sha],
                                  capture_output=True, check=True).stdout
             headers, msg = raw.split(b"\n\n", 1)
@@ -589,8 +610,15 @@ runs:
                 if (AI_NAME.fullmatch(name.strip()) or email.casefold() in {"noreply@anthropic.com", "openhands@all-hands.dev", "cascade@windsurf.com"}
                         or (account and AI_NAME.fullmatch(account[1]))):
                     failures.append("commit %s: AI %s identity" % (sha[:12], role))
-            failures += scan("commit " + sha[:12], msg.decode("utf-8", "replace"))
+            bad, warn = scan("commit " + sha[:12], msg.decode("utf-8", "replace"))
+            failures += bad
+            warnings += warn
 
+        if warnings:
+            print("Possible AI credit in prose (warning only, check before merging):\n")
+            for w in warnings:
+                print("  " + w)
+            print()
         if failures:
             print("AI attribution found:\n")
             for f in failures:
