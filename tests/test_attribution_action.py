@@ -139,6 +139,8 @@ class AttributionActionTests(unittest.TestCase):
         for title, name in (
             ("Claude-session: 0123abcd", "session trailer"),
             ("\U0001F916 Update rates via Claude", "robot emoji credit"),
+            ("#Claude-session: 0123abcd", "session trailer"),
+            ("# \U0001F916 Update rates via Claude", "robot emoji credit"),
         ):
             with self.subTest(title=title):
                 result = self.run_policy(PR_TITLE=title)

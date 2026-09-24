@@ -288,9 +288,12 @@ runs:
             # patterns, only the session trailer and robot emoji credit are
             # narrow enough for titles; the others flag product references.
             bad, warn = scan("pull request body", body or "")
-            text = comparable(title or "")
+            title = title or ""
+            texts = [comparable(reading) for reading in
+                     readings(title) + readings(comparable(title))]
             titled = ["pull request title: " + name for name, rx in RX
-                      if name in ("session trailer", "robot emoji credit") and rx.match(text)]
+                      if name in ("session trailer", "robot emoji credit")
+                      and any(rx.match(text) for text in texts)]
             return titled + prose_credits(title) + bad, warn
 
         # Keep the reviewed title regressions executable in every installed copy.
