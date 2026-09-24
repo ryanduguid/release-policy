@@ -1,5 +1,10 @@
 # release-policy: trace a release to its checked artefacts
 
+[![tests](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml/badge.svg)](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml)
+[![release](https://img.shields.io/github/v/release/ryanduguid/release-policy?color=5C2D91&labelColor=04001F)](https://github.com/ryanduguid/release-policy/releases/latest)
+[![licence: MIT](https://img.shields.io/badge/licence-MIT-5C2D91.svg?labelColor=04001F)](LICENSE)
+
 Policy checks establish release evidence, not accounting correctness.
 
 **Input:** the recorded `review-ready-gate/v0.1.5` Python canary from Accounting Review Pipeline.
