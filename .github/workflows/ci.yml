@@ -85,11 +85,8 @@ jobs:
       - name: Install pinned Python tools
         run: >-
           python -m pip install
-          "build==1.2.2"
-          "coverage==7.15.4"
-          "diff-cover==10.5.1"
-          "ruff==0.16.6"
-          "mypy==2.3.1"
+          --require-hashes --only-binary :all:
+          --requirement requirements-ci.txt
 
       - name: Ruff the policy scripts and tests
         if: matrix.python == '3.12'
@@ -169,7 +166,9 @@ jobs:
           python-version: "3.14"
 
       - name: Install the pinned build tool
-        run: python -m pip install "build==1.2.2"
+        run: >-
+          python -m pip install --require-hashes --only-binary :all:
+          --requirement requirements-build.txt
 
       - name: Check repository baseline
         run: bash tests/test_repository_baseline.sh

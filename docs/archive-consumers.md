@@ -48,3 +48,17 @@ no arbitrary test command, build command or asset glob. It runs the fixed
 unittest contract, builds deterministic ZIP and tar.gz source archives from
 the tagged commit, generates an SPDX SBOM, and publishes exactly those 3
 files plus `SHA256SUMS` after inspecting the exact draft returned by GitHub.
+
+## Test dependency hashes
+
+The optional tracked `requirements-test.txt` must pin each dependency with
+`==` and include its reviewed wheel's SHA-256 hash. List any required transitive
+dependencies explicitly because the workflow uses `--no-deps`. Installation
+also uses `--only-binary :all:` and `--require-hashes`; a missing hash, mismatched
+download or unavailable wheel fails before consumer tests run. Consumers with
+no external test dependencies can omit the file.
+
+Before adopting a policy revision with this requirement, add hashes to the
+consumer's requirements file and verify that its wheels support Python 3.14 on
+Linux. Review the requirements change with the policy-pin update. Existing
+consumers remain on their current pinned policy until they migrate.

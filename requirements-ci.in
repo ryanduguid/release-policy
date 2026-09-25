@@ -1,0 +1,5 @@
+-r requirements-build.in
+coverage==7.15.4
+diff-cover==10.5.1
+ruff==0.16.6
+mypy==2.3.1
