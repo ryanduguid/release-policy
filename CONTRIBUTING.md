@@ -14,7 +14,7 @@ with `tomllib`, which arrived in 3.11, and CI runs the suite on 3.11, 3.12, 3.13
 and 3.14. Install the pinned tools, then run what `.github/workflows/ci.yml` runs:
 
 ```bash
-python -m pip install "build==1.2.2" "coverage==7.15.4" "diff-cover==10.5.1" "ruff==0.16.6" "mypy==2.3.1"
+python -m pip install --require-hashes --only-binary :all: --requirement requirements-ci.txt
 python -m ruff check .
 python -m mypy
 python scripts/check_canaries.py
@@ -24,6 +24,16 @@ python -m coverage run --branch --source=scripts -m unittest discover -s tests -
 python -m coverage xml --include="scripts/*.py" -o coverage.xml
 diff-cover coverage.xml --compare-branch=origin/main --branch-coverage --fail-under=100
 bash tests/test_determinism.sh
+```
+
+The input files pin direct tools; the generated requirements files pin their
+dependencies and distribution hashes across supported Python versions and
+platforms. After editing an input, regenerate both files with uv and review
+the dependency changes:
+
+```bash
+uv pip compile requirements-build.in --universal --python-version 3.11 --generate-hashes --output-file requirements-build.txt
+uv pip compile requirements-ci.in --universal --python-version 3.11 --generate-hashes --output-file requirements-ci.txt
 ```
 
 `attribution-policy.yml` pins `.github/actions/no-ai-attribution` by commit.

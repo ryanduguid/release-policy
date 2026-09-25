@@ -10,8 +10,8 @@ release line.
 
 ## Reporting a vulnerability
 
-Use GitHub's private **Report a vulnerability** form when it is available in
-this repository's Security tab. If the form is absent, do not disclose the
+Use GitHub's private [Report a vulnerability form](https://github.com/ryanduguid/release-policy/security/advisories/new).
+If the form is unavailable, do not disclose the
 vulnerability in a public issue or public discussion. Include a clear
 description, safe reproduction steps, impact, and any suggested mitigation.
 

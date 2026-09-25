@@ -12,10 +12,12 @@ class DiffCoveragePolicyTests(unittest.TestCase):
             encoding="utf-8"
         )
         ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        requirements = (ROOT / "requirements-ci.txt").read_text(encoding="utf-8")
 
         self.assertIn("fetch-depth: 0", workflow)
-        self.assertIn('"coverage==7.15.4"', workflow)
-        self.assertIn('"diff-cover==10.5.1"', workflow)
+        self.assertIn("--requirement requirements-ci.txt", workflow)
+        self.assertIn("coverage==7.15.4", requirements)
+        self.assertIn("diff-cover==10.5.1", requirements)
         self.assertIn("coverage run --branch --source=scripts", workflow)
         self.assertIn('--include="scripts/*.py"', workflow)
         self.assertIn("--compare-branch=origin/main", workflow)
