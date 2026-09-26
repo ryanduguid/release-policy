@@ -1,0 +1,2 @@
+.github/workflows/ci.yml: lint
+.github/workflows/ci.yml: lint
