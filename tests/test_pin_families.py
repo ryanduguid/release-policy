@@ -85,6 +85,11 @@ class PinFamilyTests(unittest.TestCase):
                          {"release-archive", "release-skills"})
         self.assertEqual(self.moved({"docs/guide.md": "more prose\n"}), set())
 
+    def test_a_family_absent_from_both_commits_moves_nothing(self) -> None:
+        self.git("rm", "-q", ".github/workflows/release-skills.yml")
+        self.git("commit", "-q", "-m", "retire the skills family")
+        self.assertEqual(self.moved({"docs/guide.md": "more prose\n"}), set())
+
     def test_the_real_release_python_family_is_the_audited_set(self) -> None:
         found = pin_families.inputs(".github/workflows/release-python.yml", "HEAD")
         self.assertTrue({".github/workflows/release-python.yml", "scripts/gates.sh",

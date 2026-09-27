@@ -61,7 +61,8 @@ def changed(old: str, new: str, root: Path = ROOT) -> dict[str, list[str]]:
     result = {}
     for family, entry in FAMILIES.items():
         paths = sorted(inputs(entry, old, root) | inputs(entry, new, root))
-        result[family] = git(root, "diff", "--name-only", old, new, "--", *paths).split()
+        # With no paths, git diff would compare the whole tree: a family absent from both moves nothing.
+        result[family] = git(root, "diff", "--name-only", old, new, "--", *paths).split() if paths else []
     return result
 
 
