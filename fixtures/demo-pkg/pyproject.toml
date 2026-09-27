@@ -9,5 +9,10 @@ description = "Determinism fixture for release-policy CI"
 # The policy scripts and every consumer target 3.11 and later.
 requires-python = ">=3.11"
 
+[project.optional-dependencies]
+# The release workflow builds from this locked extra without isolation, so it
+# carries the backend exactly as [build-system] requires it.
+dev = ["build==1.6.1", "setuptools==84.0.0"]
+
 [tool.setuptools.packages.find]
 include = ["demo_pkg*"]

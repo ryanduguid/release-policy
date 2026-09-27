@@ -290,7 +290,12 @@ jobs:
           set -euo pipefail
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           export SOURCE_DATE_EPOCH
-          uv run --locked --extra dev --python 3.14 python -m build
+          # Build in the locked environment, not an isolated one, so the
+          # backend and every package it imports come hashed from uv.lock
+          # instead of whatever the index serves at release time. The dev
+          # extra must pin the backend exactly as [build-system] requires;
+          # build's own dependency check stops the release if it does not.
+          uv run --locked --extra dev --python 3.14 python -m build --no-isolation
 
       - name: Generate SPDX SBOM for the wheel
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
