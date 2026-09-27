@@ -15,13 +15,13 @@
       "workflow_path": ".github/workflows/release.yml"
     },
     {
-      "current_policy_sha": "87767ec809dc7f77bcd45808219adaf67841ae7b",
+      "current_policy_sha": "ec6b0ee76446f11aefb7fa0c203f2e01b4c9a711",
       "evidence": {
-        "head_sha": "38a075ecf92a7ff9770bff0ddd0e2598784e6111",
-        "policy_sha": "2adf9e19b7c73970a1dd6703afb3f9c27b7972d7",
-        "ref": "review-ready-gate/v0.1.7",
-        "run_id": 35499177468,
-        "started_at": "2026-09-20T08:18:02Z"
+        "head_sha": "a3d51dc6567ba979f452e5f7447dbea7ecb66bbf",
+        "policy_sha": "87767ec809dc7f77bcd45808219adaf67841ae7b",
+        "ref": "review-ready-gate/v0.1.9",
+        "run_id": 36298243951,
+        "started_at": "2026-09-27T05:48:02Z"
       },
       "family": "python",
       "policy_workflow": ".github/workflows/release-python.yml",
