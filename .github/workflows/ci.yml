@@ -44,13 +44,20 @@ jobs:
   checks:
     timeout-minutes: 15
     name: lint and test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
         # scripts/python_release.py reads pyproject metadata with tomllib,
         # which arrived in Python 3.11, so 3.11 is the floor under test.
         python: ["3.11", "3.12", "3.13", "3.14"]
+        # Temporary leg on the image ubuntu-latest becomes between 19 October
+        # and 19 November 2026 (actions/runner-images#14748). "3.12.x" makes it
+        # a new combination, so the required check names above stay unchanged.
+        # Remove it once ubuntu-latest is 26.04.
+        include:
+          - python: "3.12.x"
+            runner: ubuntu-26.04
     env:
       ACTIONLINT_VERSION: "1.7.12"
       ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
