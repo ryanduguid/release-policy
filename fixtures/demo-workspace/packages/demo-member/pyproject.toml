@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling==1.32.3"]
+build-backend = "hatchling.build"
+
+[project]
+name = "demo-member"
+version = "0.1.0"
+description = "Workspace-member fixture for release-policy CI"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+# The release workflow builds from this locked extra without isolation, so it
+# carries the backend exactly as [build-system] requires it.
+dev = ["build==1.6.1", "hatchling==1.32.3"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["demo_member"]
