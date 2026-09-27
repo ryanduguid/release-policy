@@ -292,10 +292,14 @@ jobs:
           export SOURCE_DATE_EPOCH
           # Build in the locked environment, not an isolated one, so the
           # backend and every package it imports come hashed from uv.lock
-          # instead of whatever the index serves at release time. The dev
-          # extra must pin the backend exactly as [build-system] requires;
-          # build's own dependency check stops the release if it does not.
-          uv run --locked --extra dev --python 3.14 python -m build --no-isolation
+          # instead of whatever the index serves at release time. The sync
+          # installs locked wheels only: it installs no workspace member, and
+          # --no-build refuses to build anything, so no backend runs before
+          # the release build itself. The dev extra must list every build
+          # requirement; build's dependency check stops the release if one is
+          # missing.
+          uv sync --locked --no-install-workspace --no-build --extra dev --python 3.14
+          uv run --no-sync --python 3.14 python -m build --no-isolation
 
       - name: Generate SPDX SBOM for the wheel
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2

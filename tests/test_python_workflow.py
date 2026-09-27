@@ -129,8 +129,13 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
         self.assertIn("permissions:\n      contents: read", build)
         for forbidden in ("contents: write", "attestations: write", "id-token: write"):
             self.assertNotIn(forbidden, build)
-        # The backend comes hashed from the lock, never from the index at release time.
-        self.assertIn("uv run --locked --extra dev --python 3.14 python -m build --no-isolation", build)
+        # The backend comes hashed from the lock, never from the index at release
+        # time, and uv builds nothing before the release build.
+        self.assertIn(
+            "uv sync --locked --no-install-workspace --no-build --extra dev --python 3.14\n"
+            "          uv run --no-sync --python 3.14 python -m build --no-isolation\n",
+            build,
+        )
         self.assertNotIn("pytest", build)
 
         self.assertIn("needs: build", publish)

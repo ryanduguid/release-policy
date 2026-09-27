@@ -14,11 +14,13 @@ requires a separately reviewed authentication and attestation contract.
   selected with `version-parser: python-literal` and `version-file`.
 - A `dev` extra in `pyproject.toml` providing `pytest` and `build`; the
   workflow runs `uv run --locked --extra dev`.
-- The same `dev` extra pinning the build backend exactly as
-  `[build-system] requires` does, for example `hatchling==1.32.3`, with
-  `uv.lock` regenerated. The workflow builds with `--no-isolation`, so the
-  backend and its dependencies come hashed from the lock; without the pin the
-  build stops.
+- The same `dev` extra listing every build requirement: each
+  `[build-system] requires` entry exactly as written there, for example
+  `hatchling==1.32.3`, and anything the backend reports it needs to build,
+  such as a plugin, with `uv.lock` regenerated. The workflow installs the
+  locked wheels without installing the project, then builds with
+  `--no-isolation`, so the backend and its dependencies come hashed from the
+  lock; a missing requirement stops the build before anything is published.
 - A pure-Python wheel; the `py3-none-any` wheel name is expected by the
   SBOM and attestation steps.
 - Releases cut from `main`; the main-match gate checks `heads/main`.
