@@ -34,7 +34,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/release-python.yml": "b2511e715252620d2a9b939f83ef259ed66893bc5a125b74997e3cbc0e358927",
     ".github/workflows/release-skills.yml": "ba024dff4b9587833da59fae4e32b2df809ffea1198942461cf959978a294de0",
     ".github/workflows/verify-skills.yml": "113803d80bc8ab0d7bbb990cdbf10522865929a74a76aff33b8f5dd60d8e4bf0",
-    "README.md": "a6e90ffb627ef27907cf8b749d7ea2b97979b4e632a4c51489ee98448e78e0f2",
+    "README.md": "3f0bec43cfc7ce61f7244fa8b2aa8ce8a6b7587298485d626d18e48bcbee4c0c",
     "docs/python-consumers.md": "2c80ac89e6d98c9c077865592883f96eaed72f9b27fd40c7c055ce27c4e33166",
     "docs/pypi-publishing.md": "419a92d216cde938ab0f0711a3d1fca56842396ca973058a4ca3796a6068b694",
     "docs/archive-consumers.md": "0e71c471994818790e54074c0c483053afcc9ffbccfac764c0e15e91ea17bfc7",

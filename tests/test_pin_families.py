@@ -7,11 +7,15 @@ checks run the family diff on a throwaway repository, so they need no clone hist
 
 from __future__ import annotations
 
+import io
+import runpy
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -87,6 +91,26 @@ class PinFamilyTests(unittest.TestCase):
                          "scripts/required_checks.py", "scripts/python_release.py",
                          "scripts/publish_python.sh", "scripts/publish_common.sh"} <= found, found)
         self.assertNotIn(".github/workflows/attribution-policy.yml", found)
+
+    def test_prints_one_verdict_per_family(self) -> None:
+        moved = {"release-python": [], "attribution": [".github/actions/no-ai-attribution/action.yml"]}
+        with mock.patch.object(pin_families, "changed", return_value=moved), \
+                redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(pin_families.main(["old", "new"]), 0)
+        self.assertEqual(out.getvalue().splitlines(), [
+            "release-python: keep the pin",
+            "attribution: re-pin (.github/actions/no-ai-attribution/action.yml)"])
+        with redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(pin_families.main(["old"]), 2)
+        self.assertEqual(err.getvalue().strip(), "Usage: python scripts/pin_families.py OLD_COMMIT NEW_COMMIT")
+
+    def test_runs_as_a_script(self) -> None:
+        argv = ["pin_families.py", "HEAD", "HEAD"]
+        with mock.patch.object(sys, "argv", argv), redirect_stdout(io.StringIO()) as out:
+            with self.assertRaises(SystemExit) as raised:
+                runpy.run_path(str(ROOT / "scripts" / "pin_families.py"), run_name="__main__")
+        self.assertEqual(raised.exception.code, 0)
+        self.assertEqual(out.getvalue().splitlines(), [f"{family}: keep the pin" for family in pin_families.FAMILIES])
 
 
 if __name__ == "__main__":
