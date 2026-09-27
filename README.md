@@ -48,6 +48,7 @@ a full policy commit.
 - [Attribution checks](docs/attribution-consumers.md)
 - [The egress check](docs/egress-check.md)
 - [Prerequisites](docs/consumer-prerequisites.md)
+- [Re-pinning consumers](docs/re-pinning.md)
 - [Guarantees and canary evidence](docs/guarantees-and-evidence.md)
 - [Shared-policy decision](docs/adr/0001-shared-release-policy.md)
 

@@ -34,7 +34,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/release-python.yml": "b2511e715252620d2a9b939f83ef259ed66893bc5a125b74997e3cbc0e358927",
     ".github/workflows/release-skills.yml": "ba024dff4b9587833da59fae4e32b2df809ffea1198942461cf959978a294de0",
     ".github/workflows/verify-skills.yml": "113803d80bc8ab0d7bbb990cdbf10522865929a74a76aff33b8f5dd60d8e4bf0",
-    "README.md": "a6e90ffb627ef27907cf8b749d7ea2b97979b4e632a4c51489ee98448e78e0f2",
+    "README.md": "3f0bec43cfc7ce61f7244fa8b2aa8ce8a6b7587298485d626d18e48bcbee4c0c",
     "docs/python-consumers.md": "2c80ac89e6d98c9c077865592883f96eaed72f9b27fd40c7c055ce27c4e33166",
     "docs/pypi-publishing.md": "419a92d216cde938ab0f0711a3d1fca56842396ca973058a4ca3796a6068b694",
     "docs/archive-consumers.md": "0e71c471994818790e54074c0c483053afcc9ffbccfac764c0e15e91ea17bfc7",
@@ -42,6 +42,7 @@ CANONICAL_SHA256 = {
     "docs/consumer-prerequisites.md": "05c160dfd2cb4797e046a88f7bc6d850db87e9b4b29f070e63b7284bfdf9c90d",
     "docs/guarantees-and-evidence.md": "55591352b70163ddf1af06eac5712c24cd5b15a02941a37188b3284fc4ec6038",
     "docs/egress-check.md": "2d8f86aad40c65edec23d370cbfb39864cf5a101d24839055c7b2718592f5994",
+    "docs/re-pinning.md": "617b4f04e0dad4afe2ac3993d02a6638dd0679e8edb948d6d2a5776bd172eb0f",
     "SECURITY.md": "9f9cea868cdb60a00c98ebaa892125d83a94fba1589d55227cd239c6af7804f9",
 }
 
