@@ -1,0 +1,5 @@
+# A virtual workspace root, as the monorepo consumers have: no [project] table
+# and no dev extra of its own. The release job syncs from a member's directory,
+# so it must install that member's dev extra, backend included.
+[tool.uv.workspace]
+members = ["packages/*"]
