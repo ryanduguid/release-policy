@@ -7,7 +7,7 @@ it executes, found by following references from it: the workflows it calls, the
 composite action it uses, and the scripts it names, directly or through the scripts it
 sources and runs. A family whose files are identical at both commits keeps its pin, so an
 attribution-only change moves the attribution pins and leaves every release caller alone,
-and a change to neither family moves nothing. Comment lines are skipped, so a workflow
+and a change outside these families moves nothing. Comment lines are skipped, so a workflow
 that only mentions another does not tie their pins together; a name in other prose, such
 as a docstring, still counts, which errs towards one re-pin too many rather than one missed.
 """
@@ -24,6 +24,7 @@ FAMILIES = {
     "release-python": ".github/workflows/release-python.yml",
     "release-archive": ".github/workflows/release-archive.yml",
     "release-skills": ".github/workflows/release-skills.yml",
+    "verify-skills": ".github/workflows/verify-skills.yml",
     "attribution": ".github/workflows/attribution-policy.yml",
 }
 WORKFLOW = re.compile(r"\.github/workflows/[\w.-]+\.yml")
