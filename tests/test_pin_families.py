@@ -26,13 +26,16 @@ FILES = {
     ".github/workflows/release-archive.yml": "run: . policy/scripts/gates.sh\n"
                                              "uses: ./.github/workflows/publish-archives.yml\n",
     ".github/workflows/publish-archives.yml": "run: policy/scripts/publish_archives.sh\n",
-    ".github/workflows/release-skills.yml": "uses: ./.github/workflows/publish-archives.yml\n",
+    ".github/workflows/release-skills.yml": "uses: ./.github/workflows/publish-archives.yml\n"
+                                            "uses: ./.github/workflows/verify-skills.yml\n",
+    ".github/workflows/verify-skills.yml": "run: python policy/scripts/verify_skills.py verify\n",
     ".github/workflows/attribution-policy.yml": "uses: ./.github/actions/no-ai-attribution\n",
     ".github/actions/no-ai-attribution/action.yml": "runs: scan\n",
     "scripts/gates.sh": '"$PYTHON" "$GATES_DIR/python_release.py" tag\n',
     "scripts/python_release.py": "print('release')\n",
     "scripts/publish_archives.sh": '# see release-python.yml\n. "$(dirname "$0")/publish_common.sh"\n',
     "scripts/publish_common.sh": "true\n",
+    "scripts/verify_skills.py": "print('verified')\n",
     "docs/guide.md": "prose\n",
 }
 
@@ -74,6 +77,28 @@ class PinFamilyTests(unittest.TestCase):
             ".github/workflows/release-archive.yml", ".github/workflows/publish-archives.yml",
             "scripts/gates.sh", "scripts/python_release.py", "scripts/publish_archives.sh",
             "scripts/publish_common.sh"})
+        self.assertEqual(pin_families.inputs(".github/workflows/verify-skills.yml", head, self.root), {
+            ".github/workflows/verify-skills.yml", "scripts/verify_skills.py"})
+
+    def test_verifier_changes_move_both_skill_families(self) -> None:
+        for path, text in {
+            ".github/workflows/verify-skills.yml": FILES[".github/workflows/verify-skills.yml"]
+                                                  + "name: updated verifier\n",
+            "scripts/verify_skills.py": "print('verification changed')\n",
+        }.items():
+            with self.subTest(path=path):
+                self.assertEqual(self.moved({path: text}), {"release-skills", "verify-skills"})
+
+    def test_release_only_changes_preserve_the_verifier_pin(self) -> None:
+        path = ".github/workflows/release-skills.yml"
+        self.assertEqual(self.moved({path: FILES[path] + "name: updated release\n"}),
+                         {"release-skills"})
+
+    def test_real_skill_families_share_the_verifier_inputs(self) -> None:
+        verifier = pin_families.inputs(pin_families.FAMILIES["verify-skills"], "HEAD")
+        release = pin_families.inputs(pin_families.FAMILIES["release-skills"], "HEAD")
+        self.assertEqual(verifier, {".github/workflows/verify-skills.yml", "scripts/verify_skills.py"})
+        self.assertLess(verifier, release)
 
     def test_only_the_moved_families_are_named(self) -> None:
         self.assertEqual(self.moved({".github/actions/no-ai-attribution/action.yml": "runs: scan2\n"}),
