@@ -18,6 +18,9 @@ concurrency:
 jobs:
   fuzzing:
     name: fuzz policy parsers
+    # A 60-second random exploration is not a repeatable merge gate, so it
+    # runs after merge, weekly and on demand rather than on pull requests.
+    if: github.event_name != 'pull_request'
     timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
@@ -45,6 +48,9 @@ jobs:
     timeout-minutes: 15
     name: lint and test
     runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
+    # The 26.04 canary leg below reports but never fails the job, so ci-gates
+    # stays green on its failure.
+    continue-on-error: ${{ matrix.runner == 'ubuntu-26.04' }}
     strategy:
       fail-fast: false
       matrix:
@@ -224,3 +230,26 @@ jobs:
 
       - name: Run determinism test
         run: bash tests/test_determinism.sh
+
+  ci-gates:
+    # The one context branch protection requires from this workflow. It fails
+    # unless every job it needs succeeded, when a job in this file is missing
+    # from needs, or when a pull request removes a job without adding a
+    # "# removed-jobs: <job>" comment to this file.
+    needs: [checks, windows]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The merge commit's first parent holds the base branch's workflow.
+          fetch-depth: 2
+          sparse-checkout: .github
+      - name: Require every job to be listed, kept and successful
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: python3 .github/ci/check_gates.py .github/workflows/ci.yml ci-gates --exempt fuzzing
