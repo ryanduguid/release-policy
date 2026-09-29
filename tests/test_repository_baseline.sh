@@ -21,7 +21,7 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
     "docs/attribution-consumers.md": "78f8fbc8be4cc07d0c407a5c4fe2eea746d528194dff457ecdcbde80d6c2ade9",
-    ".github/ci/check_gates.py": "b3ed0c4f1dee4be9ad1daf5803dc3a9af5efcf00c45875db2e458e86234464ec",
+    ".github/ci/check_gates.py": "345dcc8f6c6b1d32bb004a751af94b0b46407dc3bdc6ea95be6d18f77aba0324",
     ".github/actions/no-ai-attribution/action.yml": "60c2e78c85bbe0320dc1d6a2e0218590928f52d1cd496cb8c52ea569a4e8a2e9",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
     ".github/dependabot.yml": "baf5bed4e5b960787d53ee5ea8d9d7376fbc54565d6a392604fb94afb6bc1b66",
