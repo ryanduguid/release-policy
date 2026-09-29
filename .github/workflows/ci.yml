@@ -18,6 +18,9 @@ concurrency:
 jobs:
   fuzzing:
     name: fuzz policy parsers
+    # A 60-second random exploration is not a repeatable merge gate, so it
+    # runs after merge, weekly and on demand rather than on pull requests.
+    if: github.event_name != 'pull_request'
     timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
@@ -45,6 +48,9 @@ jobs:
     timeout-minutes: 15
     name: lint and test
     runs-on: ${{ matrix.runner || 'ubuntu-latest' }}
+    # The 26.04 canary leg below reports but never fails the job, so ci-gates
+    # stays green on its failure.
+    continue-on-error: ${{ matrix.runner == 'ubuntu-26.04' }}
     strategy:
       fail-fast: false
       matrix:
@@ -224,3 +230,45 @@ jobs:
 
       - name: Run determinism test
         run: bash tests/test_determinism.sh
+
+  ci-gates:
+    # The one context branch protection requires from this workflow. It runs
+    # on every event and fails unless every job it needs succeeded, and its
+    # last step fails when a job in this file is missing from needs, so a new
+    # job or matrix leg is enforced without a protection change.
+    needs: [checks, windows]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require every needed job to succeed
+        shell: python
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          import json, os
+          results = json.loads(os.environ["RESULTS"])
+          failed = [name for name, value in results.items() if value["result"] != "success"]
+          if failed:
+              raise SystemExit("Jobs did not succeed: " + ", ".join(failed))
+      - name: Check out the workflow definitions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/workflows
+      - name: Require needs to list every other job in this file
+        shell: python
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          import json, os, re
+          text = open(".github/workflows/ci.yml", encoding="utf-8").read()
+          keys = re.findall(r"(?m)^  [\"']?([A-Za-z_][\w-]*)[\"']?:", text.split("\njobs:\n", 1)[1])
+          jobs = set(keys)
+          if "ci-gates" not in jobs:
+              raise SystemExit("Could not read the job list; the gate check needs updating")
+          missing = sorted(jobs - {"ci-gates", "fuzzing"} - set(json.loads(os.environ["RESULTS"])))
+          if missing:
+              raise SystemExit("Add these jobs to needs: " + ", ".join(missing))
