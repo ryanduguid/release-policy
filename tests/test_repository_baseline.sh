@@ -21,12 +21,12 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
     "docs/attribution-consumers.md": "78f8fbc8be4cc07d0c407a5c4fe2eea746d528194dff457ecdcbde80d6c2ade9",
-    ".github/ci/check_gates.py": "b19ac89274a12c86161c7a15bb145058e88d17c82ca48ccf332af5b1fb3099d4",
+    ".github/ci/check_gates.py": "a234ed2b796052ec56787eee2d62eaa2a63bca482d337b2b4b8f817b1863caf6",
     ".github/actions/no-ai-attribution/action.yml": "60c2e78c85bbe0320dc1d6a2e0218590928f52d1cd496cb8c52ea569a4e8a2e9",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
     ".github/dependabot.yml": "baf5bed4e5b960787d53ee5ea8d9d7376fbc54565d6a392604fb94afb6bc1b66",
-    ".github/workflows/ci.yml": "97a0d9287fcf2e327c03b4e17fd561bf06899e3a367bd242e65543ba3f909770",
-    ".github/workflows/codeql.yml": "4ded51f6bbc746e6bf2d18fb4e7db03136cc9e5c857c53263acd2bffd1117d54",
+    ".github/workflows/ci.yml": "0615b25222d8ce6f40b0f20da44004563be4ef2dbc904905274cf968895ed3cc",
+    ".github/workflows/codeql.yml": "f28cc52406c869df5f2dad02d74bb416b4c1bffcbdd0ed0b967f2f6b55c7f4ef",
     ".github/workflows/scorecard.yml": "b89c4f11696e42e80a6e0feaf6f62ab732ff5bec0af4dd1efaecf5ff1d2bca6f",
     ".github/workflows/no-ai-attribution.yml": "2c517d6f7eda8667c8a2eba186ef15d9e27b4c91d4617a39083b0a31f26f2834",
     ".github/workflows/attribution-policy.yml": "c956c865c80e77d87d4f86eadee8dca6c95991ae2452db96599e6a4b402b20b1",
