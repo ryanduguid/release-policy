@@ -48,6 +48,12 @@ in organisation repositories need someone with repository Write access or
 greater to start a fresh manual workflow. This explicitly authorises a paid
 review. GitHub's Maintain/Admin roles are not required.
 
+The caller skips ordinary owner PRs in the Dependabot bridge and other authors
+in the automatic owner path. Its event prefilters do not grant authority: the
+core verifies actual authors and run associations through REST before source
+capture or spending. The bridge automatically accepts runs started by
+Dependabot. A person reopening a Dependabot PR must use a fresh manual dispatch.
+
 GitHub does not inherit Actions workflows from an account's `.github`
 repository. Install a pinned caller in every repository you own. For PRs in
 other people's public repositories, run local capture and review; their
@@ -87,6 +93,7 @@ replaces its YAML example and user response prefix with JSON instructions
 before tokenisation. A
 changed native prompt layout fails before inference.
 Both prompts include the same strict JSON schema. GLM requests schema mode;
+an explicit nesting example keeps all four required fields inside `review`.
 MiMo requests JSON object mode after schema requests repeated complete results
 until truncation during qualification. Local and native
 validators check every response, including fields, priority tags and source

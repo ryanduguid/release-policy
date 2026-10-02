@@ -21,8 +21,9 @@ jobs:
     if: >-
       github.run_attempt == 1 && (
       (github.event_name == 'pull_request_target' &&
-       !github.event.pull_request.draft && github.event.pull_request.user.login != 'dependabot[bot]') ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+       !github.event.pull_request.draft && github.event.pull_request.user.login == github.repository_owner) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.actor.login == 'dependabot[bot]') ||
       github.event_name == 'workflow_dispatch')
     permissions:
       contents: read
@@ -30,6 +31,6 @@ jobs:
       pull-requests: read
       statuses: write
     # Pin the full reviewed commit containing the reusable reviewer workflow.
-    uses: ryanduguid/release-policy/.github/workflows/pr-review.yml@0a20032a86e608e3ac4a3c091a8c11d883731608
+    uses: ryanduguid/release-policy/.github/workflows/pr-review.yml@bf62430cfd67f974ebe52f2cac255e1bfd209d2c
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

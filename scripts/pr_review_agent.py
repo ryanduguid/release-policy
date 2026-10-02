@@ -84,6 +84,7 @@ def prepare_prompts(snapshot: dict[str, Any], groups: list[list[dict[str, Any]]]
             "unsupported_native_prompt_format")
     system_template = definitions.replace("The output must be a YAML object", "The output must be a JSON object")
     system_template += "\nReturn exactly one JSON object with one top-level review field. The review must contain exactly key_issues_to_review, security_concerns, merge_recommendation and risk_level. Omit relevant_tests and every other optional field. No YAML or Markdown fences."
+    system_template += "\nAll four fields belong inside review. Put the security result at review.security_concerns, never beside review at the root. Output nesting example (choose the values from the evidence): " + canonical({"review": {"key_issues_to_review": [], "security_concerns": "No", "merge_recommendation": "merge_with_caution", "risk_level": "medium"}}).decode()
     system_template += "\nThe JSON must satisfy this exact schema, including priority tags in every issue_header:\n" + canonical(REVIEW_SCHEMA).decode()
     user_template, user_marker, user_suffix = settings.pr_review_prompt.user.partition(
         "Response (should be a valid YAML, and nothing else):")

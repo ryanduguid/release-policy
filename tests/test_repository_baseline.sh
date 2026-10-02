@@ -21,9 +21,9 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
     ".github/workflows/pr-review-trigger.yml": "6f2da6fecf622d02643f0d97172abe24c1f009049a09da63fea2a34f87783542",
-    ".github/workflows/pr-review-consumer.yml": "47c2192ebb0e90e726eec3ded727dd5f4755cd05682748d43bf5527e3c4a5810",
+    ".github/workflows/pr-review-consumer.yml": "b4ebc7dd1dbf2f26f846998e33743b037c6047210755407a2066396a8ca3c812",
     ".github/pr-review-build-wheels.txt": "e75343a5ed6ddcd4f3c9fdb52e8a635fd52c4509dca5f0f22d2b29b0d22c9a18",
-    "docs/pr-review.md": "aec2046c087dd56411cb3893fba69d91def3037186f3930a730832e49e0e208f",
+    "docs/pr-review.md": "4e6602ac68dc64133e208ecca982037d176581d22cd352914644a76703d0262c",
     ".github/pr-review-policy.json": "2c6c3aa9ad16161af41a330578789117f93dcd499f49c0b553aaeb789f45f49e",
     ".github/workflows/pr-review.yml": "bb81c6e6983ee2376c4fc601042d3189d3fa195662692c0cf50a44e27d2cb915",
     "docs/attribution-consumers.md": "78f8fbc8be4cc07d0c407a5c4fe2eea746d528194dff457ecdcbde80d6c2ade9",

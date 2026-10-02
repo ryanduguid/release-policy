@@ -509,4 +509,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # The adapter imports this module; share its sanitised exception type.
+    import pr_review
+
+    raise SystemExit(pr_review.main())

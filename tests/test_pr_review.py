@@ -648,6 +648,8 @@ class ReviewAgentTests(unittest.TestCase):
                 system = prompts[review.MODELS[0]][0][0]
                 self.assertTrue(system.startswith("Review only concrete defects.\nPreserve uncertainty.\n"))
                 self.assertIn("The output must be a JSON object", system)
+                self.assertIn("review.security_concerns, never beside review at the root", system)
+                self.assertIn('"review":{"key_issues_to_review":[],"merge_recommendation":"merge_with_caution","risk_level":"medium","security_concerns":"No"}', system)
                 self.assertIn(review.canonical(review.REVIEW_SCHEMA).decode(), system)
                 self.assertNotIn("```yaml", system)
                 self.assertNotIn("Answer should be a valid YAML", system)
@@ -693,6 +695,22 @@ class ReviewCliTests(unittest.TestCase):
                                                   "GITHUB_STEP_SUMMARY": ""})
         environment.start()
         self.addCleanup(environment.stop)
+
+    def test_script_preserves_the_adapters_sanitised_failure_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            policy_path, snap_path = root / "policy.json", root / "snapshot.json"
+            review.write_json(policy_path, POLICY)
+            review.write_json(snap_path, snapshot())
+            args = [str(ROOT / "scripts/pr_review.py"), "review", "--policy", str(policy_path),
+                    "--policy-sha", POLICY_SHA, "--snapshot", str(snap_path)]
+            errors = io.StringIO()
+            with mock.patch.object(sys, "argv", args), \
+                    mock.patch.object(agent, "review_snapshot", side_effect=review.ReviewError("key_budget_exhausted")), \
+                    redirect_stderr(errors), self.assertRaises(SystemExit) as caught:
+                runpy.run_path(args[0], run_name="__main__")
+            self.assertEqual(caught.exception.code, 1)
+            self.assertIn("key_budget_exhausted", errors.getvalue())
 
     def test_reruns_cannot_read_source_spend_or_mutate_status(self):
         args = ["--policy", "unused.json", "--policy-sha", POLICY_SHA, "--repo", REPO]
