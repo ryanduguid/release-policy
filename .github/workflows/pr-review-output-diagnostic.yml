@@ -83,6 +83,7 @@ jobs:
                        "unexpected_synthetic_control")
           record = {"context_hash": snapshot["context_hash"], "receipts": []}
           def send(url, key, payload=None):
+              record["request_stage"] = "key_preflight" if payload is None else payload["model"]
               response = core.request_json(url, key, payload)
               if payload is not None:
                   encoded = json.dumps(response)
@@ -92,8 +93,19 @@ jobs:
                   record["receipts"].append(receipt)
                   core.write_json(Path("evidence/diagnosis.json"), record)
               return response
+          def parse(content):
+              try:
+                  return agent.parse_review(content)
+              except Exception as error:
+                  record["parser_exception"] = type(error).__name__
+                  if isinstance(error, json.JSONDecodeError):
+                      record["json_position"] = {"line": error.lineno, "column": error.colno, "offset": error.pos}
+                  from pydantic import ValidationError
+                  if isinstance(error, ValidationError):
+                      record["schema_errors"] = error.errors(include_url=False, include_input=False, include_context=False)
+                  raise
           try:
-              record["report"] = agent.review_snapshot(snapshot, policy, send)
+              record["report"] = agent.review_snapshot(snapshot, policy, send, parser=parse)
               record["complete"] = True
           except Exception as error:
               record.update(complete=False, error=str(error) if isinstance(error, core.ReviewError) else type(error).__name__)
