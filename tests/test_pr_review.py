@@ -689,7 +689,8 @@ class ReviewAgentTests(unittest.TestCase):
 
 class ReviewCliTests(unittest.TestCase):
     def setUp(self):
-        environment = mock.patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": "1", "GITHUB_ACTIONS": "false"})
+        environment = mock.patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": "1", "GITHUB_ACTIONS": "false",
+                                                  "GITHUB_STEP_SUMMARY": ""})
         environment.start()
         self.addCleanup(environment.stop)
 
