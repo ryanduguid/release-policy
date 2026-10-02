@@ -11,6 +11,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from test_pr_review import (
@@ -435,6 +436,10 @@ class ReceiptTests(unittest.TestCase):
             path = Path(directory) / "receipts.json"
             journal = receipts.ReceiptJournal(path, snap, groups, POLICY, 1)
             journal.update(0, transport_state="request_intended")
+            windows_os = SimpleNamespace(fdopen=os.fdopen, fsync=os.fsync, replace=os.replace)
+            with mock.patch.object(receipts, "os", windows_os):
+                journal.save()
+            self.assertEqual(review.read_json(path), journal.data)
             prior = path.read_bytes()
             with mock.patch.object(receipts.os, "replace", side_effect=OSError), self.assertRaises(OSError):
                 journal.update(0, transport_state="response_received")
