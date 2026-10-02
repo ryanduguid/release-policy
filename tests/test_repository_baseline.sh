@@ -20,6 +20,9 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents. Keeping action pins and permission maps inside the exact
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
+    "docs/pr-review.md": "492780cb422976cbd205538ec9aad189bdd246761f547b92dab2dea547dd4043",
+    ".github/pr-review-policy.json": "2c6c3aa9ad16161af41a330578789117f93dcd499f49c0b553aaeb789f45f49e",
+    ".github/workflows/pr-review.yml": "187f3aff5057d1ee2d5dabc7f696fea52bbd9d61cc0d715f543334be23a8d4ac",
     "docs/attribution-consumers.md": "78f8fbc8be4cc07d0c407a5c4fe2eea746d528194dff457ecdcbde80d6c2ade9",
     ".github/ci/check_gates.py": "eda4b878cde2c655247ef3b4bf388cf72d875506316d4d2c882c76a0bb85ecd2",
     ".github/actions/no-ai-attribution/action.yml": "60c2e78c85bbe0320dc1d6a2e0218590928f52d1cd496cb8c52ea569a4e8a2e9",
@@ -35,7 +38,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/release-python.yml": "a884408be5d8a279336a8bf7d0c86db670561839822e7e8dbf39420041499be7",
     ".github/workflows/release-skills.yml": "ba024dff4b9587833da59fae4e32b2df809ffea1198942461cf959978a294de0",
     ".github/workflows/verify-skills.yml": "113803d80bc8ab0d7bbb990cdbf10522865929a74a76aff33b8f5dd60d8e4bf0",
-    "README.md": "3f0bec43cfc7ce61f7244fa8b2aa8ce8a6b7587298485d626d18e48bcbee4c0c",
+    "README.md": "27925f910b09d5652441289fbf834fbf4438d79bc8f32fa3a9c64048b705c37f",
     "docs/python-consumers.md": "2c80ac89e6d98c9c077865592883f96eaed72f9b27fd40c7c055ce27c4e33166",
     "docs/pypi-publishing.md": "419a92d216cde938ab0f0711a3d1fca56842396ca973058a4ca3796a6068b694",
     "docs/archive-consumers.md": "0e71c471994818790e54074c0c483053afcc9ffbccfac764c0e15e91ea17bfc7",

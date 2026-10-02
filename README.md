@@ -47,6 +47,7 @@ a full policy commit.
 - [Skill verification and releases](docs/skill-consumers.md)
 - [Attribution checks](docs/attribution-consumers.md)
 - [The egress check](docs/egress-check.md)
+- [Independent PR reviews with your own API key](docs/pr-review.md)
 - [Prerequisites](docs/consumer-prerequisites.md)
 - [Re-pinning consumers](docs/re-pinning.md)
 - [Guarantees and canary evidence](docs/guarantees-and-evidence.md)
