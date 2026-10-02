@@ -88,7 +88,7 @@ class PublicReviewTests(unittest.TestCase):
                 public.capture(URL, POLICY, POLICY_SHA, "scanner", fetch)
             fetch.assert_not_called()
         with mock.patch.object(public, "request_json", return_value={}) as send, \
-                mock.patch.dict(os.environ, {"GH_TOKEN": "synthetic-token-must-not-be-used"}):
+                mock.patch.dict(os.environ, {"GH_TOKEN": "synthetic-token-must-not-be-used"}):  # nosec B105: fabricated sentinel
             public.anonymous("repos/example/repository")
             send.assert_called_once_with("https://api.github.com/repos/example/repository", "")
 

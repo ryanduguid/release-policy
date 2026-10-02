@@ -35,12 +35,12 @@ def metadata(response: Any, model: str, provider: str) -> dict[str, Any]:
     numbers: dict[str, Any] = {}
     for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
         value = usage.get(field)
-        numbers[field] = value if type(value) is int and 0 <= value <= 1_000_000_000 else None
+        numbers[field] = value if type(value) is int and 0 <= value <= 1_000_000_000 else None  # pylint: disable=unidiomatic-typecheck
     cost = usage.get("cost")
     # Bound integer representation; retain finite float bills even above the
     # spending ceiling. Diagnostic metadata never releases a reservation.
-    numbers["cost"] = cost if ((type(cost) is int and 0 <= cost < 10**24)
-                               or (type(cost) is float and math.isfinite(cost) and cost >= 0)) else None
+    numbers["cost"] = cost if ((type(cost) is int and 0 <= cost < 10**24)  # pylint: disable=unidiomatic-typecheck
+                               or (type(cost) is float and math.isfinite(cost) and cost >= 0)) else None  # pylint: disable=unidiomatic-typecheck
     choices = data.get("choices")
     finish = choices[0].get("finish_reason") if (isinstance(choices, list) and len(choices) == 1
                                                and isinstance(choices[0], dict)) else None

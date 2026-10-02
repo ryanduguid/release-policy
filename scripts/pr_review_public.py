@@ -69,19 +69,19 @@ def public_identity(fetch: Fetch, repo: str, number: int) -> dict[str, Any]:
     repository = fetch(f"repos/{repo}")
     canonical = repository["full_name"]
     require(parse_url(f"https://github.com/{canonical}/pull/{number}")[0].casefold() == repo.casefold()
-            and repository["private"] is False and type(repository["id"]) is int
+            and repository["private"] is False and type(repository["id"]) is int  # pylint: disable=unidiomatic-typecheck
             and 0 < repository["id"] != POLICY_REPOSITORY_ID, "public_target_required")
     pr = pr_metadata(fetch, canonical, number)
     require(pr["number"] == number and pr["user"]["type"] == "User"
-            and type(pr["user"]["id"]) is int and pr["user"]["id"] == OWNER_ID,
+            and type(pr["user"]["id"]) is int and pr["user"]["id"] == OWNER_ID,  # pylint: disable=unidiomatic-typecheck
             "central_author_required")
-    require(type(pr["changed_files"]) is int and 0 < pr["changed_files"] <= 3000,
+    require(type(pr["changed_files"]) is int and 0 < pr["changed_files"] <= 3000,  # pylint: disable=unidiomatic-typecheck
             "unsupported_file_count")
     bound = {"repository": canonical, "repository_id": repository["id"], "author_id": OWNER_ID,
              "changed_files": pr["changed_files"]}
     for side in ("head", "base"):
         source = pr[side]["repo"]
-        require(source and source["private"] is False and type(source["id"]) is int
+        require(source and source["private"] is False and type(source["id"]) is int  # pylint: disable=unidiomatic-typecheck
                 and source["id"] > 0, "public_source_repository_required")
         bound[side + "_repository_id"] = source["id"]
         bound[side] = pr[side]["sha"]

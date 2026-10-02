@@ -265,7 +265,7 @@ def collect(fetch: Fetch, repo: str, number: int, policy_sha: str,
         verify_patch(frozen[-1]["before"], frozen[-1]["after"], patch)
     current = pr_metadata(fetch, repo, number)
     require(identity(repo, number, pr) == identity(repo, number, current)
-            and type(current["changed_files"]) is int and current["changed_files"] == len(frozen),
+            and type(current["changed_files"]) is int and current["changed_files"] == len(frozen),  # pylint: disable=unidiomatic-typecheck
             "revision_changed_during_capture")
     snapshot = {"schema": 1, **identity(repo, number, pr), "policy_sha": policy_sha,
                 "policy_hash": digest(policy), "engine_sha": PR_AGENT_SHA, "merge_base": merge_base,
@@ -427,7 +427,7 @@ def validate_generation_receipts(report: dict[str, Any]) -> None:
                     and generation["finish_reason"] == "stop", "incomplete_generation_receipt")
             usage = generation["usage"]
             require(set(usage) == {"prompt_tokens", "completion_tokens", "cost"}
-                    and all(type(usage[field]) is int and usage[field] > 0
+                    and all(type(usage[field]) is int and usage[field] > 0  # pylint: disable=unidiomatic-typecheck
                             for field in ("prompt_tokens", "completion_tokens"))
                     and type(usage["cost"]) in (int, float) and math.isfinite(usage["cost"])
                     and usage["cost"] >= 0, "invalid_generation_usage")
@@ -465,7 +465,7 @@ def assess_report(snapshot: dict[str, Any], report: dict[str, Any] | None, polic
         require(identity(snapshot["repository"], snapshot["pr"], current)
                 == {k: snapshot[k] for k in ("repository", "pr", "head", "base")}
                 and current["base"]["repo"].get("id") == snapshot["repository_id"]
-                and type(current["changed_files"]) is int
+                and type(current["changed_files"]) is int  # pylint: disable=unidiomatic-typecheck
                 and current["changed_files"] == len(snapshot["files"]), "stale_review")
         if all(clear_review(result) for entry in reviews for result in entry["results"]):
             state = "success"
@@ -477,8 +477,8 @@ def publish(snapshot: dict[str, Any], report: dict[str, Any] | None, policy: dic
     require(snapshot.get("snapshot_kind") == "installed_pr_review_v1"
             and snapshot.get("publication_capability") == "status"
             and snapshot.get("caller_repository") == snapshot["repository"]
-            and type(snapshot.get("repository_id")) is int and snapshot["repository_id"] > 0
-            and type(snapshot.get("caller_repository_id")) is int
+            and type(snapshot.get("repository_id")) is int and snapshot["repository_id"] > 0  # pylint: disable=unidiomatic-typecheck
+            and type(snapshot.get("caller_repository_id")) is int  # pylint: disable=unidiomatic-typecheck
             and snapshot["caller_repository_id"] == snapshot["repository_id"], "status_capability_required")
     state = assess_report(snapshot, report, policy, policy_sha, fetch, jobs_ok)
     post(f"repos/{snapshot['repository']}/statuses/{snapshot['head']}",
@@ -508,8 +508,8 @@ def failed_status(minimal: dict[str, Any], repo: str, post: Callable[[str, Any],
             and minimal.get("snapshot_kind") == "installed_pr_review_v1"
             and minimal.get("publication_capability") == "status"
             and minimal.get("caller_repository") == repo
-            and type(minimal.get("repository_id")) is int and minimal["repository_id"] > 0
-            and type(minimal.get("caller_repository_id")) is int
+            and type(minimal.get("repository_id")) is int and minimal["repository_id"] > 0  # pylint: disable=unidiomatic-typecheck
+            and type(minimal.get("caller_repository_id")) is int  # pylint: disable=unidiomatic-typecheck
             and minimal["caller_repository_id"] == minimal["repository_id"], "invalid_failure_identity")
     post(f"repos/{repo}/statuses/{minimal['head']}",
          {"state": "failure", "context": CONTEXT, "description": "Review failed or was cancelled; inspect this run"})
@@ -542,7 +542,7 @@ def main(argv: list[str] | None = None) -> int:
                 number = resolve_event(read_json(Path(os.environ["GITHUB_EVENT_PATH"])),
                                        os.environ["GITHUB_EVENT_NAME"], args.repo, github)
             pr = pr_metadata(github, args.repo, number)
-            require(type(pr["base"]["repo"].get("id")) is int and pr["base"]["repo"]["id"] > 0,
+            require(type(pr["base"]["repo"].get("id")) is int and pr["base"]["repo"]["id"] > 0,  # pylint: disable=unidiomatic-typecheck
                     "invalid_repository_id")
             minimal = identity(args.repo, number, pr)
             minimal.update(snapshot_kind="installed_pr_review_v1", publication_capability="status",
