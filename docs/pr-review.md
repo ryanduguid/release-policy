@@ -93,6 +93,7 @@ replaces its YAML example and user response prefix with JSON instructions
 before tokenisation. A
 changed native prompt layout fails before inference.
 Both prompts include the same strict JSON schema. GLM requests schema mode;
+an explicit nesting example keeps all four required fields inside `review`.
 MiMo requests JSON object mode after schema requests repeated complete results
 until truncation during qualification. Local and native
 validators check every response, including fields, priority tags and source
