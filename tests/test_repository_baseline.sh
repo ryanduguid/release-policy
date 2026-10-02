@@ -21,7 +21,7 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
     ".github/workflows/pr-review-trigger.yml": "6f2da6fecf622d02643f0d97172abe24c1f009049a09da63fea2a34f87783542",
-    ".github/workflows/pr-review-consumer.yml": "47c2192ebb0e90e726eec3ded727dd5f4755cd05682748d43bf5527e3c4a5810",
+    ".github/workflows/pr-review-consumer.yml": "585d4f7110058126b3c81c16ae5f58b88931613c0568f4c408128188b4071da7",
     ".github/pr-review-build-wheels.txt": "e75343a5ed6ddcd4f3c9fdb52e8a635fd52c4509dca5f0f22d2b29b0d22c9a18",
     "docs/pr-review.md": "aec2046c087dd56411cb3893fba69d91def3037186f3930a730832e49e0e208f",
     ".github/pr-review-policy.json": "2c6c3aa9ad16161af41a330578789117f93dcd499f49c0b553aaeb789f45f49e",
