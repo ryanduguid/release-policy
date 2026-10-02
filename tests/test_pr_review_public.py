@@ -99,6 +99,7 @@ class PublicReviewTests(unittest.TestCase):
             repo = {"id": 123, "full_name": REPO, "private": False, field: value}
             cases.append(public_fetch(repo))
         for field, value in (("state", "closed"), ("draft", True), ("number", PR + 1),
+                             ("changed_files", 3001), ("changed_files", 0), ("changed_files", True),
                              ("user", {"id": 1, "type": "User"}),
                              ("user", {"id": True, "type": "User"}),
                              ("user", {"id": public.OWNER_ID, "type": "Bot"})):
@@ -174,8 +175,15 @@ class PublicReviewTests(unittest.TestCase):
             with self.assertRaisesRegex(review.ReviewError, "central_report_capability_required"):
                 public.verify_live({**candidate, "snapshot_kind": "unknown"}, POLICY, POLICY_SHA, public_fetch())
         post.assert_not_called()
+        for field, value in (("repository_id", None), ("repository_id", -1),
+                             ("caller_repository_id", True), ("caller_repository_id", 456)):
+            candidate = {**snapshot(), field: value}
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(review.ReviewError, "status_capability_required"):
+                review.publish(candidate, model_report(candidate), POLICY, POLICY_SHA, fake_fetch(), post, True)
+            with self.assertRaisesRegex(review.ReviewError, "invalid_failure_identity"):
+                review.failed_status(candidate, REPO, post)
         report = model_report(snapshot())
-        report["reviews"][1]["generations"][0]["id"] = report["reviews"][0]["generations"][0]["id"]
+        report["reviews"][1]["generations"][0]["generation_id_sha256"] = report["reviews"][0]["generations"][0]["generation_id_sha256"]
         with self.assertRaisesRegex(review.ReviewError, "duplicate_generation_id"):
             review.publish(snapshot(), report, POLICY, POLICY_SHA, fake_fetch(), post, True)
         post.assert_not_called()
@@ -221,6 +229,124 @@ class PublicReviewTests(unittest.TestCase):
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_public_serialisation_rejects_raw_ids_and_invalid_digest_or_usage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            report = model_report()
+            review.write_report(path, report)
+            prior = path.read_bytes()
+            cases = [{**report, "schema": 1}, {**report, "generation_id": "gen-private-canary"}]
+            candidate = copy.deepcopy(report)
+            candidate["reviews"][0]["generation_id"] = "gen-private-canary"
+            cases.append(candidate)
+            for field, value in (("id", "gen-private-canary"), ("generation_id_sha256", None),
+                                 ("generation_id_sha256", "gen-private-canary")):
+                candidate = copy.deepcopy(report)
+                candidate["reviews"][0]["generations"][0][field] = value
+                cases.append(candidate)
+            for changes in ({"raw_id": "gen-private-canary"}, {"prompt_tokens": True},
+                            {"completion_tokens": 0}, {"cost": "0"}, {"cost": float("inf")}, {"cost": -1}):
+                candidate = copy.deepcopy(report)
+                candidate["reviews"][0]["generations"][0]["usage"].update(changes)
+                cases.append(candidate)
+            for candidate in cases:
+                with self.assertRaises(review.ReviewError):
+                    review.write_report(path, candidate)
+                self.assertEqual(path.read_bytes(), prior)
+            journal_path = Path(directory) / "receipts.json"
+            snap = snapshot()
+            journal = receipts.ReceiptJournal(journal_path, snap, review.chunks(snap, POLICY), POLICY, 1)
+            with self.assertRaisesRegex(review.ReviewError, "invalid_receipt_fields"):
+                journal.update(0, generation_id="gen-private-canary")
+            self.assertNotIn("gen-private-canary", journal_path.read_text())
+
+    def test_digest_is_exact_ascii_and_raw_response_id_cannot_escape_report(self):
+        identifier = "gen-AsCiICanary09"
+        data = receipts.metadata(completion(review.MODELS[0], id=identifier), review.MODELS[0], "Parasail")
+        self.assertEqual(data["generation_id_sha256"], review.hashlib.sha256(identifier.encode("ascii")).hexdigest())
+        self.assertTrue(data["generation_id_valid"])
+        self.assertNotIn(identifier, json.dumps(data))
+        self.assertIsNone(receipts.metadata(completion(review.MODELS[0], id=identifier + " "),
+                                           review.MODELS[0], "Parasail")["generation_id_sha256"])
+        prompts = {model: [("system", "context")] for model in review.MODELS}
+
+        def send(url, key, body=None, **kwargs):
+            if body is None:
+                return {"data": {"limit": None, "limit_remaining": None}}
+            result = clean_result()
+            result["key_issues_to_review"] = [{**finding(), "issue_content": identifier}]
+            return completion(body["model"], id=identifier if body["model"] == review.MODELS[0] else "gen-other",
+                              choices=[{"finish_reason": "stop", "message": {"content": json.dumps({"review": result})}}])
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+            path = Path(directory) / "receipts.json"
+            with self.assertRaisesRegex(review.ReviewError, "raw_generation_id_in_report"):
+                agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
+                                      lambda text: json.loads(text)["review"], receipt_path=path)
+            self.assertNotIn(identifier, path.read_text())
+            self.assertFalse(review.read_json(path)["finished"])
+
+    def test_malformed_envelope_and_http_errors_retain_observed_unknown_receipt(self):
+        prompts = {model: [("system", "context")] for model in review.MODELS}
+        from urllib.error import HTTPError
+
+        for envelope in (b"malformed private body", b'{"cost":0,"cost":1}',
+                         b'{"cost":NaN}', b"x" * (review.MAX_RESPONSE_BYTES + 1),
+                         HTTPError("url", 500, "private error", {}, None)):
+            key_response = mock.MagicMock()
+            key_response.__enter__.return_value.read.return_value = b'{"data":{"limit":null,"limit_remaining":null}}'
+            paid_response = mock.MagicMock()
+            paid_response.__enter__.return_value.read.return_value = envelope
+            opener = mock.Mock()
+            opener.open.side_effect = [key_response, envelope if isinstance(envelope, HTTPError) else paid_response]
+            with tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}), \
+                    mock.patch.object(review, "build_opener", return_value=opener):
+                path = Path(directory) / "receipts.json"
+                with self.assertRaises(review.ReviewError):
+                    agent.review_snapshot(snapshot(), POLICY, prompt_builder=lambda *args: prompts, receipt_path=path)
+                data = review.read_json(path)
+                self.assertEqual(data["calls"][0]["transport_state"], "response_observed")
+                self.assertIsNone(data["calls"][0]["generation_id_sha256"])
+                self.assertIsNone(data["calls"][0]["usage"]["cost"])
+                self.assertEqual(data["calls"][1]["transport_state"], "not_started")
+                self.assertFalse(data["finished"])
+                self.assertNotIn("private", path.read_text())
+                self.assertEqual(opener.open.call_count, 2)
+
+    def test_final_journal_write_failure_vetoes_cli_report(self):
+        prompts = {model: [("system", "context")] for model in review.MODELS}
+        original_save = receipts.ReceiptJournal.save
+        original_review = agent.review_snapshot
+
+        def failing_save(journal):
+            if journal.data["finished"]:
+                raise OSError("private disk error")
+            original_save(journal)
+
+        def send(url, key, body=None, **kwargs):
+            return {"data": {"limit": None, "limit_remaining": None}} if body is None else completion(body["model"])
+
+        def run(snap, policy, *, receipt_path=None):
+            return original_review(snap, policy, send, lambda *args: prompts,
+                                   lambda text: clean_result(), receipt_path=receipt_path)
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic", "GITHUB_RUN_ATTEMPT": "1"}), \
+                mock.patch.object(receipts.ReceiptJournal, "save", failing_save), \
+                mock.patch.object(agent, "review_snapshot", side_effect=run), redirect_stderr(io.StringIO()) as errors:
+            root = Path(directory)
+            policy, snap, report = (root / name for name in ("policy.json", "snapshot.json", "review.json"))
+            review.write_json(policy, POLICY)
+            review.write_json(snap, snapshot())
+            self.assertEqual(review.main(["review", "--policy", str(policy), "--policy-sha", POLICY_SHA,
+                                          "--snapshot", str(snap), "--report", str(report)]), 1)
+            self.assertFalse(report.exists())
+            data = review.read_json(report.with_suffix(".receipts.json"))
+            self.assertFalse(data["finished"])
+            self.assertEqual([call["output_state"] for call in data["calls"]], ["valid", "valid"])
+            self.assertNotIn("private disk", errors.getvalue())
+
     def test_metadata_whitelists_bounded_numbers_ids_and_enum_values(self):
         model = review.MODELS[0]
         provider = POLICY["routes"][model]["name"]
@@ -235,10 +361,11 @@ class ReceiptTests(unittest.TestCase):
         self.assertIsNone(receipts.metadata(completion(model, usage=[]), model, provider)["usage"]["cost"])
         for identifier in (None, "raw body", "gen-" + "a" * 129, "gen-sk-secret", "gen-ü", "gen-line\nbreak"):
             self.assertIsNone(receipts.generation_id(identifier))
-        self.assertEqual(receipts.generation_id("generation-123"), "generation-123")
+        self.assertIsNone(receipts.generation_id("generation-123"))
         data = receipts.metadata(completion(model, model="hostile-model", provider="hostile-provider",
                                             error="private-body", id="generation-123"), model, provider)
-        self.assertFalse(data["queryable"])
+        self.assertFalse(data["generation_id_valid"])
+        self.assertIsNone(data["generation_id_sha256"])
         self.assertFalse(data["model_matches"])
         self.assertFalse(data["provider_matches"])
         self.assertNotIn("hostile", json.dumps(data))
@@ -250,7 +377,7 @@ class ReceiptTests(unittest.TestCase):
             prompts = {model: [("system", "identical private context")] for model in review.MODELS}
             paid = []
 
-            def send(url, key, body=None):
+            def send(url, key, body=None, **kwargs):
                 if url.endswith("/key"):
                     return {"data": {"limit": None, "limit_remaining": None}}
                 paid.append(body["model"])
@@ -270,7 +397,7 @@ class ReceiptTests(unittest.TestCase):
             self.assertNotIn("private", path.read_text())
             self.assertEqual(list(Path(directory).iterdir()), [path])
             report = agent.review_snapshot(snapshot(), POLICY,
-                                           lambda url, key, body=None: {"data": {"limit": None, "limit_remaining": None}}
+                                           lambda url, key, body=None, **kwargs: {"data": {"limit": None, "limit_remaining": None}}
                                            if body is None else completion(body["model"]),
                                            lambda *args: prompts, lambda text: clean_result(), receipt_path=path)
             self.assertTrue(report["complete"])
@@ -285,7 +412,7 @@ class ReceiptTests(unittest.TestCase):
                 agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts, receipt_path=path)
             data = review.read_json(path)
             self.assertEqual(data["calls"][0]["transport_state"], "request_intended")
-            self.assertIsNone(data["calls"][0]["generation_id"])
+            self.assertIsNone(data["calls"][0]["generation_id_sha256"])
             self.assertIsNone(data["calls"][0]["usage"]["cost"])
             self.assertEqual(send.call_count, 2)
             for identifier in ("generation-123", "gen-duplicate"):

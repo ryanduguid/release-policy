@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import re
@@ -13,8 +14,11 @@ from typing import Any
 from pr_review import MODELS, canonical, digest, require
 
 MAX_JOURNAL_BYTES = 131072
-_ID = re.compile(r"(?:gen|generation)-[0-9A-Za-z-]+", re.ASCII)
+_ID = re.compile(r"gen-[0-9A-Za-z-]+", re.ASCII)
 _FINISH = {"stop", "length", "content_filter", "error", "tool_calls"}
+_CALL_FIELDS = {"model", "provider", "chunk_hash", "transport_state", "output_state",
+                "generation_id_sha256", "generation_id_valid", "model_matches", "provider_matches",
+                "finish_reason", "usage"}
 
 
 def generation_id(value: Any) -> str | None:
@@ -41,7 +45,8 @@ def metadata(response: Any, model: str, provider: str) -> dict[str, Any]:
     finish = choices[0].get("finish_reason") if (isinstance(choices, list) and len(choices) == 1
                                                and isinstance(choices[0], dict)) else None
     identifier = generation_id(data.get("id"))
-    return {"generation_id": identifier, "queryable": bool(identifier and identifier.startswith("gen-")),
+    return {"generation_id_sha256": hashlib.sha256(identifier.encode("ascii")).hexdigest() if identifier else None,
+            "generation_id_valid": identifier is not None,
             "model_matches": data.get("model") == model if "model" in data else None,
             "provider_matches": data.get("provider") == provider if "provider" in data else None,
             "finish_reason": finish if isinstance(finish, str) and finish in _FINISH else None,
@@ -63,6 +68,7 @@ class ReceiptJournal:
         self.save()
 
     def save(self) -> None:
+        require(all(set(call) == _CALL_FIELDS for call in self.data["calls"]), "invalid_receipt_fields")
         if self.path is None:
             return
         raw = canonical(self.data) + b"\n"

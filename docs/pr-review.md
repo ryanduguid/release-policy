@@ -27,7 +27,7 @@ Tests, linters, security checks and human review remain necessary.
    [GitHub's requirements](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target).
    GitHub's announced enforcement date is 2 November 2026.
 5. Run a manual review of an open, non-draft public PR. Confirm both generation
-   IDs, model IDs, provider names, billed usage and coverage in `review.json`.
+   ID digests, model IDs, provider names, billed usage and coverage in `review.json`.
    Inspect the publisher's summary and the status on that exact head commit.
    Test key limit/reset metadata, exhaustion and concurrent capped requests,
    missing keys, stale revisions, provider failures, forks, Dependabot,
@@ -228,18 +228,37 @@ commands remain available outside Actions.
 Source and complete review artefacts expire after one day. Sanitised receipt
 artefacts expire after 30 days. The runner atomically saves a bounded journal
 before each intended paid request and saves response metadata before parsing
-model content. The upload step runs even after ordinary validation failures.
+model content. A content-free `response_observed` transition is saved before
+reading or decoding the response envelope; malformed JSON leaves an observed
+response with unknown ID and bill. The upload step runs even after ordinary validation failures.
 A malformed response therefore retains earlier and current known generation
-IDs, token counts and bills. A transport failure can leave an intended request
+ID digests, token counts and bills. A transport failure can leave an intended request
 with an unknown ID and bill; a missing bill is never recorded as zero.
 
 Receipts contain only the planned model/provider and chunk hash, transport and
-validation states, a bounded generation ID, identity-match booleans, an allowed
+validation states, a generation ID digest, identity-match booleans, an allowed
 finish reason and finite usage numbers. They exclude source, prompts, response
 content, unexpected identity strings, headers and raw errors. Receipt write
 failures stop subsequent calls. The journal cannot authorise a verdict, release
 a reservation or replay an inference. Forced cancellation or runner loss can
 prevent upload; receipt preservation in those cases is best effort.
+The final journal write must succeed before a complete report is written.
+Both publishers require the model job to succeed, including receipt upload,
+before downloading or assessing a complete report. Receipt failures can veto
+completeness; receipts cannot establish it.
+
+Public report schema 2 and journals publish `generation_id_sha256`, the full
+lower-case SHA-256 digest of the exact validated ASCII provider ID. Raw IDs
+remain transient for response validation and distinct-call checks. Legacy raw
+ID fields are refused. The digest permits equality comparison and owner-side
+matching to a privately known provider record; it cannot be used directly for
+provider lookup. Cross-account lookup scope has not been verified, so raw IDs
+are withheld from new reports and receipts.
+
+Anyone who knows or can guess an ID can reproduce its digest and correlate
+records. A digest does not prove receipt, account ownership, independent
+execution, billing accuracy or content provenance. Earlier schema 1 reports
+already exposed raw IDs for one day; hashing does not revoke that disclosure.
 
 Model output is escaped in the job
 summary. The workflow publishes statuses and a summary; it does not post PR

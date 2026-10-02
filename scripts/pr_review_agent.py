@@ -184,7 +184,7 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
         verify_live(snapshot, policy, snapshot["policy_sha"])
     from pr_review_receipts import ReceiptJournal, metadata
     journal = ReceiptJournal(receipt_path, snapshot, groups, policy, reservation)
-    report: dict[str, Any] = {"schema": 1, "context_hash": snapshot["context_hash"],
+    report: dict[str, Any] = {"schema": 2, "context_hash": snapshot["context_hash"],
                               "engine_sha": PR_AGENT_SHA, "complete": False,
                               "remaining_files": [f["path"] for f in snapshot["files"]],
                               "failed_chunks": 0, "spending_mode": policy["spending_mode"],
@@ -201,12 +201,13 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
             require(spent + remaining_reservation <= reservation, "unexpected_billed_cost")
             journal.update(ordinal, transport_state="request_intended")
             response = send("https://openrouter.ai/api/v1/chat/completions", key,
-                            request_body(model, policy, system, user))
+                            request_body(model, policy, system, user),
+                            response_observer=lambda: journal.update(ordinal, transport_state="response_observed"))
             receipt = metadata(response, model, policy["routes"][model]["name"])
             journal.update(ordinal, transport_state="response_received", **receipt)
             try:
                 content = validate_completion(response, model, policy["routes"][model])
-                require(receipt["queryable"] and response["id"] not in generation_ids,
+                require(receipt["generation_id_valid"] and response["id"] not in generation_ids,
                         "unusable_or_duplicate_generation_id")
                 review = parser(content)
                 validate_review(review, group)
@@ -223,11 +224,14 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
             journal.update(ordinal, output_state="valid")
             entry["results"].append(review)
             entry["chunk_hashes"].append(digest(group))
-            entry["generations"].append({"id": response["id"], "finish_reason": "stop",
+            entry["generations"].append({"generation_id_sha256": receipt["generation_id_sha256"], "finish_reason": "stop",
                                          "usage": {field: response["usage"][field]
                                                    for field in ("prompt_tokens", "completion_tokens", "cost")}})
             ordinal += 1
         report["reviews"].append(entry)
     report.update(complete=True, remaining_files=[], spent_usd=spent)
+    public_bytes = canonical(report)
+    require(all(identifier.encode("ascii") not in public_bytes for identifier in generation_ids),
+            "raw_generation_id_in_report")
     journal.finish()
     return report

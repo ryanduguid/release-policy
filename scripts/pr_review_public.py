@@ -75,7 +75,10 @@ def public_identity(fetch: Fetch, repo: str, number: int) -> dict[str, Any]:
     require(pr["number"] == number and pr["user"]["type"] == "User"
             and type(pr["user"]["id"]) is int and pr["user"]["id"] == OWNER_ID,
             "central_author_required")
-    bound = {"repository": canonical, "repository_id": repository["id"], "author_id": OWNER_ID}
+    require(type(pr["changed_files"]) is int and 0 < pr["changed_files"] <= 3000,
+            "unsupported_file_count")
+    bound = {"repository": canonical, "repository_id": repository["id"], "author_id": OWNER_ID,
+             "changed_files": pr["changed_files"]}
     for side in ("head", "base"):
         source = pr[side]["repo"]
         require(source and source["private"] is False and type(source["id"]) is int
@@ -97,7 +100,8 @@ def capture(url: str, policy: dict[str, Any], policy_sha: str, scanner: str,
             and all(snapshot[side] == initial[side] for side in ("head", "base")),
             "central_identity_changed")
     snapshot.update(snapshot_kind=MODE, publication_capability="report_only",
-                    caller_repository=POLICY_REPOSITORY, caller=caller, target_identity=initial)
+                    caller_repository=POLICY_REPOSITORY, caller_repository_id=POLICY_REPOSITORY_ID,
+                    repository_id=initial["repository_id"], caller=caller, target_identity=initial)
     snapshot["context_hash"] = digest({key: value for key, value in snapshot.items()
                                        if key != "context_hash"})
     scan_context(snapshot, scanner)
@@ -108,7 +112,8 @@ def verify_live(snapshot: dict[str, Any], policy: dict[str, Any], policy_sha: st
                 fetch: Fetch = anonymous) -> None:
     require(snapshot.get("snapshot_kind") == MODE
             and snapshot.get("publication_capability") == "report_only"
-            and snapshot.get("caller_repository") == POLICY_REPOSITORY,
+            and snapshot.get("caller_repository") == POLICY_REPOSITORY
+            and snapshot.get("caller_repository_id") == POLICY_REPOSITORY_ID,
             "central_report_capability_required")
     verify_snapshot(snapshot, policy, policy_sha)
     require(snapshot["caller"] == caller_context(), "central_caller_changed")

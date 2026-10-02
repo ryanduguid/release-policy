@@ -20,6 +20,7 @@ from pr_review import (
     validate_policy,
     verify_snapshot,
     write_json,
+    write_report,
 )
 
 
@@ -98,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
                 from pr_review_agent import review_snapshot
                 report = review_snapshot(snap, policy,
                                          receipt_path=args.output / f"{case['id']}.review.receipts.json")
-                write_json(args.output / f"{case['id']}.review.json", report)
+                write_report(args.output / f"{case['id']}.review.json", report)
             completed.append(case["id"])
         write_json(args.output / "manifest.json", {"cases": completed, "paid_calls_requested": args.run,
                                                     "adjudication": "pending_human_review"})
