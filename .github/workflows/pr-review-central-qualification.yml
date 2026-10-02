@@ -12,6 +12,8 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
+      statuses: write
     uses: ryanduguid/release-policy/.github/workflows/pr-review.yml@fe4961154ed0b6ddbee238b1940bd204a08bc75d
     with:
       mode: central_public_report_v1
