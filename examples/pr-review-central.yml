@@ -19,6 +19,10 @@ jobs:
     permissions:
       contents: read
       actions: read
+      # GitHub validates skipped installed jobs against this caller maximum.
+      # Actual central jobs explicitly reduce it to read permissions.
+      pull-requests: read
+      statuses: write
     uses: ryanduguid/release-policy/.github/workflows/pr-review.yml@0000000000000000000000000000000000000000
     with:
       mode: central_public_report_v1
