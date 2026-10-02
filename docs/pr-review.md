@@ -59,8 +59,8 @@ to disk. Posting a status is a separate explicit `publish` command.
 python scripts/pr_review.py capture --repo OWNER/REPO --pr PR_NUMBER \
   --policy .github/pr-review-policy.json --policy-sha "$PUBLISHED_POLICY_SHA" \
   --snapshot "$REVIEW_DIRECTORY/snapshot.json" --gitleaks "$GITLEAKS_BINARY"
-# Use the pinned engine's Python for the model step, once the key is provisioned.
-"$PR_AGENT_PYTHON" scripts/pr_review.py review \
+# Use the locked environment and pinned engine source for the model step.
+PYTHONPATH="$PR_AGENT_SOURCE" "$PR_AGENT_PYTHON" scripts/pr_review.py review \
   --policy .github/pr-review-policy.json --policy-sha "$PUBLISHED_POLICY_SHA" \
   --snapshot "$REVIEW_DIRECTORY/snapshot.json" --report "$REVIEW_DIRECTORY/review.json"
 ```
@@ -71,7 +71,16 @@ The only permitted models are `z-ai/glm-5.3` and `xiaomi/mimo-v2.6-pro`.
 PR-Agent's review prompt, token budget and output type are reused from commit
 `1d01f24f455bb879c1d9c557ad7de3d72dcc7975` of
 [PR-Agent](https://github.com/The-PR-Agent/pr-agent), tagged v0.46.0.
-The dependency lock is installed with uv 0.12.10. PR-Agent's package metadata
+The dependency lock is installed with uv 0.12.10, without cache reads. The
+workflow omits project installation and imports PR-Agent from the trusted pinned
+checkout through `PYTHONPATH`. Its lock has no other local or editable package.
+The runtime sync rejects source builds. The two source-only dependencies,
+`giteapy==1.0.8` and `html2text==2024.2.26`, use separate hash-verified archives
+from that lock, fixed backend wheels and an offline install with no dependency
+resolution or build isolation. The backend packages are then removed and the
+complete runtime lock is checked again before the model key is injected.
+Another missing wheel stops installation. These pinned dependencies remain
+executable third-party code in the later reviewer process. PR-Agent's package metadata
 at that tag says 0.45.0; the commit is the version boundary.
 The adapter preserves the native review rules and type definitions, and
 replaces its YAML example and user response prefix with JSON instructions

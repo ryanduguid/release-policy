@@ -20,9 +20,10 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents. Keeping action pins and permission maps inside the exact
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
-    "docs/pr-review.md": "492780cb422976cbd205538ec9aad189bdd246761f547b92dab2dea547dd4043",
+    ".github/pr-review-build-wheels.txt": "e75343a5ed6ddcd4f3c9fdb52e8a635fd52c4509dca5f0f22d2b29b0d22c9a18",
+    "docs/pr-review.md": "aec2046c087dd56411cb3893fba69d91def3037186f3930a730832e49e0e208f",
     ".github/pr-review-policy.json": "2c6c3aa9ad16161af41a330578789117f93dcd499f49c0b553aaeb789f45f49e",
-    ".github/workflows/pr-review.yml": "187f3aff5057d1ee2d5dabc7f696fea52bbd9d61cc0d715f543334be23a8d4ac",
+    ".github/workflows/pr-review.yml": "bb81c6e6983ee2376c4fc601042d3189d3fa195662692c0cf50a44e27d2cb915",
     "docs/attribution-consumers.md": "78f8fbc8be4cc07d0c407a5c4fe2eea746d528194dff457ecdcbde80d6c2ade9",
     ".github/ci/check_gates.py": "eda4b878cde2c655247ef3b4bf388cf72d875506316d4d2c882c76a0bb85ecd2",
     ".github/actions/no-ai-attribution/action.yml": "60c2e78c85bbe0320dc1d6a2e0218590928f52d1cd496cb8c52ea569a4e8a2e9",
