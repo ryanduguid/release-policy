@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ryanduguid/release-policy
-          ref: cb0a481a911bcd7e2f9dcada7eafb3d9fece0818
+          ref: 5a68316a401d6ecd40ed3c25bc0005e93f95c03b
           path: policy
           persist-credentials: false
       - name: Download this run's frozen context
@@ -62,6 +62,33 @@ jobs:
             --no-cache --output-file pr-review-runtime-requirements.txt
           .venv/bin/python ../policy/scripts/pr_review_install.py verify .
           uv pip check --python .venv/bin/python
+      - name: Verify six native prompts without model credentials
+        env:
+          PYTHONPATH: ${{ github.workspace }}/engine
+        shell: bash
+        run: |
+          engine/.venv/bin/python - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, str(Path("policy/scripts").resolve()))
+          import pr_review as core
+          import pr_review_agent as agent
+          core.require(not os.environ.get("OPENROUTER_API_KEY"), "unexpected_preflight_credential")
+          policy = core.read_json(Path("policy/.github/pr-review-policy.json"))
+          core.validate_policy(policy)
+          cases = json.loads('[{"id": "clean1", "snapshot": {"base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "context_hash": "9946452e1a4dc5d6e907218834756d9cf79a747cc845241a5e314e193f5ee418", "date": "2026-10-02", "engine_sha": "1d01f24f455bb879c1d9c557ad7de3d72dcc7975", "files": [{"after": "def add(left, right):\\n    return left + right\\n", "before": "def add(a, b):\\n    return a + b\\n", "old_path": "control.py", "patch": "@@ -1,2 +1,2 @@\\n-def add(a, b):\\n-    return a + b\\n+def add(left, right):\\n+    return left + right", "path": "control.py", "status": "modified"}], "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "merge_base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "policy_hash": "91f5786e15e6929854dbbf2fe2e25417cc0b52c6eca4a71bfe5dfbe32c4aee68", "policy_sha": "cccccccccccccccccccccccccccccccccccccccc", "pr": 1, "repository": "synthetic/controls", "scanner_version": "gitleaks/8.30.1", "schema": 1}, "prompt_hash": "eb1cb5655e3d9ba81f05fc289310ce62356a600c7a26105d73a6c4b9633371eb"}, {"id": "clean2", "snapshot": {"base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "context_hash": "1aaee1e6d11d59809dc598faf6590aa7408ac2ec74c57e0ccb2b0defedb807ff", "date": "2026-10-02", "engine_sha": "1d01f24f455bb879c1d9c557ad7de3d72dcc7975", "files": [{"after": "def positive(value):\\n    return 0 < value\\n", "before": "def positive(value):\\n    return value > 0\\n", "old_path": "control.py", "patch": "@@ -1,2 +1,2 @@\\n def positive(value):\\n-    return value > 0\\n+    return 0 < value", "path": "control.py", "status": "modified"}], "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "merge_base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "policy_hash": "91f5786e15e6929854dbbf2fe2e25417cc0b52c6eca4a71bfe5dfbe32c4aee68", "policy_sha": "cccccccccccccccccccccccccccccccccccccccc", "pr": 2, "repository": "synthetic/controls", "scanner_version": "gitleaks/8.30.1", "schema": 1}, "prompt_hash": "f93f3e90d16e8d8aa168c01d15bf1b6079f50b7aabe472533bcc7de20e24ce17"}, {"id": "clean3", "snapshot": {"base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "context_hash": "5d56dd6dd5767bfadbe144b1e601f1651ebed543e0f73e984c3b1834358a1601", "date": "2026-10-02", "engine_sha": "1d01f24f455bb879c1d9c557ad7de3d72dcc7975", "files": [{"after": "def square(value):\\n    # Return the square of an integer.\\n    return value * value\\n", "before": "def square(value):\\n    return value * value\\n", "old_path": "control.py", "patch": "@@ -1,2 +1,3 @@\\n def square(value):\\n+    # Return the square of an integer.\\n     return value * value", "path": "control.py", "status": "modified"}], "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "merge_base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "policy_hash": "91f5786e15e6929854dbbf2fe2e25417cc0b52c6eca4a71bfe5dfbe32c4aee68", "policy_sha": "cccccccccccccccccccccccccccccccccccccccc", "pr": 3, "repository": "synthetic/controls", "scanner_version": "gitleaks/8.30.1", "schema": 1}, "prompt_hash": "3d0b91128536f7184a657dd87a99a48628868a2b14db4b4741368b4a89353dec"}, {"id": "clean4", "snapshot": {"base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "context_hash": "6b7c18bf84401ce592ccf0c4f605439a1eeec6b13155456c0719153398c9613e", "date": "2026-10-02", "engine_sha": "1d01f24f455bb879c1d9c557ad7de3d72dcc7975", "files": [{"after": "def total(values):\\n    return sum(values)\\n", "before": "def total(values):\\n    result = 0\\n    for value in values:\\n        result += value\\n    return result\\n", "old_path": "control.py", "patch": "@@ -1,5 +1,2 @@\\n def total(values):\\n-    result = 0\\n-    for value in values:\\n-        result += value\\n-    return result\\n+    return sum(values)", "path": "control.py", "status": "modified"}], "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "merge_base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "policy_hash": "91f5786e15e6929854dbbf2fe2e25417cc0b52c6eca4a71bfe5dfbe32c4aee68", "policy_sha": "cccccccccccccccccccccccccccccccccccccccc", "pr": 4, "repository": "synthetic/controls", "scanner_version": "gitleaks/8.30.1", "schema": 1}, "prompt_hash": "7e609b81beea81372f20b69e6b8e77889ad007a798b0a01f5a640838994e68fe"}, {"id": "ReversedZeroGuard", "snapshot": {"base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "context_hash": "0f7f0721471253fa6fbd0baeadcf8cb652b3f091c8906c991a482a080353ac27", "date": "2026-10-02", "engine_sha": "1d01f24f455bb879c1d9c557ad7de3d72dcc7975", "files": [{"after": "def reciprocal(value):\\n    \\"\\"\\"Return None for zero; otherwise return its reciprocal.\\"\\"\\"\\n    if value != 0:\\n        return None\\n    return 1 / value\\n", "before": "def reciprocal(value):\\n    \\"\\"\\"Return None for zero; otherwise return its reciprocal.\\"\\"\\"\\n    if value == 0:\\n        return None\\n    return 1 / value\\n", "old_path": "control.py", "patch": "@@ -1,5 +1,5 @@\\n def reciprocal(value):\\n     \\"\\"\\"Return None for zero; otherwise return its reciprocal.\\"\\"\\"\\n-    if value == 0:\\n+    if value != 0:\\n         return None\\n     return 1 / value", "path": "control.py", "status": "modified"}], "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "merge_base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "policy_hash": "91f5786e15e6929854dbbf2fe2e25417cc0b52c6eca4a71bfe5dfbe32c4aee68", "policy_sha": "cccccccccccccccccccccccccccccccccccccccc", "pr": 1, "repository": "synthetic/controls", "scanner_version": "gitleaks/8.30.1", "schema": 1}, "prompt_hash": "816527df8e9c85bdf422d5731319b06d4eaa2212ccfce97c3a9c295299270423"}, {"id": "ReversedClamp", "snapshot": {"base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "context_hash": "8636f3b7bdef5746c626e545f61dc6dcf3d5d07be58f0b4fa3544a81ffc06f53", "date": "2026-10-02", "engine_sha": "1d01f24f455bb879c1d9c557ad7de3d72dcc7975", "files": [{"after": "def clamp(value, minimum, maximum):\\n    \\"\\"\\"Clamp value to the inclusive minimum and maximum bounds.\\"\\"\\"\\n    return max(min(value, minimum), maximum)\\n", "before": "def clamp(value, minimum, maximum):\\n    \\"\\"\\"Clamp value to the inclusive minimum and maximum bounds.\\"\\"\\"\\n    return min(max(value, minimum), maximum)\\n", "old_path": "control.py", "patch": "@@ -1,3 +1,3 @@\\n def clamp(value, minimum, maximum):\\n     \\"\\"\\"Clamp value to the inclusive minimum and maximum bounds.\\"\\"\\"\\n-    return min(max(value, minimum), maximum)\\n+    return max(min(value, minimum), maximum)", "path": "control.py", "status": "modified"}], "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "merge_base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "policy_hash": "91f5786e15e6929854dbbf2fe2e25417cc0b52c6eca4a71bfe5dfbe32c4aee68", "policy_sha": "cccccccccccccccccccccccccccccccccccccccc", "pr": 1, "repository": "synthetic/controls", "scanner_version": "gitleaks/8.30.1", "schema": 1}, "prompt_hash": "1df93fd02c762de2c3f6cb3d82d531646b148e7f7c6b63e8867aed55ab3a7426"}]')
+          nesting = "\nAll four fields belong inside review. Put the security result at review.security_concerns, never beside review at the root. Output nesting example (choose the values from the evidence): " + core.canonical({"review": {"key_issues_to_review": [], "security_concerns": "No", "merge_recommendation": "merge_with_caution", "risk_level": "medium"}}).decode()
+          for case in cases:
+              snapshot = case["snapshot"]
+              core.verify_snapshot(snapshot, policy, snapshot["policy_sha"])
+              prompts = agent.prepare_prompts(snapshot, core.chunks(snapshot, policy), policy)
+              core.require(prompts[core.MODELS[0]] == prompts[core.MODELS[1]], "different_native_context")
+              original = [(system.replace(nesting, "", 1), user) for system, user in prompts[core.MODELS[0]]]
+              core.require(core.digest(original) == case["prompt_hash"], "unexpected_semantic_prompt_change")
+              core.require(all(nesting in system for system, user in prompts[core.MODELS[0]]), "missing_nesting_instruction")
+          core.write_json(Path("evidence/native-preflight.json"), {"cases": len(cases), "identical_prompts": True, "only_nesting_added": True, "engine_sha": core.PR_AGENT_SHA, "inference_calls": 0})
+          print("Native prompt preflight:", len(cases), "controls passed without credentials or inference")
+          PY
       - name: Diagnose only the frozen synthetic control
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -81,7 +108,7 @@ jobs:
                        and snapshot["head"] == "943105ddc06c1570b2efc043cca2086c8109f83e"
                        and [f["path"] for f in snapshot["files"]] == ["tests/fixtures/pr_review_pilot_sample.py"],
                        "unexpected_synthetic_control")
-          record = {"context_hash": snapshot["context_hash"], "receipts": []}
+          record = {"context_hash": snapshot["context_hash"], "diagnostic_source_sha": "5a68316a401d6ecd40ed3c25bc0005e93f95c03b", "receipts": []}
           def send(url, key, payload=None):
               record["request_stage"] = "key_preflight" if payload is None else payload["model"]
               response = core.request_json(url, key, payload)
@@ -118,6 +145,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: synthetic-output-diagnosis-${{ github.run_id }}
-          path: evidence/diagnosis.json
+          path: |
+            evidence/diagnosis.json
+            evidence/native-preflight.json
           retention-days: 1
           if-no-files-found: error
