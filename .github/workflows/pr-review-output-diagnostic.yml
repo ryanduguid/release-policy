@@ -30,9 +30,9 @@ jobs:
       - name: Download this run's frozen context
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: frozen-pr-37041200065-1
+          name: frozen-pr-37038877009-1
           path: evidence
-          run-id: 37041200065
+          run-id: 37038877009
           github-token: ${{ github.token }}
       - name: Set up the engine's locked installer
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -103,7 +103,7 @@ jobs:
           import pr_review_agent as agent
           policy = core.read_json(Path("policy/.github/pr-review-policy.json"))
           snapshot = core.read_json(Path("evidence/snapshot.json"))
-          core.verify_snapshot(snapshot, policy, "cb0a481a911bcd7e2f9dcada7eafb3d9fece0818")
+          core.verify_snapshot(snapshot, policy, "0a20032a86e608e3ac4a3c091a8c11d883731608")
           core.require(snapshot["repository"] == "ryanduguid/release-policy" and snapshot["pr"] == 129
                        and snapshot["head"] == "943105ddc06c1570b2efc043cca2086c8109f83e"
                        and [f["path"] for f in snapshot["files"]] == ["tests/fixtures/pr_review_pilot_sample.py"],
