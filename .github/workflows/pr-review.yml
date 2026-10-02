@@ -2,6 +2,13 @@ name: Independent PR review
 
 on:
   workflow_call:
+    inputs:
+      mode:
+        type: string
+        default: installed
+      pr-url:
+        type: string
+        default: ""
     secrets:
       OPENROUTER_API_KEY:
         required: false
@@ -13,13 +20,13 @@ permissions:
 # written pending; a forced cancellation can still leave pending, which is
 # deliberately unable to authorise a merge.
 concurrency:
-  group: independent-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.workflow_run.id || github.event.inputs.pr-number }}
+  group: independent-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.workflow_run.id || github.event.inputs.pr-number || github.run_id }}
   cancel-in-progress: false
 
 jobs:
   capture:
     name: Freeze review context
-    if: ${{ github.run_attempt == 1 }}
+    if: ${{ github.run_attempt == 1 && inputs.mode == 'installed' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -35,6 +42,10 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: policy
           persist-credentials: false
+      - name: Validate installed mode inputs
+        env:
+          CENTRAL_PR_URL: ${{ inputs.pr-url }}
+        run: test -z "$CENTRAL_PR_URL"
       - name: Install the pinned secret scanner
         shell: bash
         run: |
@@ -71,10 +82,61 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  central_capture:
+    name: Freeze public upstream context
+    if: ${{ github.run_attempt == 1 && inputs.mode != 'installed' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out trusted policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ryanduguid/release-policy
+          ref: ${{ job.workflow_sha }}
+          path: policy
+          persist-credentials: false
+      - name: Validate owner dispatch and public URL before source access
+        env:
+          REVIEW_MODE: ${{ inputs.mode }}
+          PUBLIC_PR_URL: ${{ inputs.pr-url }}
+          POLICY_SHA: ${{ job.workflow_sha }}
+        run: >-
+          python3 policy/scripts/pr_review_public.py gate --mode "$REVIEW_MODE" --url "$PUBLIC_PR_URL"
+          --policy policy/.github/pr-review-policy.json --policy-sha "$POLICY_SHA"
+      - name: Install the pinned secret scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            --output gitleaks.tar.gz
+          echo '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz' | sha256sum --check
+          tar -xzf gitleaks.tar.gz gitleaks
+          mkdir evidence
+      - name: Capture and scan public source without a GitHub token
+        env:
+          PUBLIC_PR_URL: ${{ inputs.pr-url }}
+          POLICY_SHA: ${{ job.workflow_sha }}
+        run: >-
+          python3 policy/scripts/pr_review_public.py capture --url "$PUBLIC_PR_URL"
+          --policy policy/.github/pr-review-policy.json --policy-sha "$POLICY_SHA"
+          --snapshot evidence/snapshot.json --gitleaks "$GITHUB_WORKSPACE/gitleaks"
+      - name: Retain this run's frozen public source
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: frozen-pr-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/snapshot.json
+          retention-days: 1
+          if-no-files-found: error
+
   review:
     name: GLM and MiMo independent review
-    if: ${{ github.run_attempt == 1 }}
-    needs: capture
+    if: >-
+      !cancelled() && github.run_attempt == 1 &&
+      (needs.capture.result == 'success' || needs.central_capture.result == 'success')
+    needs: [capture, central_capture]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -130,6 +192,14 @@ jobs:
           engine/.venv/bin/python policy/scripts/pr_review.py review
           --policy policy/.github/pr-review-policy.json --policy-sha "$POLICY_SHA"
           --snapshot evidence/snapshot.json --report evidence/review.json
+      - name: Retain sanitised receipts even when output validation fails
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: review-receipts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/review.receipts.json
+          retention-days: 30
+          if-no-files-found: error
       - name: Retain validated reviews
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -141,7 +211,7 @@ jobs:
   publish:
     name: Publish advisory status
     needs: [capture, review]
-    if: ${{ always() && github.run_attempt == 1 }}
+    if: ${{ always() && github.run_attempt == 1 && inputs.mode == 'installed' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -186,3 +256,41 @@ jobs:
           python3 policy/scripts/pr_review.py fail
           --policy policy/.github/pr-review-policy.json --policy-sha "$POLICY_SHA"
           --snapshot evidence/snapshot.json
+
+  central_summary:
+    name: Report public review without publishing upstream
+    needs: [central_capture, review]
+    if: >-
+      !cancelled() && github.run_attempt == 1 && inputs.mode == 'central_public_report_v1' &&
+      needs.central_capture.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out trusted policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ryanduguid/release-policy
+          ref: ${{ job.workflow_sha }}
+          path: policy
+          persist-credentials: false
+      - name: Download captured public context
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: frozen-pr-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence
+      - name: Download complete validated reviews
+        if: ${{ needs.review.result == 'success' }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: independent-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence
+      - name: Check current identity and render the public report
+        env:
+          POLICY_SHA: ${{ job.workflow_sha }}
+        run: >-
+          python3 policy/scripts/pr_review_public.py summary
+          --policy policy/.github/pr-review-policy.json --policy-sha "$POLICY_SHA"
+          --snapshot evidence/snapshot.json --report evidence/review.json

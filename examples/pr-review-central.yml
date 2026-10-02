@@ -1,0 +1,27 @@
+name: Review my public upstream PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr-url:
+        description: Public github.com PR URL authored by Ryan
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    if: >-
+      github.run_attempt == 1 && github.ref == 'refs/heads/main' &&
+      github.actor_id == '152749594' && github.repository_id == '1336599635'
+    permissions:
+      contents: read
+      actions: read
+    uses: ryanduguid/release-policy/.github/workflows/pr-review.yml@0000000000000000000000000000000000000000
+    with:
+      mode: central_public_report_v1
+      pr-url: ${{ inputs.pr-url }}
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}

@@ -81,7 +81,7 @@ def finding():
 
 
 def completion(selected_model, **changes):
-    obj = {"id": "generation-1", "model": selected_model, "provider": POLICY["routes"][selected_model]["name"],
+    obj = {"id": f"gen-1-{review.MODELS.index(selected_model)}", "model": selected_model, "provider": POLICY["routes"][selected_model]["name"],
            "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({"review": clean_result()})}}],
            "usage": {"prompt_tokens": 100, "completion_tokens": 100, "cost": 0.0001}}
     obj.update(changes)
@@ -96,7 +96,8 @@ def model_report(snap=None):
                 {"model": model, "provider": POLICY["routes"][model]["name"],
                  "chunk_hashes": [review.digest(group) for group in groups],
                  "results": [clean_result() for _ in groups],
-                 "generations": [{"finish_reason": "stop", "id": "generation-1"} for _ in groups]} for model in review.MODELS]}
+                 "generations": [{"finish_reason": "stop", "id": f"gen-{review.MODELS.index(model)}-{i}"}
+                                 for i, _ in enumerate(groups)]} for model in review.MODELS]}
 
 
 class ReviewBoundaryTests(unittest.TestCase):
@@ -473,6 +474,11 @@ class ReviewBoundaryTests(unittest.TestCase):
                     review.request_json("https://api.github.com/test", "fixture-key")
                 self.assertNotIn("secret-body", str(caught.exception))
             opener.open.side_effect = None
+            for raw, code in ((b'{"cost":0,"cost":1}', "duplicate_api_json_key"),
+                              (b'{"cost":NaN}', "non_finite_api_json_number")):
+                response.__enter__.return_value.read.return_value = raw
+                with self.assertRaisesRegex(review.ReviewError, code):
+                    review.request_json("https://api.github.com/test", "")
             response.__enter__.return_value.read.return_value = b"x" * (review.MAX_RESPONSE_BYTES + 1)
             with self.assertRaisesRegex(review.ReviewError, "oversized"):
                 review.request_json("https://api.github.com/test", "")
@@ -486,7 +492,8 @@ class ReviewBoundaryTests(unittest.TestCase):
         report["reviews"][0]["results"][0]["key_issues_to_review"] = [{**finding(), "issue_content": "<img src=x>"}]
         self.assertIn("&lt;img", review.render_summary(report))
         post = mock.Mock()
-        review.failed_status({"repository": REPO, "head": HEAD}, REPO, post)
+        review.failed_status({"repository": REPO, "head": HEAD, "snapshot_kind": "installed_pr_review_v1",
+                              "publication_capability": "status", "caller_repository": REPO}, REPO, post)
         self.assertEqual(post.call_args.args[1]["state"], "failure")
         with self.assertRaises(review.ReviewError):
             review.failed_status({"repository": "other/repo", "head": HEAD}, REPO, post)

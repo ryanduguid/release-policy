@@ -164,7 +164,8 @@ def parse_review(content: str) -> dict[str, Any]:
 def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
                     send: Callable[..., Any] = request_json,
                     prompt_builder: Callable[..., Any] = prepare_prompts,
-                    parser: Callable[[str], Any] = parse_review) -> dict[str, Any]:
+                    parser: Callable[[str], Any] = parse_review, *,
+                    receipt_path: Path | None = None) -> dict[str, Any]:
     key = os.environ.get("OPENROUTER_API_KEY", "")
     require(key, "openrouter_key_not_provisioned")
     groups = chunks(snapshot, policy)
@@ -178,6 +179,11 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
                 for system, user in prompts[model]] for model in MODELS}
     reservation = sum(value for values in call_reservations.values() for value in values)
     reserve_budget(send("https://openrouter.ai/api/v1/key", key), policy, reservation)
+    if snapshot.get("snapshot_kind") == "central_public_report_v1":
+        from pr_review_public import verify_live
+        verify_live(snapshot, policy, snapshot["policy_sha"])
+    from pr_review_receipts import ReceiptJournal, metadata
+    journal = ReceiptJournal(receipt_path, snapshot, groups, policy, reservation)
     report: dict[str, Any] = {"schema": 1, "context_hash": snapshot["context_hash"],
                               "engine_sha": PR_AGENT_SHA, "complete": False,
                               "remaining_files": [f["path"] for f in snapshot["files"]],
@@ -185,28 +191,43 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
                               "reservation_usd": reservation, "reviews": []}
     spent = 0.0
     remaining_reservation = reservation
+    generation_ids: set[str] = set()
+    ordinal = 0
     for model in MODELS:
         entry: dict[str, Any] = {"model": model, "provider": policy["routes"][model]["name"],
                                  "chunk_hashes": [], "results": [], "generations": []}
         for group, (system, user), call_reservation in zip(groups, prompts[model],
                                                           call_reservations[model], strict=True):
             require(spent + remaining_reservation <= reservation, "unexpected_billed_cost")
+            journal.update(ordinal, transport_state="request_intended")
             response = send("https://openrouter.ai/api/v1/chat/completions", key,
                             request_body(model, policy, system, user))
-            content = validate_completion(response, model, policy["routes"][model])
+            receipt = metadata(response, model, policy["routes"][model]["name"])
+            journal.update(ordinal, transport_state="response_received", **receipt)
             try:
+                content = validate_completion(response, model, policy["routes"][model])
+                require(receipt["queryable"] and response["id"] not in generation_ids,
+                        "unusable_or_duplicate_generation_id")
                 review = parser(content)
                 validate_review(review, group)
             except ReviewError:
+                journal.update(ordinal, output_state="invalid")
                 raise
             except Exception:
+                journal.update(ordinal, output_state="invalid")
                 raise ReviewError("invalid_model_output") from None
             spent += response["usage"]["cost"]
             remaining_reservation -= call_reservation
             require(spent <= reservation and spent <= policy["max_review_usd"], "unexpected_billed_cost")
+            generation_ids.add(response["id"])
+            journal.update(ordinal, output_state="valid")
             entry["results"].append(review)
             entry["chunk_hashes"].append(digest(group))
-            entry["generations"].append({"id": response["id"], "finish_reason": "stop", "usage": response["usage"]})
+            entry["generations"].append({"id": response["id"], "finish_reason": "stop",
+                                         "usage": {field: response["usage"][field]
+                                                   for field in ("prompt_tokens", "completion_tokens", "cost")}})
+            ordinal += 1
         report["reviews"].append(entry)
     report.update(complete=True, remaining_files=[], spent_usd=spent)
+    journal.finish()
     return report

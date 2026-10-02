@@ -78,7 +78,14 @@ def request_json(url: str, key: str, payload: Any = None) -> Any:
         with build_opener(NoRedirect()).open(req, timeout=240) as response:
             body = response.read(MAX_RESPONSE_BYTES + 1)
         require(len(body) <= MAX_RESPONSE_BYTES, "oversized_api_response")
-        return json.loads(body)
+        def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+            require(len(items) == len(dict(items)), "duplicate_api_json_key")
+            return dict(items)
+
+        def constant(value: str) -> None:
+            raise ReviewError("non_finite_api_json_number")
+
+        return json.loads(body, object_pairs_hook=pairs, parse_constant=constant)
     except HTTPError as error:
         raise ReviewError(f"http_{error.code}") from None
     except (URLError, TimeoutError, OSError, ValueError):
@@ -256,6 +263,8 @@ def collect(fetch: Fetch, repo: str, number: int, policy_sha: str,
     snapshot = {"schema": 1, **identity(repo, number, pr), "policy_sha": policy_sha,
                 "policy_hash": digest(policy), "engine_sha": PR_AGENT_SHA, "merge_base": merge_base,
                 "scanner_version": "gitleaks/8.30.1", "files": frozen}
+    snapshot.update(snapshot_kind="installed_pr_review_v1", publication_capability="status",
+                    caller_repository=repo)
     snapshot["date"] = datetime.now(UTC).date().isoformat()
     snapshot["context_hash"] = digest(snapshot)
     return snapshot
@@ -395,8 +404,8 @@ def reserve_budget(key_data: dict[str, Any], policy: dict[str, Any], reservation
             and data["limit_remaining"] >= reservation, "key_budget_exhausted")
 
 
-def publish(snapshot: dict[str, Any], report: dict[str, Any] | None, policy: dict[str, Any],
-            policy_sha: str, fetch: Fetch, post: Callable[[str, Any], Any], jobs_ok: bool) -> str:
+def assess_report(snapshot: dict[str, Any], report: dict[str, Any] | None, policy: dict[str, Any],
+                  policy_sha: str, fetch: Fetch, jobs_ok: bool) -> str:
     verify_snapshot(snapshot, policy, policy_sha)
     state = "failure"
     if jobs_ok and report is not None:
@@ -407,6 +416,7 @@ def publish(snapshot: dict[str, Any], report: dict[str, Any] | None, policy: dic
         groups = chunks(snapshot, policy)
         reviews = report["reviews"]
         require(len(reviews) == len(MODELS), "missing_independent_review")
+        generation_ids: list[str] = []
         for entry, model in zip(reviews, MODELS, strict=True):
             require(entry["model"] == model and entry["provider"] == policy["routes"][model]["name"]
                     and entry["chunk_hashes"] == [digest(group) for group in groups]
@@ -414,13 +424,24 @@ def publish(snapshot: dict[str, Any], report: dict[str, Any] | None, policy: dic
                     "review_coverage_mismatch")
             require(all(g["finish_reason"] == "stop" and isinstance(g["id"], str) and g["id"]
                         for g in entry["generations"]), "incomplete_generation_receipt")
+            generation_ids.extend(g["id"] for g in entry["generations"])
             for result, group in zip(entry["results"], groups, strict=True):
                 validate_review(result, group)
+        require(len(generation_ids) == len(set(generation_ids)), "duplicate_generation_id")
         current = pr_metadata(fetch, snapshot["repository"], snapshot["pr"])
         require(identity(snapshot["repository"], snapshot["pr"], current)
                 == {k: snapshot[k] for k in ("repository", "pr", "head", "base")}, "stale_review")
         if all(clear_review(result) for entry in reviews for result in entry["results"]):
             state = "success"
+    return state
+
+
+def publish(snapshot: dict[str, Any], report: dict[str, Any] | None, policy: dict[str, Any],
+            policy_sha: str, fetch: Fetch, post: Callable[[str, Any], Any], jobs_ok: bool) -> str:
+    require(snapshot.get("snapshot_kind") == "installed_pr_review_v1"
+            and snapshot.get("publication_capability") == "status"
+            and snapshot.get("caller_repository") == snapshot["repository"], "status_capability_required")
+    state = assess_report(snapshot, report, policy, policy_sha, fetch, jobs_ok)
     post(f"repos/{snapshot['repository']}/statuses/{snapshot['head']}",
          {"context": CONTEXT, "state": state,
           "description": "Both reviews complete; inspect findings and CI" if state == "success"
@@ -444,7 +465,10 @@ def render_summary(report: dict[str, Any]) -> str:
 
 def failed_status(minimal: dict[str, Any], repo: str, post: Callable[[str, Any], Any]) -> None:
     require(minimal["repository"] == repo and _REPOSITORY.fullmatch(repo)
-            and _FULL_SHA.fullmatch(minimal["head"]), "invalid_failure_identity")
+            and _FULL_SHA.fullmatch(minimal["head"])
+            and minimal.get("snapshot_kind") == "installed_pr_review_v1"
+            and minimal.get("publication_capability") == "status"
+            and minimal.get("caller_repository") == repo, "invalid_failure_identity")
     post(f"repos/{repo}/statuses/{minimal['head']}",
          {"state": "failure", "context": CONTEXT, "description": "Review failed or was cancelled; inspect this run"})
 
@@ -477,6 +501,8 @@ def main(argv: list[str] | None = None) -> int:
                                        os.environ["GITHUB_EVENT_NAME"], args.repo, github)
             pr = pr_metadata(github, args.repo, number)
             minimal = identity(args.repo, number, pr)
+            minimal.update(snapshot_kind="installed_pr_review_v1", publication_capability="status",
+                           caller_repository=args.repo)
             # Persist the captured head before any operation that may fail.
             write_json(args.snapshot.with_suffix(".identity.json"), minimal)
             if args.publish_pending:
@@ -490,7 +516,8 @@ def main(argv: list[str] | None = None) -> int:
             snapshot = read_json(args.snapshot)
             verify_snapshot(snapshot, policy, args.policy_sha)
             from pr_review_agent import review_snapshot
-            write_json(args.report, review_snapshot(snapshot, policy))
+            write_json(args.report, review_snapshot(snapshot, policy,
+                                                    receipt_path=args.report.with_suffix(".receipts.json")))
         else:
             snapshot = read_json(args.snapshot)
             report = read_json(args.report) if args.report.exists() else None
