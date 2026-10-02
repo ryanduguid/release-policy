@@ -27,7 +27,7 @@ Tests, linters, security checks and human review remain necessary.
    [GitHub's requirements](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target).
    GitHub's announced enforcement date is 2 November 2026.
 5. Run a manual review of an open, non-draft public PR. Confirm both generation
-   IDs, model IDs, provider names, billed usage and coverage in `review.json`.
+   ID digests, model IDs, provider names, billed usage and coverage in `review.json`.
    Inspect the publisher's summary and the status on that exact head commit.
    Test key limit/reset metadata, exhaustion and concurrent capped requests,
    missing keys, stale revisions, provider failures, forks, Dependabot,
@@ -56,8 +56,9 @@ Dependabot. A person reopening a Dependabot PR must use a fresh manual dispatch.
 
 GitHub does not inherit Actions workflows from an account's `.github`
 repository. Install a pinned caller in every repository you own. For PRs in
-other people's public repositories, run local capture and review; their
-maintainers control their checks and merge rules. Capture is read-only unless
+other people's public repositories, use the central report workflow below or
+run local capture and review. Their maintainers control their checks and merge
+rules. Capture is read-only unless
 `--publish-pending` is supplied. The local `review` command writes its report
 to disk. Posting a status is a separate explicit `publish` command.
 
@@ -70,6 +71,41 @@ PYTHONPATH="$PR_AGENT_SOURCE" "$PR_AGENT_PYTHON" scripts/pr_review.py review \
   --policy .github/pr-review-policy.json --policy-sha "$PUBLISHED_POLICY_SHA" \
   --snapshot "$REVIEW_DIRECTORY/snapshot.json" --report "$REVIEW_DIRECTORY/review.json"
 ```
+
+## Central reports for public upstream PRs
+
+Install `examples/pr-review-central.yml` as
+`.github/workflows/pr-review-central.yml` in `ryanduguid/release-policy`, replacing
+the zero SHA with the full reviewed source commit. This personal pilot accepts
+one public GitHub PR URL per fresh manual dispatch on `main`. The numeric actor
+and repository IDs are fixed to Ryan and this policy repository. The target
+must be a different public repository, with an open, non-draft PR authored by
+Ryan's numeric user ID. There is no scheduled or bulk dispatch.
+
+The central capture and summary jobs have read permissions. Every target REST
+request uses a fixed GitHub API origin, no authentication and no redirects.
+Source is frozen and secret-scanned through the existing collector. The
+target repository ID, author, head/base repository IDs and commits are bound
+to the snapshot, then checked again before inference and rendering. Repository renames,
+deletion of a head repository, author or revision changes and private targets
+stop the run. A review remains a report in the policy repository's Actions
+summary; central snapshots cannot enter the status publisher or failure path.
+No upstream comments, statuses or approvals are posted.
+
+GitHub validates the reusable workflow's skipped installed jobs against the
+caller's permission maximum. The caller therefore declares `pull-requests:
+read` and `statuses: write` for the policy repository. Each executed central
+capture, model and summary job explicitly reduces that maximum to its required
+read scopes. The token is scoped to the policy repository; the different
+target repository receives no authenticated requests or writes. A read-only
+caller was rejected before jobs started in the
+[permission qualification](https://github.com/ryanduguid/release-policy/actions/runs/37073390988).
+
+The same installer and two-model review job serve installed and central runs.
+Unknown workflow modes fail before source access or inference. A current head
+and base check is not an atomic attestation of a branch that may advance later.
+If a model job fails, the summary states that the review is incomplete and
+provides no verdict. A complete review containing findings is shown as such.
 
 ## Models, routes and spending
 
@@ -198,7 +234,42 @@ also rejects reruns before source reads or status mutation. Rerunning a job
 therefore cannot spend the key again or overwrite its earlier status. Local
 commands remain available outside Actions.
 
-Evidence artefacts expire after one day. Model output is escaped in the job
+Source and complete review artefacts expire after one day. Sanitised receipt
+artefacts expire after 30 days. The runner atomically saves a bounded journal
+before each intended paid request and saves response metadata before parsing
+model content. A content-free `response_observed` transition is saved before
+reading or decoding the response envelope; malformed JSON leaves an observed
+response with unknown ID and bill. The upload step runs even after ordinary validation failures.
+A malformed response therefore retains earlier and current known generation
+ID digests, token counts and bills. A transport failure can leave an intended request
+with an unknown ID and bill; a missing bill is never recorded as zero.
+
+Receipts contain only the planned model/provider and chunk hash, transport and
+validation states, a generation ID digest, identity-match booleans, an allowed
+finish reason and finite usage numbers. They exclude source, prompts, response
+content, unexpected identity strings, headers and raw errors. Receipt write
+failures stop subsequent calls. The journal cannot authorise a verdict, release
+a reservation or replay an inference. Forced cancellation or runner loss can
+prevent upload; receipt preservation in those cases is best effort.
+The final journal write must succeed before a complete report is written.
+Both publishers require the model job to succeed, including receipt upload,
+before downloading or assessing a complete report. Receipt failures can veto
+completeness; receipts cannot establish it.
+
+Public report schema 2 and journals publish `generation_id_sha256`, the full
+lower-case SHA-256 digest of the exact validated ASCII provider ID. Raw IDs
+remain transient for response validation and distinct-call checks. Legacy raw
+ID fields are refused. The digest permits equality comparison and owner-side
+matching to a privately known provider record; it cannot be used directly for
+provider lookup. Cross-account lookup scope has not been verified, so raw IDs
+are withheld from new reports and receipts.
+
+Anyone who knows or can guess an ID can reproduce its digest and correlate
+records. A digest does not prove receipt, account ownership, independent
+execution, billing accuracy or content provenance. Earlier schema 1 reports
+already exposed raw IDs for one day; hashing does not revoke that disclosure.
+
+Model output is escaped in the job
 summary. The workflow publishes statuses and a summary; it does not post PR
 comments. Provider prompts, source and error bodies are absent from logs.
 

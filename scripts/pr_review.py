@@ -64,7 +64,8 @@ class NoRedirect(HTTPRedirectHandler):
         raise ReviewError("http_redirect_refused")
 
 
-def request_json(url: str, key: str, payload: Any = None) -> Any:
+def request_json(url: str, key: str, payload: Any = None, *,
+                 response_observer: Callable[[], None] | None = None) -> Any:
     """Send only to fixed API origins; never forward a credential through a redirect."""
     require(url.startswith(("https://api.github.com/", "https://openrouter.ai/api/v1/")),
             "untrusted_api_origin")
@@ -76,10 +77,21 @@ def request_json(url: str, key: str, payload: Any = None) -> Any:
     req = Request(url, data=None if payload is None else canonical(payload), headers=headers)
     try:
         with build_opener(NoRedirect()).open(req, timeout=240) as response:
+            if response_observer is not None:
+                response_observer()
             body = response.read(MAX_RESPONSE_BYTES + 1)
         require(len(body) <= MAX_RESPONSE_BYTES, "oversized_api_response")
-        return json.loads(body)
+        def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+            require(len(items) == len(dict(items)), "duplicate_api_json_key")
+            return dict(items)
+
+        def constant(value: str) -> None:
+            raise ReviewError("non_finite_api_json_number")
+
+        return json.loads(body, object_pairs_hook=pairs, parse_constant=constant)
     except HTTPError as error:
+        if response_observer is not None:
+            response_observer()
         raise ReviewError(f"http_{error.code}") from None
     except (URLError, TimeoutError, OSError, ValueError):
         raise ReviewError("api_transport_or_json_error") from None
@@ -251,11 +263,16 @@ def collect(fetch: Fetch, repo: str, number: int, policy_sha: str,
                        "before": "" if f["status"] == "added" else file_content(fetch, repo, old, merge_base),
                        "after": "" if f["status"] == "removed" else file_content(fetch, repo, f["filename"], pr["head"]["sha"])})
         verify_patch(frozen[-1]["before"], frozen[-1]["after"], patch)
-    require(identity(repo, number, pr) == identity(repo, number, pr_metadata(fetch, repo, number)),
+    current = pr_metadata(fetch, repo, number)
+    require(identity(repo, number, pr) == identity(repo, number, current)
+            and type(current["changed_files"]) is int and current["changed_files"] == len(frozen),  # pylint: disable=unidiomatic-typecheck
             "revision_changed_during_capture")
     snapshot = {"schema": 1, **identity(repo, number, pr), "policy_sha": policy_sha,
                 "policy_hash": digest(policy), "engine_sha": PR_AGENT_SHA, "merge_base": merge_base,
                 "scanner_version": "gitleaks/8.30.1", "files": frozen}
+    snapshot.update(snapshot_kind="installed_pr_review_v1", publication_capability="status",
+                    caller_repository=repo, repository_id=pr["base"]["repo"].get("id"),
+                    caller_repository_id=pr["base"]["repo"].get("id"))
     snapshot["date"] = datetime.now(UTC).date().isoformat()
     snapshot["context_hash"] = digest(snapshot)
     return snapshot
@@ -395,32 +412,75 @@ def reserve_budget(key_data: dict[str, Any], policy: dict[str, Any], reservation
             and data["limit_remaining"] >= reservation, "key_budget_exhausted")
 
 
-def publish(snapshot: dict[str, Any], report: dict[str, Any] | None, policy: dict[str, Any],
-            policy_sha: str, fetch: Fetch, post: Callable[[str, Any], Any], jobs_ok: bool) -> str:
+def validate_generation_receipts(report: dict[str, Any]) -> None:
+    require(report["schema"] == 2, "unsupported_public_report_schema")
+    require(set(report) <= {"schema", "context_hash", "engine_sha", "complete", "remaining_files",
+                            "failed_chunks", "spending_mode", "reservation_usd", "spent_usd", "reviews"},
+            "unexpected_public_report_fields")
+    for entry in report["reviews"]:
+        require(set(entry) == {"model", "provider", "chunk_hashes", "results", "generations"},
+                "unexpected_public_review_fields")
+        for generation in entry["generations"]:
+            require(set(generation) == {"generation_id_sha256", "finish_reason", "usage"}
+                    and isinstance(generation["generation_id_sha256"], str)
+                    and re.fullmatch(r"[a-f0-9]{64}", generation["generation_id_sha256"])
+                    and generation["finish_reason"] == "stop", "incomplete_generation_receipt")
+            usage = generation["usage"]
+            require(set(usage) == {"prompt_tokens", "completion_tokens", "cost"}
+                    and all(type(usage[field]) is int and usage[field] > 0  # pylint: disable=unidiomatic-typecheck
+                            for field in ("prompt_tokens", "completion_tokens"))
+                    and type(usage["cost"]) in (int, float) and math.isfinite(usage["cost"])
+                    and usage["cost"] >= 0, "invalid_generation_usage")
+
+
+def write_report(path: Path, report: dict[str, Any]) -> None:
+    validate_generation_receipts(report)
+    write_json(path, report)
+
+
+def assess_report(snapshot: dict[str, Any], report: dict[str, Any] | None, policy: dict[str, Any],
+                  policy_sha: str, fetch: Fetch, jobs_ok: bool) -> str:
     verify_snapshot(snapshot, policy, policy_sha)
     state = "failure"
     if jobs_ok and report is not None:
-        require(report["context_hash"] == snapshot["context_hash"] and report["schema"] == 1
+        require(report["context_hash"] == snapshot["context_hash"] and report["schema"] == 2
                 and report["engine_sha"] == PR_AGENT_SHA
                 and report["complete"] is True and report["remaining_files"] == []
                 and report["failed_chunks"] == 0, "incomplete_review_report")
         groups = chunks(snapshot, policy)
         reviews = report["reviews"]
         require(len(reviews) == len(MODELS), "missing_independent_review")
+        validate_generation_receipts(report)
+        generation_ids: list[str] = []
         for entry, model in zip(reviews, MODELS, strict=True):
             require(entry["model"] == model and entry["provider"] == policy["routes"][model]["name"]
                     and entry["chunk_hashes"] == [digest(group) for group in groups]
                     and len(entry["results"]) == len(groups) and len(entry["generations"]) == len(groups),
                     "review_coverage_mismatch")
-            require(all(g["finish_reason"] == "stop" and isinstance(g["id"], str) and g["id"]
-                        for g in entry["generations"]), "incomplete_generation_receipt")
+            generation_ids.extend(g["generation_id_sha256"] for g in entry["generations"])
             for result, group in zip(entry["results"], groups, strict=True):
                 validate_review(result, group)
+        require(len(generation_ids) == len(set(generation_ids)), "duplicate_generation_id")
         current = pr_metadata(fetch, snapshot["repository"], snapshot["pr"])
         require(identity(snapshot["repository"], snapshot["pr"], current)
-                == {k: snapshot[k] for k in ("repository", "pr", "head", "base")}, "stale_review")
+                == {k: snapshot[k] for k in ("repository", "pr", "head", "base")}
+                and current["base"]["repo"].get("id") == snapshot["repository_id"]
+                and type(current["changed_files"]) is int  # pylint: disable=unidiomatic-typecheck
+                and current["changed_files"] == len(snapshot["files"]), "stale_review")
         if all(clear_review(result) for entry in reviews for result in entry["results"]):
             state = "success"
+    return state
+
+
+def publish(snapshot: dict[str, Any], report: dict[str, Any] | None, policy: dict[str, Any],
+            policy_sha: str, fetch: Fetch, post: Callable[[str, Any], Any], jobs_ok: bool) -> str:
+    require(snapshot.get("snapshot_kind") == "installed_pr_review_v1"
+            and snapshot.get("publication_capability") == "status"
+            and snapshot.get("caller_repository") == snapshot["repository"]
+            and type(snapshot.get("repository_id")) is int and snapshot["repository_id"] > 0  # pylint: disable=unidiomatic-typecheck
+            and type(snapshot.get("caller_repository_id")) is int  # pylint: disable=unidiomatic-typecheck
+            and snapshot["caller_repository_id"] == snapshot["repository_id"], "status_capability_required")
+    state = assess_report(snapshot, report, policy, policy_sha, fetch, jobs_ok)
     post(f"repos/{snapshot['repository']}/statuses/{snapshot['head']}",
          {"context": CONTEXT, "state": state,
           "description": "Both reviews complete; inspect findings and CI" if state == "success"
@@ -444,7 +504,13 @@ def render_summary(report: dict[str, Any]) -> str:
 
 def failed_status(minimal: dict[str, Any], repo: str, post: Callable[[str, Any], Any]) -> None:
     require(minimal["repository"] == repo and _REPOSITORY.fullmatch(repo)
-            and _FULL_SHA.fullmatch(minimal["head"]), "invalid_failure_identity")
+            and _FULL_SHA.fullmatch(minimal["head"])
+            and minimal.get("snapshot_kind") == "installed_pr_review_v1"
+            and minimal.get("publication_capability") == "status"
+            and minimal.get("caller_repository") == repo
+            and type(minimal.get("repository_id")) is int and minimal["repository_id"] > 0  # pylint: disable=unidiomatic-typecheck
+            and type(minimal.get("caller_repository_id")) is int  # pylint: disable=unidiomatic-typecheck
+            and minimal["caller_repository_id"] == minimal["repository_id"], "invalid_failure_identity")
     post(f"repos/{repo}/statuses/{minimal['head']}",
          {"state": "failure", "context": CONTEXT, "description": "Review failed or was cancelled; inspect this run"})
 
@@ -476,7 +542,12 @@ def main(argv: list[str] | None = None) -> int:
                 number = resolve_event(read_json(Path(os.environ["GITHUB_EVENT_PATH"])),
                                        os.environ["GITHUB_EVENT_NAME"], args.repo, github)
             pr = pr_metadata(github, args.repo, number)
+            require(type(pr["base"]["repo"].get("id")) is int and pr["base"]["repo"]["id"] > 0,  # pylint: disable=unidiomatic-typecheck
+                    "invalid_repository_id")
             minimal = identity(args.repo, number, pr)
+            minimal.update(snapshot_kind="installed_pr_review_v1", publication_capability="status",
+                           caller_repository=args.repo, repository_id=pr["base"]["repo"]["id"],
+                           caller_repository_id=pr["base"]["repo"]["id"])
             # Persist the captured head before any operation that may fail.
             write_json(args.snapshot.with_suffix(".identity.json"), minimal)
             if args.publish_pending:
@@ -490,7 +561,8 @@ def main(argv: list[str] | None = None) -> int:
             snapshot = read_json(args.snapshot)
             verify_snapshot(snapshot, policy, args.policy_sha)
             from pr_review_agent import review_snapshot
-            write_json(args.report, review_snapshot(snapshot, policy))
+            write_report(args.report, review_snapshot(snapshot, policy,
+                                                    receipt_path=args.report.with_suffix(".receipts.json")))
         else:
             snapshot = read_json(args.snapshot)
             report = read_json(args.report) if args.report.exists() else None

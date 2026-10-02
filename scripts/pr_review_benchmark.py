@@ -12,6 +12,7 @@ from pr_review import (
     _FULL_SHA,
     _REPOSITORY,
     collect,
+    digest,
     github,
     read_json,
     require,
@@ -19,6 +20,7 @@ from pr_review import (
     validate_policy,
     verify_snapshot,
     write_json,
+    write_report,
 )
 
 
@@ -54,7 +56,11 @@ def prepare_case(case: dict[str, Any], policy: dict[str, Any], policy_sha: str) 
 
     # Historical evidence uses the dataset's commits, independent of the PR's
     # current state. It is never published as a live PR status.
-    return collect(fetch, repo, number, policy_sha, policy)
+    snapshot = collect(fetch, repo, number, policy_sha, policy)
+    snapshot.update(snapshot_kind="benchmark_v1", publication_capability="none")
+    snapshot["context_hash"] = digest({key: value for key, value in snapshot.items()
+                                       if key != "context_hash"})
+    return snapshot
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -91,8 +97,9 @@ def main(argv: list[str] | None = None) -> int:
                     and snap["head"] == case["head"] and snap["base"] == case["base"], "benchmark_case_mismatch")
             if args.run:
                 from pr_review_agent import review_snapshot
-                report = review_snapshot(snap, policy)
-                write_json(args.output / f"{case['id']}.review.json", report)
+                report = review_snapshot(snap, policy,
+                                         receipt_path=args.output / f"{case['id']}.review.receipts.json")
+                write_report(args.output / f"{case['id']}.review.json", report)
             completed.append(case["id"])
         write_json(args.output / "manifest.json", {"cases": completed, "paid_calls_requested": args.run,
                                                     "adjudication": "pending_human_review"})

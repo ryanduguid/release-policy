@@ -31,7 +31,7 @@ PR = 7
 
 def metadata(**changes):
     pr = {"number": PR, "state": "open", "draft": False, "changed_files": 1, "author_association": "OWNER",
-          "head": {"sha": HEAD}, "base": {"sha": BASE, "repo": {"full_name": REPO, "private": False}},
+          "head": {"sha": HEAD}, "base": {"sha": BASE, "repo": {"full_name": REPO, "private": False, "id": 123}},
           "user": {"login": "example"}}
     pr.update(changes)
     return pr
@@ -81,7 +81,7 @@ def finding():
 
 
 def completion(selected_model, **changes):
-    obj = {"id": "generation-1", "model": selected_model, "provider": POLICY["routes"][selected_model]["name"],
+    obj = {"id": f"gen-1-{review.MODELS.index(selected_model)}", "model": selected_model, "provider": POLICY["routes"][selected_model]["name"],
            "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({"review": clean_result()})}}],
            "usage": {"prompt_tokens": 100, "completion_tokens": 100, "cost": 0.0001}}
     obj.update(changes)
@@ -91,12 +91,15 @@ def completion(selected_model, **changes):
 def model_report(snap=None):
     snap = snapshot() if snap is None else snap
     groups = review.chunks(snap, POLICY)
-    return {"schema": 1, "context_hash": snap["context_hash"], "complete": True, "engine_sha": review.PR_AGENT_SHA,
+    return {"schema": 2, "context_hash": snap["context_hash"], "complete": True, "engine_sha": review.PR_AGENT_SHA,
             "remaining_files": [], "failed_chunks": 0, "reviews": [
                 {"model": model, "provider": POLICY["routes"][model]["name"],
                  "chunk_hashes": [review.digest(group) for group in groups],
                  "results": [clean_result() for _ in groups],
-                 "generations": [{"finish_reason": "stop", "id": "generation-1"} for _ in groups]} for model in review.MODELS]}
+                 "generations": [{"finish_reason": "stop",
+                                  "generation_id_sha256": review.hashlib.sha256(f"gen-{review.MODELS.index(model)}-{i}".encode()).hexdigest(),
+                                  "usage": {"prompt_tokens": 100, "completion_tokens": 100, "cost": 0.0001}}
+                                 for i, _ in enumerate(groups)]} for model in review.MODELS]}
 
 
 class ReviewBoundaryTests(unittest.TestCase):
@@ -145,6 +148,16 @@ class ReviewBoundaryTests(unittest.TestCase):
             return fake_fetch()(path)
         with self.assertRaisesRegex(review.ReviewError, "revision_changed"):
             review.collect(moving, REPO, PR, POLICY_SHA, POLICY)
+        reads = 0
+
+        def changing_count(path):
+            nonlocal reads
+            if path == f"repos/{REPO}/pulls/{PR}":
+                reads += 1
+                return metadata(changed_files=1 if reads == 1 else 2)
+            return fake_fetch()(path)
+        with self.assertRaisesRegex(review.ReviewError, "revision_changed"):
+            review.collect(changing_count, REPO, PR, POLICY_SHA, POLICY)
 
     def test_incomplete_listing_pagination_and_changed_line_counts(self):
         for pr, files, expected in ((metadata(changed_files=3001), [], "file_count"),
@@ -322,6 +335,8 @@ class ReviewBoundaryTests(unittest.TestCase):
             moving[side]["sha"] = "f" * 40
             with self.assertRaisesRegex(review.ReviewError, "stale_review"):
                 review.publish(snap, model_report(snap), POLICY, POLICY_SHA, lambda path: moving, post, True)
+        with self.assertRaisesRegex(review.ReviewError, "stale_review"):
+            review.publish(snap, model_report(snap), POLICY, POLICY_SHA, fake_fetch(metadata(changed_files=2)), post, True)
 
     def test_dependabot_bridge_uses_api_metadata_not_artifacts(self):
         self.assertEqual(review.resolve_event({"number": PR}, "pull_request_target", REPO, fake_fetch()), PR)
@@ -473,6 +488,15 @@ class ReviewBoundaryTests(unittest.TestCase):
                     review.request_json("https://api.github.com/test", "fixture-key")
                 self.assertNotIn("secret-body", str(caught.exception))
             opener.open.side_effect = None
+            observer = mock.Mock()
+            review.request_json("https://api.github.com/test", "", response_observer=observer)
+            observer.assert_called_once()
+            opener.open.side_effect = None
+            for raw, code in ((b'{"cost":0,"cost":1}', "duplicate_api_json_key"),
+                              (b'{"cost":NaN}', "non_finite_api_json_number")):
+                response.__enter__.return_value.read.return_value = raw
+                with self.assertRaisesRegex(review.ReviewError, code):
+                    review.request_json("https://api.github.com/test", "")
             response.__enter__.return_value.read.return_value = b"x" * (review.MAX_RESPONSE_BYTES + 1)
             with self.assertRaisesRegex(review.ReviewError, "oversized"):
                 review.request_json("https://api.github.com/test", "")
@@ -486,7 +510,9 @@ class ReviewBoundaryTests(unittest.TestCase):
         report["reviews"][0]["results"][0]["key_issues_to_review"] = [{**finding(), "issue_content": "<img src=x>"}]
         self.assertIn("&lt;img", review.render_summary(report))
         post = mock.Mock()
-        review.failed_status({"repository": REPO, "head": HEAD}, REPO, post)
+        review.failed_status({"repository": REPO, "head": HEAD, "snapshot_kind": "installed_pr_review_v1",
+                              "publication_capability": "status", "caller_repository": REPO,
+                              "repository_id": 123, "caller_repository_id": 123}, REPO, post)
         self.assertEqual(post.call_args.args[1]["state"], "failure")
         with self.assertRaises(review.ReviewError):
             review.failed_status({"repository": "other/repo", "head": HEAD}, REPO, post)
@@ -518,7 +544,7 @@ class ReviewAgentTests(unittest.TestCase):
         snap = snapshot()
         prompts = {model: [("system", "identical frozen context")] for model in review.MODELS}
 
-        def send(url, key, body=None):
+        def send(url, key, body=None, **kwargs):
             if url.endswith("/key"):
                 return {"data": {"limit": 100, "limit_remaining": 90,
                                  "limit_reset": None, "include_byok_in_limit": True}}
@@ -538,7 +564,7 @@ class ReviewAgentTests(unittest.TestCase):
                     agent.review_snapshot(snap, POLICY, send, lambda *args: prompts,
                                           mock.Mock(side_effect=error))
 
-            def expensive(url, key, body=None):
+            def expensive(url, key, body=None, **kwargs):
                 obj = send(url, key, body)
                 if body:
                     obj["usage"]["cost"] = 99
@@ -551,7 +577,7 @@ class ReviewAgentTests(unittest.TestCase):
         prompts = {model: [("system", "identical frozen context")] for model in review.MODELS}
         paid = []
 
-        def send(url, key, body=None):
+        def send(url, key, body=None, **kwargs):
             if url.endswith("/key"):
                 return {"data": {"limit": None, "limit_remaining": None}}
             paid.append(body["model"])
@@ -580,7 +606,7 @@ class ReviewAgentTests(unittest.TestCase):
         prompts = {model: [("system", "context")] for model in review.MODELS}
         bills = []
 
-        def send(url, key, body=None):
+        def send(url, key, body=None, **kwargs):
             if url.endswith("/key"):
                 return {"data": {"limit": None, "limit_remaining": None}}
             bills.append(body["model"])
