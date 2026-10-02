@@ -648,6 +648,8 @@ class ReviewAgentTests(unittest.TestCase):
                 system = prompts[review.MODELS[0]][0][0]
                 self.assertTrue(system.startswith("Review only concrete defects.\nPreserve uncertainty.\n"))
                 self.assertIn("The output must be a JSON object", system)
+                self.assertIn("review.security_concerns, never beside review at the root", system)
+                self.assertIn('"review":{"key_issues_to_review":[],"merge_recommendation":"merge_with_caution","risk_level":"medium","security_concerns":"No"}', system)
                 self.assertIn(review.canonical(review.REVIEW_SCHEMA).decode(), system)
                 self.assertNotIn("```yaml", system)
                 self.assertNotIn("Answer should be a valid YAML", system)
