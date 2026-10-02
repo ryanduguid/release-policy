@@ -1,0 +1,113 @@
+name: Central review qualification
+
+on:
+  push:
+    branches: [codex/pr-review-central-qualification]
+
+permissions:
+  contents: read
+
+jobs:
+  central_permissions:
+    permissions:
+      contents: read
+      actions: read
+    uses: ryanduguid/release-policy/.github/workflows/pr-review.yml@fe4961154ed0b6ddbee238b1940bd204a08bc75d
+    with:
+      mode: central_public_report_v1
+      pr-url: https://github.com/JavaMoney/jsr354-ri/pull/446
+
+  malformed_receipt:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out frozen policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ryanduguid/release-policy
+          ref: fe4961154ed0b6ddbee238b1940bd204a08bc75d
+          path: policy
+          persist-credentials: false
+      - name: Check out this trusted synthetic control
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Exercise real CLI with no network transport or model key
+        run: python3 control/hosted/central-receipt-control.py policy evidence
+      - name: Retain receipts after the expected malformed completion
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: fixture-review-receipts-${{ github.run_id }}
+          path: evidence/review.receipts.json
+          retention-days: 30
+          if-no-files-found: error
+
+  receipt_upload_failure:
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      complete-outcome: ${{ steps.complete_report.outcome }}
+    steps:
+      - name: Prepare a synthetic complete file before receipt upload
+        run: |
+          mkdir evidence
+          echo '{"synthetic":true,"complete":true}' > evidence/review.json
+      - name: Force the missing-receipt upload failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: missing-fixture-receipt-${{ github.run_id }}
+          path: evidence/review.receipts.json
+          retention-days: 30
+          if-no-files-found: error
+      - name: Complete review upload must be skipped
+        id: complete_report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: should-not-upload-${{ github.run_id }}
+          path: evidence/review.json
+          retention-days: 1
+          if-no-files-found: error
+
+  receipt_retention:
+    needs: [malformed_receipt, receipt_upload_failure]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Retrieve the failed job's receipt artefact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: fixture-review-receipts-${{ github.run_id }}
+          path: evidence
+      - name: Verify sanitised diagnostic receipts, never a verdict
+        env:
+          UPLOAD_RESULT: ${{ needs.receipt_upload_failure.result }}
+          COMPLETE_OUTCOME: ${{ needs.receipt_upload_failure.outputs.complete-outcome }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import hashlib
+          import os
+          from pathlib import Path
+          data = json.loads(Path('evidence/review.receipts.json').read_bytes())
+          calls = data['calls']
+          if (data['schema'] != 'receipt_journal_v1' or data['finished'] is not False
+                  or [call['output_state'] for call in calls] != ['valid', 'invalid']
+                  or [call['generation_id_sha256'] for call in calls] !=
+                  [hashlib.sha256(f'gen-fixture-{i}'.encode('ascii')).hexdigest() for i in (1, 2)]
+                  or [call['usage']['cost'] for call in calls] != [0, 0]
+                  or any('content' in call or 'error' in call for call in calls)):
+              raise SystemExit('receipt_retention_failed')
+          raw = Path('evidence/review.receipts.json').read_bytes()
+          if any(f'gen-fixture-{i}'.encode('ascii') in raw for i in (1, 2)):
+              raise SystemExit('raw_generation_identity_leaked')
+          if os.environ['UPLOAD_RESULT'] != 'failure' or os.environ['COMPLETE_OUTCOME'] not in ('', 'skipped'):
+              raise SystemExit('receipt_upload_failure_did_not_veto_completeness')
+          print('Verified two synthetic receipts after a failed CLI step; zero network/model calls')
+          PY
