@@ -31,6 +31,6 @@ jobs:
       pull-requests: read
       statuses: write
     # Pin the full reviewed commit containing the reusable reviewer workflow.
-    uses: ryanduguid/release-policy/.github/workflows/pr-review.yml@bf62430cfd67f974ebe52f2cac255e1bfd209d2c
+    uses: ryanduguid/release-policy/.github/workflows/pr-review.yml@5a9e5ced890f9921927259a7f300c33fd2b49dac
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
