@@ -359,6 +359,35 @@ use a fresh output directory for repetitions. Preparation refuses unsupported
 comparisons and oversized cases. Record those as coverage failures, never
 as clean reviews. The four synthetic controls occupy offsets 196 to 199.
 
+`benchmarks/pr-review-controls.json` is the fixed six-case regression set. It
+reuses those four clean controls and adds a deleted guard in a modified file
+and a removed file. Both deletion cases still need human assessment. They
+exercise source capture and location representation, not measured model recall.
+The native format supplies a file and line range without a side field. For a
+modified file, validation uses the current file's bounds; a deleted old line
+outside those bounds is rejected. For a removed file, it uses the original
+file's bounds. The adapter does not silently move a finding to another line.
+An accepted location establishes only valid bounds, not semantic correctness.
+
+After changing a prompt, schema, policy or route candidate, run the local
+contract regressions and prepare the fixed set using a fresh output directory:
+
+```bash
+python -m unittest discover -s tests -p "test_pr_review*.py" -v
+python scripts/pr_review_benchmark.py \
+  --cases benchmarks/pr-review-controls.json \
+  --policy .github/pr-review-policy.json --policy-sha "$POLICY_SHA" \
+  --output control-snapshots --limit 6
+```
+
+Set `POLICY_SHA` to the reviewed full source commit and make the pinned
+`gitleaks` executable available as described above. Preparation makes no model
+calls; synthetic snapshots have no live publication capability. Unit tests use
+fabricated outputs. Passing them cannot qualify provider behaviour, deletion
+recall or human accuracy. Paid reruns require the existing spending authority
+and resolved billing holds. Keep the same six case identities when comparing
+candidate runs, alongside their candidate, context, report and receipt hashes.
+
 Each batch saves `benchmark_batch_v2` before preparing its first case. Its
 records include every selected immutable case, initially `unstarted`, and the
 policy, engine, schema and adapter identities. Atomic checkpoints distinguish
@@ -405,3 +434,18 @@ has been established. Complete live route and event checks before activation.
 Record confirmed true, confirmed false, indeterminate and unassessed findings
 separately, with evidence and immutable case/report identities. Known misses
 are not recall unless a human has established the full relevant defect set.
+
+To measure each reviewer's contribution, have a person assign stable defect
+identities within each case and link confirmed true findings to those identities.
+Repeated findings about one defect count once in defect coverage; record their
+duplicate and assessment workload separately. Compare shared and model-only
+defect sets only when both models completed the same case and all their findings
+were adjudicated. An unstarted, failed or unassessed second review cannot prove
+that the first model found a unique defect. Keep partial coverage visible.
+
+Record each model's confirmed false, indeterminate and unassessed findings,
+known inference subtotal, unknown bill count and assessment minutes. Count
+shared time for reading source and reconciling findings once. Cost per confirmed defect
+is unavailable when bills are unknown or the defect count is zero. Assessed
+precision is unavailable when its denominator is zero. These measurements
+support a later human comparison; they do not establish a lead model by themselves.

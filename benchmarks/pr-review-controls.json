@@ -1,0 +1,156 @@
+{
+  "schema": "qualification_controls_v1",
+  "qualification": "synthetic_contract_controls_only",
+  "cases": [
+    {
+      "id": "clean1",
+      "repository": "synthetic/controls",
+      "pr": 1,
+      "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "synthetic": true,
+      "source": {
+        "before": "def add(a, b):\n    return a + b\n",
+        "after": "def add(left, right):\n    return left + right\n"
+      },
+      "reference_findings": [],
+      "reason": "Parameter names change; addition is preserved.",
+      "input_contract": "integers only",
+      "adjudication": "required",
+      "files": [
+        {
+          "filename": "control.py",
+          "status": "modified",
+          "patch": "@@ -1,2 +1,2 @@\n-def add(a, b):\n-    return a + b\n+def add(left, right):\n+    return left + right",
+          "additions": 2,
+          "deletions": 2
+        }
+      ]
+    },
+    {
+      "id": "clean2",
+      "repository": "synthetic/controls",
+      "pr": 2,
+      "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "synthetic": true,
+      "source": {
+        "before": "def positive(value):\n    return value > 0\n",
+        "after": "def positive(value):\n    return 0 < value\n"
+      },
+      "reference_findings": [],
+      "reason": "The equivalent comparison preserves the result for integers.",
+      "input_contract": "integers only",
+      "adjudication": "required",
+      "files": [
+        {
+          "filename": "control.py",
+          "status": "modified",
+          "patch": "@@ -1,2 +1,2 @@\n def positive(value):\n-    return value > 0\n+    return 0 < value",
+          "additions": 1,
+          "deletions": 1
+        }
+      ]
+    },
+    {
+      "id": "clean3",
+      "repository": "synthetic/controls",
+      "pr": 3,
+      "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "synthetic": true,
+      "source": {
+        "before": "def square(value):\n    return value * value\n",
+        "after": "def square(value):\n    # Return the square of an integer.\n    return value * value\n"
+      },
+      "reference_findings": [],
+      "reason": "The added comment changes no result.",
+      "input_contract": "integers only",
+      "adjudication": "required",
+      "files": [
+        {
+          "filename": "control.py",
+          "status": "modified",
+          "patch": "@@ -1,2 +1,3 @@\n def square(value):\n+    # Return the square of an integer.\n     return value * value",
+          "additions": 1,
+          "deletions": 0
+        }
+      ]
+    },
+    {
+      "id": "clean4",
+      "repository": "synthetic/controls",
+      "pr": 4,
+      "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "synthetic": true,
+      "source": {
+        "before": "def total(values):\n    result = 0\n    for value in values:\n        result += value\n    return result\n",
+        "after": "def total(values):\n    return sum(values)\n"
+      },
+      "reference_findings": [],
+      "reason": "For sequences of integers, sum preserves the result including the empty case.",
+      "input_contract": "integers only",
+      "adjudication": "required",
+      "files": [
+        {
+          "filename": "control.py",
+          "status": "modified",
+          "patch": "@@ -1,5 +1,2 @@\n def total(values):\n-    result = 0\n-    for value in values:\n-        result += value\n-    return result\n+    return sum(values)",
+          "additions": 1,
+          "deletions": 4
+        }
+      ]
+    },
+    {
+      "id": "deletedguard",
+      "repository": "synthetic/controls",
+      "pr": 5,
+      "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "synthetic": true,
+      "source": {
+        "before": "def nonnegative(value):\n    \"\"\"Reject negative integers.\"\"\"\n    if value < 0:\n        raise ValueError(\"negative\")\n    return value\n",
+        "after": "def nonnegative(value):\n    \"\"\"Reject negative integers.\"\"\"\n    return value\n"
+      },
+      "reference_findings": [],
+      "reason": "Exercise deletion locations; human assessment of model findings remains required.",
+      "input_contract": "integers only",
+      "adjudication": "required",
+      "files": [
+        {
+          "filename": "control.py",
+          "status": "modified",
+          "patch": "@@ -1,5 +1,3 @@\n def nonnegative(value):\n     \"\"\"Reject negative integers.\"\"\"\n-    if value < 0:\n-        raise ValueError(\"negative\")\n     return value",
+          "additions": 0,
+          "deletions": 2
+        }
+      ]
+    },
+    {
+      "id": "removedfile",
+      "repository": "synthetic/controls",
+      "pr": 6,
+      "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "synthetic": true,
+      "source": {
+        "before": "def nonnegative(value):\n    \"\"\"Reject negative integers.\"\"\"\n    if value < 0:\n        raise ValueError(\"negative\")\n    return value\n",
+        "after": ""
+      },
+      "reference_findings": [],
+      "reason": "Exercise deletion locations; human assessment of model findings remains required.",
+      "input_contract": "integers only",
+      "adjudication": "required",
+      "files": [
+        {
+          "filename": "control.py",
+          "status": "removed",
+          "patch": "@@ -1,5 +0,0 @@\n-def nonnegative(value):\n-    \"\"\"Reject negative integers.\"\"\"\n-    if value < 0:\n-        raise ValueError(\"negative\")\n-    return value",
+          "additions": 0,
+          "deletions": 5
+        }
+      ]
+    }
+  ]
+}
