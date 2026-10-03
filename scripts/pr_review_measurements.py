@@ -9,24 +9,24 @@ import sys
 from collections import Counter
 from decimal import Context, Decimal
 from pathlib import Path
+from statistics import median
 from typing import Any
 
 from pr_review import MODELS, ReviewError, require
 from pr_review_benchmark import save_manifest as write_projection
-from pr_review_receipts import _CALL_FIELDS, _FINISH, _REJECTIONS, MAX_JOURNAL_BYTES
+from pr_review_receipts import (
+    _CALL_FIELDS,
+    _FINISH,
+    _REJECTIONS,
+    MAX_JOURNAL_BYTES,
+    money,
+    validate_lookup,
+)
 
 _HASH = re.compile(r"[0-9a-f]{64}", re.ASCII)
 _ATTEMPT = re.compile(r"[A-Za-z0-9_-]{1,64}", re.ASCII)
 _TRANSPORT = {"not_started", "request_intended", "response_observed", "response_received"}
 _MONEY = Context(prec=700)
-
-
-def money(value: Any) -> bool:
-    if isinstance(value, int) and not isinstance(value, bool):
-        return 0 <= value < 10**24
-    return (isinstance(value, Decimal) and value.is_finite()
-            and 0 <= value <= Decimal("1.7976931348623157e308")
-            and int(value.as_tuple().exponent) >= -324 and len(value.as_tuple().digits) <= 350)
 
 
 def read_receipt(path: Path) -> dict[str, Any]:
@@ -45,7 +45,7 @@ def read_receipt(path: Path) -> dict[str, Any]:
         {"schema", "context_hash", "reservation_usd", "finished", "calls"},
         {"schema", "context_hash", "reservation_usd", "finished", "calls", "updated_at"}),
         "invalid_measurement_input")
-    require(data["schema"] in ("receipt_journal_v2", "receipt_journal_v3")
+    require(data["schema"] in ("receipt_journal_v2", "receipt_journal_v3", "receipt_journal_v4")
             and isinstance(data["context_hash"], str) and _HASH.fullmatch(data["context_hash"])
             and money(data["reservation_usd"]) and isinstance(data["finished"], bool)
             and isinstance(data["calls"], list) and 0 < len(data["calls"]) <= 24
@@ -68,7 +68,8 @@ def read_receipt(path: Path) -> dict[str, Any]:
 
 
 def validate_call(call: Any, schema: str) -> None:
-    require(isinstance(call, dict) and set(call) == _CALL_FIELDS,
+    fields = _CALL_FIELDS | ({"generation_metadata"} if schema == "receipt_journal_v4" else set())
+    require(isinstance(call, dict) and set(call) == fields,
             "invalid_measurement_input")
     require(call["model"] in MODELS
             and call["provider"] == ("Parasail" if call["model"] == MODELS[0] else "Xiaomi")
@@ -91,6 +92,8 @@ def validate_call(call: Any, schema: str) -> None:
             "invalid_measurement_input")
     usage = call["usage"]
     validate_usage(usage, schema)
+    if schema == "receipt_journal_v4":
+        validate_lookup(call)
     if call["transport_state"] == "not_started":
         require(state == "not_checked" and call["finish_reason"] is None
                 and call["generation_id_sha256"] is None
@@ -109,7 +112,7 @@ def validate_call(call: Any, schema: str) -> None:
 
 def validate_usage(usage: Any, schema: str) -> None:
     fields = {"prompt_tokens", "completion_tokens", "total_tokens", "cost"}
-    if schema == "receipt_journal_v3":
+    if schema in ("receipt_journal_v3", "receipt_journal_v4"):
         fields.add("reasoning_tokens")
     require(isinstance(usage, dict) and set(usage) == fields, "invalid_measurement_input")
     require(all(value is None or (isinstance(value, int) and not isinstance(value, bool)
@@ -121,6 +124,33 @@ def validate_usage(usage: Any, schema: str) -> None:
                 and not isinstance(usage["completion_tokens"], bool)
                 and usage["reasoning_tokens"] <= usage["completion_tokens"],
                 "invalid_measurement_input")
+
+
+def billing(call: dict[str, Any]) -> tuple[Any, str]:
+    response = call["usage"]["cost"]
+    lookup = call.get("generation_metadata", {})
+    observed = Decimal(lookup["total_cost_usd"]) if lookup.get("state") == "verified" else None
+    if response is None:
+        return observed, "lookup" if observed is not None else "unknown"
+    if observed is None:
+        return response, "response"
+    if Decimal(response) == observed:
+        return response, "corroborated"
+    return None, "conflict"
+
+
+def diagnostics(calls: list[dict[str, Any]]) -> dict[str, Any]:
+    sources = Counter(billing(call)[1] for call in calls if call["transport_state"] != "not_started")
+    result: dict[str, Any] = {"billing_sources": {name: sources[name] for name in
+                              ("response", "lookup", "corroborated", "unknown", "conflict")}}
+    for field in ("provider_latency_ms", "provider_generation_time_ms"):
+        samples = [call["generation_metadata"][field] for call in calls
+                   if call.get("generation_metadata", {}).get("state") == "verified"
+                   and call["generation_metadata"][field] is not None]
+        result[field] = {"samples": len(samples), "attempted_generations": sum(
+            call["transport_state"] != "not_started" for call in calls),
+            "median": float(median(samples)) if samples else None}
+    return result
 
 
 def ratio(numerator: int, denominator: int) -> dict[str, Any]:
@@ -165,7 +195,7 @@ def summarise(inputs: list[tuple[str, Path]]) -> dict[str, Any]:
                 counts["normal_stop"] += call["finish_reason"] == "stop"
                 if call["diagnostic_category"] is not None:
                     failures[call["diagnostic_category"]] += 1
-                bill = call["usage"]["cost"]
+                bill, _source = billing(call)
                 if bill is not None:
                     cost = _MONEY.add(cost, Decimal(bill))
                     counts["known_bills"] += 1
@@ -182,7 +212,8 @@ def summarise(inputs: list[tuple[str, Path]]) -> dict[str, Any]:
             "rejections": dict(sorted(failures.items())),
             "known_billed_subtotal_usd": str(cost),
             "accepted_per_planned_call": ratio(counts["valid"], counts["planned"]),
-            "accepted_per_received_call": ratio(counts["valid"], counts["received"])}
+            "accepted_per_received_call": ratio(counts["valid"], counts["received"]),
+            **diagnostics([call for data in attempts.values() for call in data["calls"] if call["model"] == model])}
     paired = sum(set(call["model"] for call in data["calls"]) == set(MODELS)
                  and data["finished"] for data in attempts.values())
     return {"schema": "review_measurements_v1", "attempts": len(attempts),

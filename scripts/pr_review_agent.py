@@ -210,7 +210,8 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
                     send: Callable[..., Any] = request_json,
                     prompt_builder: Callable[..., Any] = prepare_prompts,
                     parser: Callable[[str], Any] = parse_review, *,
-                    receipt_path: Path | None = None) -> dict[str, Any]:
+                    receipt_path: Path | None = None,
+                    metadata_lookup: Callable[..., Any] | None = None) -> dict[str, Any]:
     key = os.environ.get("OPENROUTER_API_KEY", "")
     require(key, "openrouter_key_not_provisioned")
     groups = chunks(snapshot, policy)
@@ -232,8 +233,9 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
     if snapshot.get("snapshot_kind") == "central_public_report_v1":
         from pr_review_public import verify_live
         verify_live(snapshot, policy, snapshot["policy_sha"])
-    from pr_review_receipts import ReceiptJournal, metadata
-    journal = ReceiptJournal(receipt_path, snapshot, groups, policy, guarded_reservation)
+    from pr_review_receipts import ReceiptJournal, empty_lookup, metadata
+    journal = ReceiptJournal(receipt_path, snapshot, groups, policy, guarded_reservation,
+                             lookup_enabled=metadata_lookup is not None)
     report: dict[str, Any] = {"schema": 2, "context_hash": snapshot["context_hash"],
                               "engine_sha": PR_AGENT_SHA, "complete": False,
                               "remaining_files": [f["path"] for f in snapshot["files"]],
@@ -256,6 +258,11 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
             receipt = metadata(response, model, policy["routes"][model]["name"],
                                output_tokens=policy["output_tokens"])
             journal.update(ordinal, transport_state="response_received", **receipt)
+            if metadata_lookup is not None:
+                journal.update(ordinal, generation_metadata=empty_lookup(
+                    "eligible_unattempted" if receipt["generation_id_valid"] else "not_eligible"))
+                journal.update(ordinal, generation_metadata=metadata_lookup(
+                    response, model, policy["routes"][model]["name"], key))
             category = "completion_contract"
             try:
                 content = validate_completion(response, model, policy["routes"][model])

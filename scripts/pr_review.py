@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -65,7 +66,9 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 def request_json(url: str, key: str, payload: Any = None, *,
-                 response_observer: Callable[[], None] | None = None) -> Any:
+                 response_observer: Callable[[], None] | None = None,
+                 timeout: int = 240, response_limit: int = MAX_RESPONSE_BYTES,
+                 decimal_numbers: bool = False) -> Any:
     """Send only to fixed API origins; never forward a credential through a redirect."""
     require(url.startswith(("https://api.github.com/", "https://openrouter.ai/api/v1/")),
             "untrusted_api_origin")
@@ -76,11 +79,11 @@ def request_json(url: str, key: str, payload: Any = None, *,
         headers["Content-Type"] = "application/json"
     req = Request(url, data=None if payload is None else canonical(payload), headers=headers)
     try:
-        with build_opener(NoRedirect()).open(req, timeout=240) as response:
+        with build_opener(NoRedirect()).open(req, timeout=timeout) as response:
             if response_observer is not None:
                 response_observer()
-            body = response.read(MAX_RESPONSE_BYTES + 1)
-        require(len(body) <= MAX_RESPONSE_BYTES, "oversized_api_response")
+            body = response.read(response_limit + 1)
+        require(len(body) <= response_limit, "oversized_api_response")
         def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
             require(len(items) == len(dict(items)), "duplicate_api_json_key")
             return dict(items)
@@ -88,7 +91,8 @@ def request_json(url: str, key: str, payload: Any = None, *,
         def constant(value: str) -> None:
             raise ReviewError("non_finite_api_json_number")
 
-        return json.loads(body, object_pairs_hook=pairs, parse_constant=constant)
+        return json.loads(body, object_pairs_hook=pairs, parse_constant=constant,
+                          parse_float=Decimal if decimal_numbers else float)
     except HTTPError as error:
         if response_observer is not None:
             response_observer()
@@ -124,14 +128,15 @@ def validate_policy(policy: dict[str, Any]) -> None:
                     and 0 < route[field] <= 5, "invalid_price_ceiling")
 
 
-def pr_metadata(fetch: Fetch, repo: str, number: int) -> dict[str, Any]:
+def pr_metadata(fetch: Fetch, repo: str, number: int, *, allow_closed: bool = False) -> dict[str, Any]:
     require(_REPOSITORY.fullmatch(repo) and type(number) is int and number > 0, "invalid_pr")
     pr = fetch(f"repos/{repo}/pulls/{number}")
     require(pr["base"]["repo"]["full_name"].casefold() == repo.casefold(), "wrong_repository")
-    require(pr["state"] == "open" and not pr["draft"], "pr_not_ready")
     require(pr["base"]["repo"]["private"] is False, "private_routes_not_qualified")
     for side in ("head", "base"):
         require(_FULL_SHA.fullmatch(pr[side]["sha"]), "invalid_commit")
+    require(not pr["draft"] and (pr["state"] == "open" or (allow_closed and pr["state"] == "closed")),
+            "pr_not_ready")
     return pr
 
 
@@ -139,17 +144,18 @@ def identity(repo: str, number: int, pr: dict[str, Any]) -> dict[str, Any]:
     return {"repository": repo, "pr": number, "head": pr["head"]["sha"], "base": pr["base"]["sha"]}
 
 
-def resolve_event(event: dict[str, Any], event_name: str, repo: str, fetch: Fetch) -> int:
+def resolve_event(event: dict[str, Any], event_name: str, repo: str, fetch: Fetch, *,
+                  allow_closed: bool = False) -> int:
     if event_name == "pull_request_target":
         number = event["number"]
-        pr = pr_metadata(fetch, repo, number)
+        pr = pr_metadata(fetch, repo, number, allow_closed=allow_closed)
         require(pr["user"]["login"] != "dependabot[bot]", "dependabot_requires_bridge")
         require(pr["user"]["login"].casefold() == repo.split("/")[0].casefold(),
                 "external_author_requires_manual_dispatch")
         return number
     if event_name == "workflow_dispatch":
         number = int(event["inputs"]["pr-number"])
-        pr_metadata(fetch, repo, number)
+        pr_metadata(fetch, repo, number, allow_closed=allow_closed)
         return number
     require(event_name == "workflow_run", "unsupported_trigger")
     run_id = event["workflow_run"]["id"]
@@ -163,7 +169,7 @@ def resolve_event(event: dict[str, Any], event_name: str, repo: str, fetch: Fetc
     require(_FULL_SHA.fullmatch(run["head_sha"]), "invalid_trigger_commit")
     prs = run.get("pull_requests")
     require(isinstance(prs, list) and len(prs) == 1, "ambiguous_trigger_prs")
-    pr = pr_metadata(fetch, repo, prs[0]["number"])
+    pr = pr_metadata(fetch, repo, prs[0]["number"], allow_closed=allow_closed)
     require(pr["head"]["sha"] == run["head_sha"] and pr["user"]["login"] == "dependabot[bot]",
             "stale_or_non_dependabot_trigger")
     return pr["number"]
@@ -524,6 +530,22 @@ def failed_status(minimal: dict[str, Any], repo: str, post: Callable[[str, Any],
          {"state": "failure", "context": CONTEXT, "description": "Review failed or was cancelled; inspect this run"})
 
 
+def capture_disposition(value: str) -> None:
+    """Only trusted capture writes these same-run control values."""
+    require(value in ("captured", "closed_before_admission"), "invalid_capture_disposition")
+    if value == "closed_before_admission":
+        message = "No review performed: target PR closed before capture. No verdict is available."
+        print(message, flush=True)
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with Path(summary).open("a", encoding="utf-8") as stream:
+                stream.write(message + "\n")
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with Path(output).open("a", encoding="utf-8") as stream:
+            stream.write(f"capture_disposition={value}\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("capture", "review", "publish", "fail"))
@@ -546,13 +568,17 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "fail":
             failed_status(read_json(args.snapshot.with_suffix(".identity.json")), args.repo, github)
         elif args.command == "capture":
+            require(_FULL_SHA.fullmatch(args.policy_sha), "invalid_policy_commit")
             number = args.pr
             if number is None:
                 number = resolve_event(read_json(Path(os.environ["GITHUB_EVENT_PATH"])),
-                                       os.environ["GITHUB_EVENT_NAME"], args.repo, github)
-            pr = pr_metadata(github, args.repo, number)
+                                       os.environ["GITHUB_EVENT_NAME"], args.repo, github, allow_closed=True)
+            pr = pr_metadata(github, args.repo, number, allow_closed=True)
             require(type(pr["base"]["repo"].get("id")) is int and pr["base"]["repo"]["id"] > 0,  # pylint: disable=unidiomatic-typecheck
                     "invalid_repository_id")
+            if pr["state"] == "closed":
+                capture_disposition("closed_before_admission")
+                return 0
             minimal = identity(args.repo, number, pr)
             minimal.update(snapshot_kind="installed_pr_review_v1", publication_capability="status",
                            caller_repository=args.repo, repository_id=pr["base"]["repo"]["id"],
@@ -566,12 +592,15 @@ def main(argv: list[str] | None = None) -> int:
             require({key: snapshot[key] for key in minimal} == minimal, "revision_changed_before_capture")
             scan_context(snapshot, args.gitleaks)
             write_json(args.snapshot, snapshot)
+            capture_disposition("captured")
         elif args.command == "review":
             snapshot = read_json(args.snapshot)
             verify_snapshot(snapshot, policy, args.policy_sha)
             from pr_review_agent import review_snapshot
+            from pr_review_receipts import generation_metadata
             write_report(args.report, review_snapshot(snapshot, policy,
-                                                    receipt_path=args.report.with_suffix(".receipts.json")))
+                                                    receipt_path=args.report.with_suffix(".receipts.json"),
+                                                    metadata_lookup=generation_metadata))
         else:
             snapshot = read_json(args.snapshot)
             report = read_json(args.report) if args.report.exists() else None

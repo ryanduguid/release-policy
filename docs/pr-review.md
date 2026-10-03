@@ -259,6 +259,17 @@ step's operational outcome. Failed, skipped and cancelled review jobs also fail.
 a failed GitHub API write can leave the status pending; pending is never a
 passing review. After resolving the failure, start a fresh manual dispatch.
 
+An installed target that is already closed before capture can end as
+`closed_before_admission` after repository, public-access, commit and trigger
+checks pass. Drafts, including closed drafts, remain ineligible. This trusted
+same-run disposition skips source retention, both models and the publisher;
+the summary says that no review occurred. It writes no pending or clean status.
+Only the exact `captured` disposition permits installed inference. A missing
+or invalid capture output fails the publisher's guard. Closure after pending
+was written remains an execution failure. Workflow success describes operational
+handling and cannot substitute for the advisory commit status or a validated
+report. Central public capture retains its existing eligibility checks.
+
 Reruns of the trigger and paid workflows are rejected before model calls.
 The shared workflow guards every job with `run_attempt == 1`; the command
 also rejects reruns before source reads or status mutation. Rerunning a job
@@ -315,6 +326,30 @@ text or other nested usage fields are retained. The count is diagnostic: it
 cannot change billing, release a reservation, authorise another call, accept
 output or select a status. Old journals do not supply this measurement; an
 absent count is never interpreted as zero. Public report schema 2 is unchanged.
+
+Production commands write receipt journal version 4. It preserves the version
+3 fields and adds `generation_metadata`. After the original response receipt
+is durable, the runner makes one GET to OpenRouter's
+[generation metadata endpoint](https://openrouter.ai/docs/api/api-reference/generations/get-generation)
+when a valid ID exists. The request has a 10-second socket timeout, a 65,536-byte
+response limit, no redirect and no retry. Immediate record availability is
+unqualified; a failed attempt stays unknown because the raw ID is discarded.
+
+The lookup must match the exact generation ID and planned model/provider, plus
+any identity supplied in the original envelope. It retains only its fixed state,
+a decimal USD cost string and provider-reported latency/generation time in
+milliseconds. Timings may be null under the
+[published API schema](https://openrouter.ai/openapi.json); valid values must be
+finite, non-negative and no greater than 86,400,000 milliseconds. The namespace
+excludes raw IDs, unexpected identity strings, content, headers and error bodies.
+Lookup states distinguish awaiting response, ineligible ID, eligible but
+unattempted, unavailable, rejected and verified. Receipt replacement failures
+stop execution; existing atomic receipts remain available.
+
+These values are prospective diagnostics. They cannot repair a completion,
+release a reservation, authorise another paid call, select a route or publish
+a verdict. Standalone adapters without a lookup retain version 3. Existing
+unknown bills cannot be recovered from generation ID hashes.
 
 Public report schema 2 and journals publish `generation_id_sha256`, the full
 lower-case SHA-256 digest of the exact validated ASCII provider ID. Raw IDs
@@ -410,11 +445,17 @@ Use a stable, unique attempt identity, such as a workflow run ID and its attempt
 number. Supply one final journal per attempt. Identical copies with the same
 identity count once; conflicting copies fail. Separate attempts keep their
 bills even when generation digests repeat. The summary flags those repeated
-digests. It accepts sanitised journal versions 2 and 3 and sums their recorded
+digests. It accepts sanitised journal versions 2, 3 and 4 and sums their recorded
 decimal bills. Those numbers can already contain upstream rounding. Missing
 bills on intended calls remain unknown; `accounting_complete` covers only the
 selected recorded attempts. Funding fees, other account activity and lost
 journals are outside that result. The output cannot overwrite an input journal.
+Version 4 resolves a missing response bill from verified lookup evidence for
+measurement only. Equal decimal bills count once; unequal bills stay visible
+in their original receipt fields and count as an unresolved billing conflict.
+The summary reports response-only, lookup-only, corroborated, unknown and
+conflicting observations. Conflicts are excluded from the known subtotal and
+keep accounting incomplete. This completeness field has no spending authority.
 
 Per-model counts separate planned, unstarted, received, accepted, rejected and
 indeterminate calls. Rates include their integer numerator and denominator;
@@ -422,7 +463,9 @@ an empty denominator has no rate. Completion of both models is reported
 separately. Early failure makes later model observations a selected subset,
 so these counts cannot establish which model reviews code better. The
 `strict_schema` category still combines native, local and finding-location
-checks. Journals do not provide model latency or human accuracy.
+checks. Version 4 summaries provide provider-reported timing medians with sample
+counts and attempted-generation denominators. These exclude missing timing
+values and do not measure complete review time or human accuracy.
 
 Keep reference labels out of prompts. Have a person compare each finding
 with source and a reproduction or existing confirmed human evidence. Record

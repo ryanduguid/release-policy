@@ -329,7 +329,7 @@ class ReceiptTests(unittest.TestCase):
         def send(url, key, body=None, **kwargs):
             return {"data": {"limit": None, "limit_remaining": None}} if body is None else completion(body["model"])
 
-        def run(snap, policy, *, receipt_path=None):
+        def run(snap, policy, *, receipt_path=None, metadata_lookup=None):
             return original_review(snap, policy, send, lambda *args: prompts,
                                    lambda text: clean_result(), receipt_path=receipt_path)
 
