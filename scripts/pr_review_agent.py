@@ -162,21 +162,25 @@ class OutputError(ReviewError):
 
 def parse_review(content: str) -> dict[str, Any]:
     from pr_agent.algo.output_models import PRReview
+    from pydantic import ValidationError
 
     def unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         if len(pairs) != len({key for key, _ in pairs}):
             raise OutputError("duplicate_keys")
         return dict(pairs)
 
+    def invalid_constant(_value: str) -> Any:
+        raise OutputError("json_syntax")
+
     try:
-        data = json.loads(content, object_pairs_hook=unique_keys)
+        data = json.loads(content, object_pairs_hook=unique_keys, parse_constant=invalid_constant)
     except json.JSONDecodeError:
         raise OutputError("json_syntax") from None
     if not isinstance(data, dict) or ("review" in data and not isinstance(data["review"], dict)):
         raise OutputError("root_or_nesting")
     try:
         PRReview.model_validate(data, strict=True)
-    except ValueError:
+    except ValidationError:
         raise OutputError("strict_schema") from None
     return data["review"]
 

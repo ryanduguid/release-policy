@@ -485,7 +485,8 @@ def publish(snapshot: dict[str, Any], report: dict[str, Any] | None, policy: dic
         raise ReviewError("review_execution_incomplete")
     state = assess_report(snapshot, report, policy, policy_sha, fetch, jobs_ok)
     if summary_path is not None:
-        summary_path.write_text(render_summary(report), encoding="utf-8")
+        with summary_path.open("w", encoding="utf-8") as summary_file:
+            summary_file.write(render_summary(report))
     # Finish fallible local work before the status write, so a later failure
     # cannot replace a completed findings verdict with the generic fallback.
     print(f"Independent PR review: {state} (advisory)", flush=True)

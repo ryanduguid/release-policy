@@ -24,6 +24,11 @@ review = importlib.import_module("pr_review")
 agent = importlib.import_module("pr_review_agent")
 benchmark = importlib.import_module("pr_review_benchmark")
 POLICY = json.loads((ROOT / ".github/pr-review-policy.json").read_bytes())
+
+
+class SchemaRejection(ValueError):
+    """Stand in for the installed native validator's dedicated rejection type."""
+
 HEAD, BASE, POLICY_SHA, MERGE_BASE = (char * 40 for char in "abcd")
 REPO = "example/repository"
 PR = 7
@@ -632,7 +637,8 @@ class ReviewAgentTests(unittest.TestCase):
     def test_json_parser_rejects_duplicate_keys(self):
         module = types.ModuleType("pr_agent.algo.output_models")
         module.PRReview = types.SimpleNamespace(model_validate=mock.Mock())
-        with mock.patch.dict(sys.modules, {"pr_agent.algo.output_models": module}):
+        with mock.patch.dict(sys.modules, {"pr_agent.algo.output_models": module,
+                                           "pydantic": types.SimpleNamespace(ValidationError=SchemaRejection)}):
             self.assertEqual(agent.parse_review(json.dumps({"review": clean_result()})), clean_result())
             with self.assertRaisesRegex(review.ReviewError, "duplicate_review_key"):
                 agent.parse_review('{"review":{},"review":{}}')
@@ -645,13 +651,16 @@ class ReviewAgentTests(unittest.TestCase):
         cases = [("partial private-data", "json_syntax"),
                  ('{} trailing-private-data', "json_syntax"),
                  ('```json\n{}\n```', "json_syntax"),
+                 ('NaN', "json_syntax"), ('Infinity', "json_syntax"), ('-Infinity', "json_syntax"),
+                 ('{"review":{"risk_level":NaN}}', "json_syntax"),
                  ('{"review":{},"review":{}}', "duplicate_keys"),
                  ('{"review":{"private-key":1,"private-key":2}}', "duplicate_keys"),
                  ('{"review":{},"revi\\u0065w":{}}', "duplicate_keys"),
                  ('null', "root_or_nesting"), ('[]', "root_or_nesting"),
                  ('{"review":null}', "root_or_nesting"),
                  ('{"review":"private-data"}', "root_or_nesting")]
-        with mock.patch.dict(sys.modules, {"pr_agent.algo.output_models": module}):
+        with mock.patch.dict(sys.modules, {"pr_agent.algo.output_models": module,
+                                           "pydantic": types.SimpleNamespace(ValidationError=SchemaRejection)}):
             self.assertEqual(agent.parse_review(json.dumps({"review": clean_result()})), clean_result())
             validator.assert_called_once_with({"review": clean_result()}, strict=True)
             for content, category in cases:
@@ -660,7 +669,7 @@ class ReviewAgentTests(unittest.TestCase):
                         agent.parse_review(content)
                     self.assertEqual(caught.exception.category, category)
                     self.assertNotIn("private", str(caught.exception))
-            validator.side_effect = ValueError("private-value; private-field-path; private-source")
+            validator.side_effect = SchemaRejection("private-value; private-field-path; private-source")
             with self.assertRaises(agent.OutputError) as caught:
                 agent.parse_review(json.dumps({"review": clean_result()}))
             self.assertEqual(caught.exception.category, "strict_schema")

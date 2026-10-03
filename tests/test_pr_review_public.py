@@ -22,6 +22,7 @@ from test_pr_review import (
     PR,
     REPO,
     ROOT,
+    SchemaRejection,
     agent,
     clean_result,
     completion,
@@ -388,7 +389,8 @@ class ReceiptTests(unittest.TestCase):
                 return response
 
             native = SimpleNamespace(PRReview=SimpleNamespace(model_validate=mock.Mock()))
-            with mock.patch.dict(sys.modules, {"pr_agent.algo.output_models": native}), \
+            with mock.patch.dict(sys.modules, {"pr_agent.algo.output_models": native,
+                                               "pydantic": SimpleNamespace(ValidationError=SchemaRejection)}), \
                     self.assertRaisesRegex(review.ReviewError, "invalid_review_json"):
                 agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
                                       receipt_path=path)
@@ -465,6 +467,57 @@ class ReceiptTests(unittest.TestCase):
             self.assertEqual(call["usage"]["cost"], 0.0001)
             self.assertEqual(send.call_count, 2)
             self.assertNotIn("private", path.read_text())
+
+    def test_native_value_error_is_runtime_and_typed_rejection_is_invalid(self):
+        prompts = {model: [("system", "context")] for model in review.MODELS}
+        for rejected_model in review.MODELS:
+            for error, state, category in ((ValueError("private-value"), "indeterminate", "unexpected_runtime"),
+                                           (SchemaRejection("private-field-path"), "invalid", "strict_schema")):
+                with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+                    path = Path(directory) / "receipts.json"
+                    paid = []
+
+                    def send(url, key, body=None, **kwargs):
+                        if body is None:
+                            return {"data": {"limit": None, "limit_remaining": None}}
+                        paid.append(body["model"])
+                        return completion(body["model"])
+
+                    def validate(data, strict):
+                        self.assertTrue(strict)
+                        call = review.read_json(path)["calls"][len(paid) - 1]
+                        self.assertEqual(call["transport_state"], "response_received")
+                        if paid[-1] == rejected_model:
+                            raise error
+
+                    native = SimpleNamespace(PRReview=SimpleNamespace(model_validate=validate))
+                    with mock.patch.dict(sys.modules, {"pr_agent.algo.output_models": native,
+                                                       "pydantic": SimpleNamespace(ValidationError=SchemaRejection)}), \
+                            self.assertRaises(review.ReviewError) as caught:
+                        agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts, receipt_path=path)
+                    self.assertNotIn("private", str(caught.exception))
+                    journal = review.read_json(path)
+                    self.assertFalse(journal["finished"])
+                    call = journal["calls"][len(paid) - 1]
+                    self.assertEqual(call["output_state"], state)
+                    self.assertEqual(call["diagnostic_category"], category)
+                    self.assertEqual(call["usage"]["cost"], 0.0001)
+                    self.assertEqual(paid, list(review.MODELS[:review.MODELS.index(rejected_model) + 1]))
+                    self.assertNotIn("private", path.read_text())
+
+    def test_primary_and_fallback_cannot_write_with_corrupt_capabilities(self):
+        for changes in ({"repository": "other/repo"}, {"head": "invalid"},
+                        {"snapshot_kind": "central_public_report_v1"},
+                        {"publication_capability": "none"}, {"caller_repository": "other/repo"},
+                        {"repository_id": 0}, {"caller_repository_id": True},
+                        {"caller_repository_id": 999}):
+            candidate = {**snapshot(), **changes}
+            post = mock.Mock()
+            with self.assertRaises(review.ReviewError):
+                review.publish(candidate, model_report(candidate), POLICY, POLICY_SHA, fake_fetch(), post, True)
+            with self.assertRaises(review.ReviewError):
+                review.failed_status(candidate, REPO, post)
+            post.assert_not_called()
 
     def test_unknown_transport_duplicate_ids_and_disk_failure_stop_later_calls(self):
         prompts = {model: [("system", "context")] for model in review.MODELS}
