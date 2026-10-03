@@ -29,7 +29,7 @@ def generation_id(value: Any) -> str | None:
     return None
 
 
-def metadata(response: Any, model: str, provider: str) -> dict[str, Any]:
+def metadata(response: Any, model: str, provider: str, *, output_tokens: int | None = None) -> dict[str, Any]:
     data = response if isinstance(response, dict) else {}
     usage = data.get("usage")
     usage = usage if isinstance(usage, dict) else {}
@@ -37,6 +37,12 @@ def metadata(response: Any, model: str, provider: str) -> dict[str, Any]:
     for field in ("prompt_tokens", "completion_tokens", "total_tokens"):
         value = usage.get(field)
         numbers[field] = value if type(value) is int and 0 <= value <= 1_000_000_000 else None  # pylint: disable=unidiomatic-typecheck
+    details = usage.get("completion_tokens_details")
+    reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else None
+    completion = numbers["completion_tokens"]
+    numbers["reasoning_tokens"] = (reasoning if type(reasoning) is int and output_tokens is not None
+                                   and completion is not None and 0 <= reasoning <= min(completion, output_tokens)
+                                   else None)
     cost = usage.get("cost")
     # Bound integer representation; retain finite float bills even above the
     # spending ceiling. Diagnostic metadata never releases a reservation.
@@ -58,7 +64,7 @@ class ReceiptJournal:
     def __init__(self, path: Path | None, snapshot: dict[str, Any], groups: list[list[dict[str, Any]]],
                  policy: dict[str, Any], reservation: float):
         self.path = path
-        self.data: dict[str, Any] = {"schema": "receipt_journal_v2",
+        self.data: dict[str, Any] = {"schema": "receipt_journal_v3",
                                      "context_hash": snapshot["context_hash"],
                                      "reservation_usd": reservation, "finished": False,
                                      "calls": [{"model": model, "provider": policy["routes"][model]["name"],

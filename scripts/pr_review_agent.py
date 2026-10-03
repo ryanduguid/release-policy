@@ -32,6 +32,16 @@ from pr_review import (
     validate_review,
 )
 
+# Fixed context ceiling; the byte-based input allowance is a local estimate.
+# Runtime usage and exact-route canaries can detect underestimation.
+CONTEXT_TOKENS = 1_048_576
+
+
+def input_token_bound(body: dict[str, Any]) -> int:
+    bound = len(canonical(body)) + 1000
+    require(bound + body["max_tokens"] <= CONTEXT_TOKENS, "request_exceeds_context_budget")
+    return bound
+
 
 def request_body(model: str, policy: dict[str, Any], system: str, user: str) -> dict[str, Any]:
     require(model in MODELS, "forbidden_model_or_fallback")
@@ -40,8 +50,7 @@ def request_body(model: str, policy: dict[str, Any], system: str, user: str) -> 
                                             {"role": "user", "content": user}],
             "max_tokens": policy["output_tokens"], "temperature": 0, "stream": False,
             "response_format": {"type": "json_schema", "json_schema": {
-                "name": "pr_review", "strict": True, "schema": REVIEW_SCHEMA}}
-                if model == MODELS[0] else {"type": "json_object"},
+                "name": "pr_review", "strict": True, "schema": REVIEW_SCHEMA}},
             "reasoning": {"effort": "high"} if model == MODELS[0] else {"enabled": True},
             "provider": {"only": [route["slug"]], "allow_fallbacks": False,
                          "quantizations": ["fp8"],
@@ -204,7 +213,7 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
     # Local reservation estimate: one input token per UTF-8 byte plus a fixed
     # margin and output including reasoning. Upstream token counts may differ.
     call_reservations = {
-        model: [(Decimal(len(canonical(body)) + 1000) * Decimal(str(policy["routes"][model]["prompt"]))
+        model: [(Decimal(input_token_bound(body)) * Decimal(str(policy["routes"][model]["prompt"]))
                  + Decimal(policy["output_tokens"]) * Decimal(str(policy["routes"][model]["completion"])))
                 / Decimal(1_000_000) for body in bodies[model]] for model in MODELS}
     reservation = sum((value for values in call_reservations.values() for value in values), Decimal(0))
@@ -234,11 +243,15 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
             response = send("https://openrouter.ai/api/v1/chat/completions", key,
                             body,
                             response_observer=lambda: journal.update(ordinal, transport_state="response_observed"))
-            receipt = metadata(response, model, policy["routes"][model]["name"])
+            receipt = metadata(response, model, policy["routes"][model]["name"],
+                               output_tokens=policy["output_tokens"])
             journal.update(ordinal, transport_state="response_received", **receipt)
             category = "completion_contract"
             try:
                 content = validate_completion(response, model, policy["routes"][model])
+                require(response["usage"]["prompt_tokens"] <= input_token_bound(body)
+                        and response["usage"]["completion_tokens"] <= policy["output_tokens"],
+                        "unexpected_token_usage")
                 require(receipt["generation_id_valid"] and response["id"] not in generation_ids,
                         "unusable_or_duplicate_generation_id")
                 category = "strict_schema"

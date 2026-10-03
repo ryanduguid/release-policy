@@ -373,6 +373,82 @@ class ReceiptTests(unittest.TestCase):
         self.assertNotIn("hostile", json.dumps(data))
         self.assertNotIn("private-body", json.dumps(data))
 
+    def test_reasoning_usage_is_bounded_numeric_metadata_from_one_path(self):
+        model = review.MODELS[0]
+        provider = POLICY["routes"][model]["name"]
+        for value in (0, 37, 100):
+            response = completion(model, usage={"completion_tokens": 100,
+                                               "completion_tokens_details": {"reasoning_tokens": value,
+                                                                             "text": "private-canary"}})
+            data = receipts.metadata(response, model, provider, output_tokens=100)
+            self.assertEqual(data["usage"]["reasoning_tokens"], value)
+            self.assertNotIn("private-canary", json.dumps(data))
+        for details in (None, [], "private-canary", {}, {"reasoning_tokens": None},
+                        *({"reasoning_tokens": value} for value in
+                          (True, False, -1, 0.5, "37", 101, 10**100, float("nan"), float("inf")))):
+            response = completion(model, usage={"completion_tokens": 100,
+                                               "completion_tokens_details": details,
+                                               "reasoning_tokens": 37})
+            with self.subTest(details=details):
+                self.assertIsNone(receipts.metadata(response, model, provider,
+                                                   output_tokens=100)["usage"]["reasoning_tokens"])
+        response = completion(model, usage={"completion_tokens": 100,
+                                           "completion_tokens_details": {"reasoning_tokens": 38}})
+        self.assertIsNone(receipts.metadata(response, model, provider,
+                                           output_tokens=37)["usage"]["reasoning_tokens"])
+        self.assertIsNone(receipts.metadata(response, model, provider)["usage"]["reasoning_tokens"])
+        response["usage"]["completion_tokens"] = None
+        self.assertIsNone(receipts.metadata(response, model, provider,
+                                           output_tokens=100)["usage"]["reasoning_tokens"])
+
+    def test_reasoning_metadata_never_changes_reservation_acceptance_or_report(self):
+        prompts = {model: [("system", "context")] for model in review.MODELS}
+        reports = []
+        for value in (None, 0, 100, "private-canary"):
+            with tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+                path = Path(directory) / "receipts.json"
+
+                def send(url, key, body=None, **kwargs):
+                    if body is None:
+                        return {"data": {"limit": None, "limit_remaining": None}}
+                    response = completion(body["model"])
+                    response["usage"]["completion_tokens_details"] = {"reasoning_tokens": value}
+                    return response
+
+                reports.append(agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
+                                                      lambda text: clean_result(), receipt_path=path))
+                data = review.read_json(path)
+                self.assertEqual(data["schema"], "receipt_journal_v3")
+                self.assertTrue(data["finished"])
+                self.assertNotIn("private-canary", path.read_text())
+                self.assertEqual([call["usage"]["reasoning_tokens"] for call in data["calls"]],
+                                 [value, value] if type(value) is int else [None, None])
+        self.assertTrue(all(report == reports[0] for report in reports))
+
+    def test_length_failure_retains_reasoning_count_and_stops_later_calls(self):
+        model = review.MODELS[0]
+        response = completion(model, choices=[{"finish_reason": "length",
+                                              "message": {"content": "private-canary"}}],
+                              usage={"prompt_tokens": 100, "completion_tokens": POLICY["output_tokens"],
+                                     "completion_tokens_details": {"reasoning_tokens": POLICY["output_tokens"]},
+                                     "cost": 0.01})
+        send = mock.Mock(side_effect=[{"data": {"limit": None, "limit_remaining": None}}, response])
+        prompts = {selected: [("system", "context")] for selected in review.MODELS}
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+            path = Path(directory) / "receipts.json"
+            with self.assertRaisesRegex(review.ReviewError, "incomplete_completion"):
+                agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
+                                      lambda text: clean_result(), receipt_path=path)
+            data = review.read_json(path)
+            self.assertFalse(data["finished"])
+            self.assertEqual(data["calls"][0]["usage"]["reasoning_tokens"], POLICY["output_tokens"])
+            self.assertEqual(data["calls"][0]["usage"]["cost"], 0.01)
+            self.assertEqual(data["calls"][1]["transport_state"], "not_started")
+            self.assertNotIn("private-canary", path.read_text())
+            self.assertEqual(send.call_count, 2)
+
     def test_partial_failure_retains_each_known_bill_without_complete_report(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
             path = Path(directory) / "receipts.json"
@@ -395,7 +471,7 @@ class ReceiptTests(unittest.TestCase):
                 agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
                                       receipt_path=path)
             data = review.read_json(path)
-            self.assertEqual(data["schema"], "receipt_journal_v2")
+            self.assertEqual(data["schema"], "receipt_journal_v3")
             self.assertFalse(data["finished"])
             self.assertEqual([call["output_state"] for call in data["calls"]], ["valid", "invalid"])
             self.assertEqual([call["diagnostic_category"] for call in data["calls"]], [None, "json_syntax"])

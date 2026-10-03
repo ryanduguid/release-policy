@@ -137,6 +137,74 @@ class ReviewBoundaryTests(unittest.TestCase):
             review.collect(fetch, REPO, PR, POLICY_SHA, POLICY)
         self.assertFalse(any("/contents/" in call.args[0] for call in fetch.call_args_list))
 
+    def test_larger_complete_records_preserve_source_and_exact_byte_boundaries(self):
+        before = 'x = "\\β🙂"\r\n' * 3500
+        after = "y" + before[1:]
+        patch = "@@ -1 +1 @@\n-" + before.splitlines()[0] + "\n+" + after.splitlines()[0]
+        snap = review.collect(fake_fetch(old=before, new=after, files=[file_change(patch=patch)]),
+                              REPO, PR, POLICY_SHA, POLICY)
+        size = len(review.canonical(snap["files"]))
+        self.assertGreater(size, 120000)
+        self.assertLessEqual(size, 180000)
+        groups = review.chunks(snap, POLICY)
+        self.assertEqual(groups, [snap["files"]])
+        self.assertEqual(groups[0][0]["before"], before)
+        self.assertEqual(groups[0][0]["after"], after)
+        self.assertEqual(groups[0][0]["patch"], patch)
+        self.assertEqual(review.chunks(snap, {**POLICY, "chunk_bytes": size}), groups)
+        with self.assertRaisesRegex(review.ReviewError, "file_exceeds_context_budget"):
+            review.chunks(snap, {**POLICY, "chunk_bytes": size - 1})
+        for value in (180001, True, 180000.5):
+            with self.subTest(value=value), self.assertRaises(review.ReviewError):
+                review.validate_policy({**POLICY, "chunk_bytes": value})
+
+        def boundary_record(padding, heading=""):
+            text = "return True" + " " * padding + "\n"
+            patch = "@@ -1 +1 @@" + heading + "\n-return False\n+" + text.rstrip("\n")
+            return review.collect(fake_fetch(new=text, files=[file_change(patch=patch)]),
+                                  REPO, PR, POLICY_SHA, POLICY)
+
+        overhead = len(review.canonical(boundary_record(0)["files"]))
+        padding, odd_byte = divmod(POLICY["chunk_bytes"] - overhead, 2)
+        exact = boundary_record(padding, " " * odd_byte)
+        self.assertEqual(len(review.canonical(exact["files"])), 180000)
+        self.assertEqual(review.chunks(exact, POLICY), [exact["files"]])
+        over = boundary_record(padding, " " * (odd_byte + 1))
+        self.assertEqual(len(review.canonical(over["files"])), 180001)
+        send = mock.Mock()
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic-fixture-key"}), \
+                self.assertRaisesRegex(review.ReviewError, "file_exceeds_context_budget"):
+            agent.review_snapshot(over, POLICY, send)
+        send.assert_not_called()
+        with self.assertRaisesRegex(review.ReviewError, "snapshot_policy_mismatch"):
+            review.verify_snapshot(exact, {**POLICY, "chunk_bytes": 120000}, POLICY_SHA)
+
+    def test_larger_multi_group_coverage_rejects_missing_reordered_or_substituted_groups(self):
+        snap = snapshot()
+        template = snap["files"][0]
+        snap["files"] = [{**template, "path": f"file-{i}.py", "old_path": f"file-{i}.py",
+                          "before": "x\n" * 20000, "after": "y\n" + "x\n" * 19999,
+                          "patch": "@@ -1 +1 @@\n-x\n+y"} for i in range(3)]
+        snap["context_hash"] = review.digest({key: value for key, value in snap.items() if key != "context_hash"})
+        groups = review.chunks(snap, POLICY)
+        self.assertEqual(len(groups), 3)
+        self.assertEqual([file["path"] for group in groups for file in group],
+                         [file["path"] for file in snap["files"]])
+        report = model_report(snap)
+        post = mock.Mock()
+        review.publish(snap, report, POLICY, POLICY_SHA,
+                       fake_fetch(metadata(changed_files=3)), post, True)
+        for hashes in (report["reviews"][0]["chunk_hashes"][:-1],
+                       report["reviews"][0]["chunk_hashes"][::-1],
+                       ["0" * 64] * 3):
+            damaged = copy.deepcopy(report)
+            damaged["reviews"][0]["chunk_hashes"] = hashes
+            post.reset_mock()
+            with self.assertRaisesRegex(review.ReviewError, "review_coverage_mismatch"):
+                review.publish(snap, damaged, POLICY, POLICY_SHA,
+                               fake_fetch(metadata(changed_files=3)), post, True)
+            post.assert_not_called()
+
     def test_capture_uses_merge_base_and_rechecks_revision(self):
         fetch = mock.Mock(wraps=fake_fetch())
         snap = review.collect(fetch, REPO, PR, POLICY_SHA, POLICY)
@@ -542,7 +610,7 @@ class ReviewAgentTests(unittest.TestCase):
         self.assertEqual(schema["type"], "json_schema")
         self.assertIs(schema["json_schema"]["strict"], True)
         self.assertEqual(schema["json_schema"]["schema"], review.REVIEW_SCHEMA)
-        self.assertEqual(agent.request_body(review.MODELS[1], POLICY, "", "")["response_format"], {"type": "json_object"})
+        self.assertEqual(agent.request_body(review.MODELS[1], POLICY, "", "")["response_format"], schema)
         with self.assertRaises(review.ReviewError):
             agent.request_body("claude", POLICY, "", "")
 
@@ -604,12 +672,51 @@ class ReviewAgentTests(unittest.TestCase):
         self.assertEqual(paid, [review.MODELS[0]])
 
     def test_aggregate_reservation_exhaustion_stops_before_paid_requests(self):
-        prompts = {model: [("s" * 1_800_000, "context")] for model in review.MODELS}
+        snap = snapshot()
+        template = snap["files"][0]
+        snap["files"] = [{**template, "path": f"file-{i}.py", "old_path": f"file-{i}.py",
+                          "before": "x\n" * 20000, "after": "y\n" + "x\n" * 19999,
+                          "patch": "@@ -1 +1 @@\n-x\n+y"} for i in range(3)]
+        prompts = {model: [("s" * 600000, "context")] * 3 for model in review.MODELS}
         send = mock.Mock(return_value={"data": {"limit": None, "limit_remaining": None}})
         with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic-fixture-key"}):
             with self.assertRaisesRegex(review.ReviewError, "review_budget_exceeded"):
-                agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts)
+                agent.review_snapshot(snap, POLICY, send, lambda *args: prompts)
         send.assert_not_called()
+
+    def test_complete_request_context_boundary_stops_before_any_network_call(self):
+        body = agent.request_body(review.MODELS[0], POLICY, "", "")
+        available = agent.CONTEXT_TOKENS - POLICY["output_tokens"] - 1000 - len(review.canonical(body))
+        body["messages"][1]["content"] = "s" * available
+        self.assertEqual(agent.input_token_bound(body) + POLICY["output_tokens"], agent.CONTEXT_TOKENS)
+        body["messages"][1]["content"] += "s"
+        with self.assertRaisesRegex(review.ReviewError, "request_exceeds_context_budget"):
+            agent.input_token_bound(body)
+        prompts = {model: [("s" * agent.CONTEXT_TOKENS, "context")] for model in review.MODELS}
+        send = mock.Mock()
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}), \
+                self.assertRaisesRegex(review.ReviewError, "request_exceeds_context_budget"):
+            agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts)
+        send.assert_not_called()
+
+    def test_reported_token_overruns_preserve_bill_and_block_remaining_calls(self):
+        prompts = {model: [("system", "context")] for model in review.MODELS}
+        body = agent.request_body(review.MODELS[0], POLICY, "system", "context")
+        for usage in ({"prompt_tokens": agent.input_token_bound(body) + 1, "completion_tokens": 100},
+                      {"prompt_tokens": 100, "completion_tokens": POLICY["output_tokens"] + 1}):
+            response = completion(review.MODELS[0], usage={**usage, "cost": 0.01})
+            send = mock.Mock(side_effect=[{"data": {"limit": None, "limit_remaining": None}}, response])
+            with tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+                path = Path(directory) / "receipts.json"
+                with self.assertRaisesRegex(review.ReviewError, "unexpected_token_usage"):
+                    agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts, receipt_path=path)
+                data = review.read_json(path)
+                self.assertEqual(data["calls"][0]["diagnostic_category"], "completion_contract")
+                self.assertEqual(data["calls"][0]["usage"]["cost"], 0.01)
+                self.assertEqual(data["calls"][1]["transport_state"], "not_started")
+                self.assertFalse(data["finished"])
+                self.assertEqual(send.call_count, 2)
 
     def test_billing_overruns_stop_later_calls_after_the_charge(self):
         prompts = {model: [("system", "context")] for model in review.MODELS}

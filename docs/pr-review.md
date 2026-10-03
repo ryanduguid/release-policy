@@ -128,10 +128,12 @@ The adapter preserves the native review rules and type definitions, and
 replaces its YAML example and user response prefix with JSON instructions
 before tokenisation. A
 changed native prompt layout fails before inference.
-Both prompts include the same strict JSON schema. GLM requests schema mode;
+Both requests include the same strict JSON schema in schema mode;
 an explicit nesting example keeps all four required fields inside `review`.
-MiMo requests JSON object mode after schema requests repeated complete results
-until truncation during qualification. Local and native
+The fixed Xiaomi route must pass exact-schema qualification before a caller
+migrates to this source. The previous JSON object request could produce valid
+JSON that failed native validation. There is no schema downgrade or repair.
+Local and native
 validators check every response, including fields, priority tags and source
 locations.
 
@@ -203,6 +205,22 @@ and renames. It checks pagination, changed-line counts and the revision again
 before writing the snapshot. Excluded credential paths, binary files,
 unavailable blobs, truncated patches and excessive source stop the run.
 Gitleaks 8.30.1 scans raw source before it can enter a model request.
+
+Each chunk contains unsplit complete file records and is limited to 180,000
+canonical UTF-8 bytes, including source, diff, paths and JSON escaping. The
+planner includes every changed file before inference. The publisher recomputes
+the same ordered chunk hashes from the frozen snapshot and requires an accepted
+result for every chunk from both models. The snapshot's policy hash binds the
+size limit; changing the limit requires a fresh snapshot. Missing, reordered or substituted
+chunks fail coverage validation. Source exceeding the file, chunk, complete
+request or spending ceiling stops the entire review before inference.
+Findings use absolute after-source lines, or before-source lines for removed
+files. They must refer to a file supplied in that same call.
+
+The larger ceiling expands whole-file eligibility. It does not establish
+universal PR coverage, correct findings or understanding across separate
+chunks. Fragmentation is not enabled; related regions of each accepted file
+remain together in one request to each reviewer.
 
 The Dependabot bridge takes the PR number from the triggering run's REST
 `pull_requests` record. It requires exactly one association, the current head
@@ -285,6 +303,15 @@ The final journal write must succeed before a complete report is written.
 Both publishers require the model job to succeed, including receipt upload,
 before downloading or assessing a complete report. Receipt failures can veto
 completeness; receipts cannot establish it.
+
+Receipt journal version 3 adds `usage.reasoning_tokens`. The only permitted
+source is `usage.completion_tokens_details.reasoning_tokens`. An exact
+non-negative integer must fit both the valid completion count and the requested
+output allowance. Missing, invalid or excessive values become null. No reasoning
+text or other nested usage fields are retained. The count is diagnostic: it
+cannot change billing, release a reservation, authorise another call, accept
+output or select a status. Old journals do not supply this measurement; an
+absent count is never interpreted as zero. Public report schema 2 is unchanged.
 
 Public report schema 2 and journals publish `generation_id_sha256`, the full
 lower-case SHA-256 digest of the exact validated ASCII provider ID. Raw IDs
