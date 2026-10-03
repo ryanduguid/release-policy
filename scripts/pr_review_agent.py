@@ -260,7 +260,7 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
             journal.update(ordinal, transport_state="response_received", **receipt)
             if metadata_lookup is not None:
                 journal.update(ordinal, generation_metadata=empty_lookup(
-                    "eligible_unattempted" if receipt["generation_id_valid"] else "not_eligible"))
+                    "lookup_intended" if receipt["generation_id_valid"] else "not_eligible"))
                 journal.update(ordinal, generation_metadata=metadata_lookup(
                     response, model, policy["routes"][model]["name"], key))
             category = "completion_contract"

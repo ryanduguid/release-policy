@@ -329,24 +329,36 @@ absent count is never interpreted as zero. Public report schema 2 is unchanged.
 
 Production commands write receipt journal version 4. It preserves the version
 3 fields and adds `generation_metadata`. After the original response receipt
-is durable, the runner makes one GET to OpenRouter's
+is durable, the runner may make one GET to OpenRouter's
 [generation metadata endpoint](https://openrouter.ai/docs/api/api-reference/generations/get-generation)
-when a valid ID exists. The request has a 10-second socket timeout, a 65,536-byte
-response limit, no redirect and no retry. Immediate record availability is
+when a valid ID and matching original identity exist. A fixed trusted subprocess
+has a 15-second execution
+deadline, covering connection and complete body consumption, plus a 10-second
+socket timeout and a 65,536-byte response limit. Credentials and the raw ID pass
+only through its private stdin; output contains the sanitised projection.
+The process uses no shell and is killed and waited for on timeout. Process
+creation and operating-system cleanup add scheduling overhead to the deadline.
+There is no redirect or retry. Immediate record availability is
 unqualified; a failed attempt stays unknown because the raw ID is discarded.
 
 The lookup must match the exact generation ID and planned model/provider, plus
 any identity supplied in the original envelope. It retains only its fixed state,
 a decimal USD cost string and provider-reported latency/generation time in
-milliseconds. Timings may be null under the
+milliseconds. Both timing keys must be present and may be null under the
 [published API schema](https://openrouter.ai/openapi.json); valid values must be
 finite, non-negative and no greater than 86,400,000 milliseconds. The namespace
 excludes raw IDs, unexpected identity strings, content, headers and error bodies.
-Lookup states distinguish awaiting response, ineligible ID, eligible but
-unattempted, unavailable, rejected and verified. Receipt replacement failures
-stop execution; existing atomic receipts remain available.
+Lookup states distinguish awaiting response, ineligible ID, lookup intent,
+unavailable, rejected and verified. Lookup intent is saved before dispatch;
+an interrupted attempt can retain that state without proving whether transport
+began. Terminal lookup states describe helper results, not proof that a GET
+was sent. Receipt replacement failures stop execution; existing atomic receipts
+remain available.
 
-These values are prospective diagnostics. They cannot repair a completion,
+Lookup success is optional; durable receipts are mandatory for completion.
+A metadata receipt replacement failure vetoes the report and stops later
+inference, even when the original response is valid. The recorded values are
+prospective diagnostics. They cannot repair a completion,
 release a reservation, authorise another paid call, select a route or publish
 a verdict. Standalone adapters without a lookup retain version 3. Existing
 unknown bills cannot be recovered from generation ID hashes.

@@ -5,7 +5,11 @@ import importlib
 import io
 import json
 import os
+import runpy
+import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from decimal import Decimal
@@ -185,6 +189,66 @@ class TerminalMetadataTests(unittest.TestCase):
             self.assertEqual(self.lookup(send=send), receipts.empty_lookup(state))
             self.assertEqual(send.call_count, 1)
 
+    def test_worker_deadline_cancels_a_blocking_lookup_and_keeps_secrets_out_of_arguments(self):
+        original = subprocess.run
+        entered = []
+        def stalled(arguments, **kwargs):
+            entered.append((arguments, kwargs))
+            return original([sys.executable, "-c", "import time; time.sleep(5)"], **kwargs)
+        start = time.monotonic()
+        with mock.patch.object(receipts.subprocess, "run", stalled), \
+                mock.patch.object(receipts, "LOOKUP_TIMEOUT_SECONDS", 0.1):
+            self.assertEqual(self.lookup(), receipts.empty_lookup("attempted_unavailable"))
+        self.assertLess(time.monotonic() - start, 2)
+        self.assertEqual(len(entered), 1)
+        arguments, kwargs = entered[0]
+        self.assertNotIn("synthetic", json.dumps(arguments))
+        self.assertNotIn("gen-1-0", json.dumps(arguments))
+        self.assertEqual(arguments[-1], "--lookup")
+        self.assertEqual(json.loads(kwargs["input"])["key"], "synthetic")
+        self.assertNotIn("env", kwargs)
+
+    def test_isolated_worker_output_is_strict_and_round_trips_without_network(self):
+        valid = {**receipts.empty_lookup("verified"), "total_cost_usd": "0.0001"}
+        for returncode, output, expected in ((0, json.dumps(valid).encode(), valid),
+                (1, b"private-canary", receipts.empty_lookup("attempted_unavailable")),
+                (0, b"x" * 4097, receipts.empty_lookup("attempted_unavailable")),
+                (0, b'{"state":"private-canary"}', receipts.empty_lookup("attempted_unavailable"))):
+            with mock.patch.object(receipts.subprocess, "run",
+                    return_value=subprocess.CompletedProcess([], returncode, output, b"private-error")):
+                result = self.lookup()
+            self.assertEqual(result, expected)
+            self.assertNotIn("private", json.dumps(result))
+        for model in review.MODELS:
+            payload = {"id": completion(model)["id"], "model": model,
+                       "provider": POLICY["routes"][model]["name"], "key": "synthetic"}
+            out = io.BytesIO()
+            with mock.patch.object(receipts.sys, "stdin", mock.Mock(buffer=io.BytesIO(review.canonical(payload)))), \
+                    mock.patch.object(receipts.sys, "stdout", mock.Mock(buffer=out)), \
+                    mock.patch.object(receipts, "request_json", return_value=lookup_response(model)) as get:
+                receipts.lookup_worker()
+            self.assertEqual(json.loads(out.getvalue())["state"], "verified")
+            self.assertEqual(get.call_count, 1)
+            self.assertNotIn(b"gen-", out.getvalue())
+        out = io.BytesIO()
+        with mock.patch.object(sys, "stdin", mock.Mock(buffer=io.BytesIO(b"{}"))), \
+                mock.patch.object(sys, "stdout", mock.Mock(buffer=out)), \
+                mock.patch.object(review, "request_json") as get:
+            runpy.run_path(str(ROOT / "scripts/pr_review_receipts.py"), run_name="__main__")
+        get.assert_not_called()
+        self.assertEqual(json.loads(out.getvalue())["state"], "attempted_unavailable")
+
+    def test_required_nullable_timings_cannot_be_silently_omitted(self):
+        for field in ("latency", "generation_time"):
+            incomplete = lookup_response()
+            del incomplete["data"][field]
+            self.assertEqual(self.lookup(send=mock.Mock(return_value=incomplete)),
+                             receipts.empty_lookup("attempted_rejected"))
+        zero = self.lookup(send=mock.Mock(return_value=lookup_response(latency=0, generation_time=0)))
+        self.assertEqual(zero["state"], "verified")
+        self.assertEqual(zero["provider_latency_ms"], 0)
+        self.assertEqual(zero["provider_generation_time_ms"], 0)
+
     def test_transport_uses_exact_decimal_bounds_and_refuses_redirects(self):
         response = mock.MagicMock()
         response.__enter__.return_value.read.return_value = b'{"data":{"total_cost":0.123456789012345678901}}'
@@ -198,7 +262,7 @@ class TerminalMetadataTests(unittest.TestCase):
             response.__enter__.return_value.read.assert_called_with(65537)
             for code in (301, 302, 307, 308):
                 opener.open.side_effect = HTTPError("private-gen-test", code, "private", {}, None)
-                self.assertEqual(self.lookup()["state"], "attempted_unavailable")
+                self.assertEqual(self.lookup(send=review.request_json)["state"], "attempted_unavailable")
         with self.assertRaisesRegex(review.ReviewError, "redirect"):
             review.NoRedirect().redirect_request(None, None, 302, "", {}, "https://openrouter.ai/api/v1/other")
 
@@ -274,7 +338,7 @@ class TerminalMetadataTests(unittest.TestCase):
             with self.assertRaises(review.ReviewError):
                 receipts.validate_lookup(call)
         call = copy.deepcopy(journal.data["calls"][0])
-        call["generation_metadata"] = receipts.empty_lookup("eligible_unattempted")
+        call["generation_metadata"] = receipts.empty_lookup("lookup_intended")
         with self.assertRaises(review.ReviewError):
             receipts.validate_lookup(call)
 
@@ -302,7 +366,7 @@ class TerminalMetadataTests(unittest.TestCase):
             agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
                                   receipt_path=path, metadata_lookup=lookup)
         data = metrics.read_receipt(path)
-        self.assertEqual(data["calls"][0]["generation_metadata"]["state"], "eligible_unattempted")
+        self.assertEqual(data["calls"][0]["generation_metadata"]["state"], "lookup_intended")
         self.assertEqual(len(paid), 1)
         self.assertEqual(data["calls"][0]["usage"]["cost"], Decimal("0.0001"))
         self.assertFalse(data["finished"])
