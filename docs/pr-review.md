@@ -359,6 +359,42 @@ use a fresh output directory for repetitions. Preparation refuses unsupported
 comparisons and oversized cases. Record those as coverage failures, never
 as clean reviews. The four synthetic controls occupy offsets 196 to 199.
 
+Each batch saves `benchmark_batch_v2` before preparing its first case. Its
+records include every selected immutable case, initially `unstarted`, and the
+policy, engine, schema and adapter identities. Atomic checkpoints distinguish
+preparation, model and report-storage failures. The first failure stops the
+batch; later cases remain unstarted. A saved `preparing` or `reviewing` state
+after interruption is incomplete evidence. A failed or completed batch cannot
+resume paid execution. A prepared batch can reuse checked snapshots only with
+the same configuration and selected cases. Repetitions need a fresh directory.
+
+Summarise explicitly selected sanitised journals without source or model calls:
+
+```bash
+python scripts/pr_review_measurements.py \
+  --journal attempt1=first.review.receipts.json \
+  --journal attempt2=second.review.receipts.json \
+  --output operational-summary.json
+```
+
+Use a stable, unique attempt identity, such as a workflow run ID and its attempt
+number. Supply one final journal per attempt. Identical copies with the same
+identity count once; conflicting copies fail. Separate attempts keep their
+bills even when generation digests repeat. The summary flags those repeated
+digests. It accepts sanitised journal versions 2 and 3 and sums their recorded
+decimal bills. Those numbers can already contain upstream rounding. Missing
+bills on intended calls remain unknown; `accounting_complete` covers only the
+selected recorded attempts. Funding fees, other account activity and lost
+journals are outside that result. The output cannot overwrite an input journal.
+
+Per-model counts separate planned, unstarted, received, accepted, rejected and
+indeterminate calls. Rates include their integer numerator and denominator;
+an empty denominator has no rate. Completion of both models is reported
+separately. Early failure makes later model observations a selected subset,
+so these counts cannot establish which model reviews code better. The
+`strict_schema` category still combines native, local and finding-location
+checks. Journals do not provide model latency or human accuracy.
+
 Keep reference labels out of prompts. Have a person compare each finding
 with source and a reproduction or existing confirmed human evidence. Record
 precision, must-block defect recall, noise on clean controls, location accuracy,
@@ -366,3 +402,6 @@ cost and latency for each model. Repeat serious defects and controls. Do not
 use Claude, Codex or an LLM judge. GLM is the provisional lead; the benchmark
 must determine whether either model earns that role. No model accuracy result
 has been established. Complete live route and event checks before activation.
+Record confirmed true, confirmed false, indeterminate and unassessed findings
+separately, with evidence and immutable case/report identities. Known misses
+are not recall unless a human has established the full relevant defect set.

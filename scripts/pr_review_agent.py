@@ -10,9 +10,10 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import math
 import os
 import subprocess
-from decimal import Decimal
+from decimal import Context, Decimal, localcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -35,12 +36,19 @@ from pr_review import (
 # Fixed context ceiling; the byte-based input allowance is a local estimate.
 # Runtime usage and exact-route canaries can detect underestimation.
 CONTEXT_TOKENS = 1_048_576
+_MONEY = Context(prec=700)
 
 
 def input_token_bound(body: dict[str, Any]) -> int:
     bound = len(canonical(body)) + 1000
     require(bound + body["max_tokens"] <= CONTEXT_TOKENS, "request_exceeds_context_budget")
     return bound
+
+
+def guard_amount(value: Decimal) -> float:
+    """Pass a one-sided bound to the existing numeric key guard and reports."""
+    amount = float(value)
+    return math.nextafter(amount, math.inf) if Decimal.from_float(amount) < value else amount
 
 
 def request_body(model: str, policy: dict[str, Any], system: str, user: str) -> dict[str, Any]:
@@ -212,23 +220,25 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
               for model in MODELS}
     # Local reservation estimate: one input token per UTF-8 byte plus a fixed
     # margin and output including reasoning. Upstream token counts may differ.
-    call_reservations = {
-        model: [(Decimal(input_token_bound(body)) * Decimal(str(policy["routes"][model]["prompt"]))
-                 + Decimal(policy["output_tokens"]) * Decimal(str(policy["routes"][model]["completion"])))
-                / Decimal(1_000_000) for body in bodies[model]] for model in MODELS}
-    reservation = sum((value for values in call_reservations.values() for value in values), Decimal(0))
+    with localcontext(_MONEY):
+        call_reservations = {
+            model: [(Decimal(input_token_bound(body)) * Decimal(str(policy["routes"][model]["prompt"]))
+                     + Decimal(policy["output_tokens"]) * Decimal(str(policy["routes"][model]["completion"])))
+                    / Decimal(1_000_000) for body in bodies[model]] for model in MODELS}
+        reservation = sum((value for values in call_reservations.values() for value in values), Decimal(0))
     require(reservation <= Decimal(str(policy["max_review_usd"])), "review_budget_exceeded")
-    reserve_budget(send("https://openrouter.ai/api/v1/key", key), policy, float(reservation))
+    guarded_reservation = guard_amount(reservation)
+    reserve_budget(send("https://openrouter.ai/api/v1/key", key), policy, guarded_reservation)
     if snapshot.get("snapshot_kind") == "central_public_report_v1":
         from pr_review_public import verify_live
         verify_live(snapshot, policy, snapshot["policy_sha"])
     from pr_review_receipts import ReceiptJournal, metadata
-    journal = ReceiptJournal(receipt_path, snapshot, groups, policy, float(reservation))
+    journal = ReceiptJournal(receipt_path, snapshot, groups, policy, guarded_reservation)
     report: dict[str, Any] = {"schema": 2, "context_hash": snapshot["context_hash"],
                               "engine_sha": PR_AGENT_SHA, "complete": False,
                               "remaining_files": [f["path"] for f in snapshot["files"]],
                               "failed_chunks": 0, "spending_mode": policy["spending_mode"],
-                              "reservation_usd": float(reservation), "reviews": []}
+                              "reservation_usd": guarded_reservation, "reviews": []}
     spent = Decimal(0)
     remaining_reservation = reservation
     generation_ids: set[str] = set()
@@ -238,7 +248,7 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
                                  "chunk_hashes": [], "results": [], "generations": []}
         for group, body, call_reservation in zip(groups, bodies[model],
                                                           call_reservations[model], strict=True):
-            require(spent + remaining_reservation <= reservation, "unexpected_billed_cost")
+            require(_MONEY.add(spent, remaining_reservation) <= reservation, "unexpected_billed_cost")
             journal.update(ordinal, transport_state="request_intended")
             response = send("https://openrouter.ai/api/v1/chat/completions", key,
                             body,
@@ -266,8 +276,8 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
             except Exception:
                 journal.update(ordinal, output_state="indeterminate", diagnostic_category="unexpected_runtime")
                 raise ReviewError("invalid_model_output") from None
-            spent += Decimal(str(response["usage"]["cost"]))
-            remaining_reservation -= call_reservation
+            spent = _MONEY.add(spent, Decimal(str(response["usage"]["cost"])))
+            remaining_reservation = _MONEY.subtract(remaining_reservation, call_reservation)
             require(spent <= reservation and spent <= Decimal(str(policy["max_review_usd"])),
                     "unexpected_billed_cost")
             generation_ids.add(response["id"])

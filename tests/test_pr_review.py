@@ -13,6 +13,7 @@ import tempfile
 import types
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from decimal import Decimal
 from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError, URLError
@@ -596,6 +597,61 @@ class ReviewBoundaryTests(unittest.TestCase):
 
 
 class ReviewAgentTests(unittest.TestCase):
+    def test_guard_conversion_never_rounds_below_the_decimal_reservation(self):
+        for value in (Decimal("0.1"), Decimal("0.3"), Decimal("0.173"),
+                      Decimal("2.99999999999999999999999999"), Decimal(3)):
+            converted = agent.guard_amount(value)
+            self.assertGreaterEqual(Decimal.from_float(converted), value)
+
+    def test_tiny_positive_bill_cannot_disappear_at_the_exact_total_boundary(self):
+        policy = copy.deepcopy(POLICY)
+        for route in policy["routes"].values():
+            route.update(prompt=1, completion=1)
+        prompts = {model: [("system", "context")] for model in review.MODELS}
+        costs = iter([0, 0])
+
+        def send(url, key, body=None, **kwargs):
+            if url.endswith("/key"):
+                return {"data": {"limit": None, "limit_remaining": None}}
+            response = completion(body["model"])
+            response["usage"]["cost"] = next(costs)
+            return response
+
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic-fixture-key"}):
+            baseline = agent.review_snapshot(snapshot(), policy, send, lambda *args: prompts,
+                                            lambda content: clean_result())
+            # With integer token counts at US$1 per million, the exact total
+            # has six decimal places even when its report float rounds upward.
+            total = round(baseline["reservation_usd"], 6)
+            costs = iter([5e-324, total])
+            with self.assertRaisesRegex(review.ReviewError, "unexpected_billed_cost"):
+                agent.review_snapshot(snapshot(), policy, send, lambda *args: prompts,
+                                      lambda content: clean_result())
+
+    def test_negative_bills_remain_unknown_and_stop_before_the_second_call(self):
+        prompts = {model: [("system", "context")] for model in review.MODELS}
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic-fixture-key"}):
+            path = Path(directory) / "receipts.json"
+            for cost in (-1, -0.01, -1e-100):
+                paid = []
+
+                def send(url, key, body=None, **kwargs):
+                    if url.endswith("/key"):
+                        return {"data": {"limit": None, "limit_remaining": None}}
+                    paid.append(body["model"])
+                    response = completion(body["model"])
+                    response["usage"]["cost"] = cost
+                    return response
+
+                with self.subTest(cost=cost), self.assertRaises(review.ReviewError):
+                    agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
+                                          lambda content: clean_result(), receipt_path=path)
+                self.assertEqual(paid, [review.MODELS[0]])
+                journal = review.read_json(path)
+                self.assertFalse(journal["finished"])
+                self.assertIsNone(journal["calls"][0]["usage"]["cost"])
+                self.assertEqual(journal["calls"][1]["transport_state"], "not_started")
+
     def test_payload_disallows_routing_fallback_and_model_substitution(self):
         for model in review.MODELS:
             body = agent.request_body(model, POLICY, "system", "user")
