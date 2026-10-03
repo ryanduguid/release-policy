@@ -20,9 +20,9 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents. Keeping action pins and permission maps inside the exact
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
-    ".github/workflows/pr-review-central.yml": "ac4d78e66e801d88f32b93f715c0c055b303d15d1f5ebaa5f0272108083e71a2",
+    ".github/workflows/pr-review-central.yml": "6f0086664fbafebbba915133fdf631f6f3868738e8caeb6e2509f8eafd87b344",
     ".github/workflows/pr-review-trigger.yml": "6f2da6fecf622d02643f0d97172abe24c1f009049a09da63fea2a34f87783542",
-    ".github/workflows/pr-review-consumer.yml": "e372fc8e064da8b01f96b2ba47fe6f4c69a790d2c1a72ca2af5f04d2a87a1a16",
+    ".github/workflows/pr-review-consumer.yml": "d8c91be83d74ccaacf309dd9cd2743e25db07bee63fd51ce44ca0b86ac415e61",
     ".github/pr-review-build-wheels.txt": "e75343a5ed6ddcd4f3c9fdb52e8a635fd52c4509dca5f0f22d2b29b0d22c9a18",
     "docs/pr-review.md": "1ed155ec742425b5956f351c0402d209f1a3d1debadefb0e74e00b035dfeecc8",
     ".github/pr-review-policy.json": "2c6c3aa9ad16161af41a330578789117f93dcd499f49c0b553aaeb789f45f49e",
