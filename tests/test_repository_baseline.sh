@@ -24,7 +24,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/pr-review-trigger.yml": "6f2da6fecf622d02643f0d97172abe24c1f009049a09da63fea2a34f87783542",
     ".github/workflows/pr-review-consumer.yml": "d8c91be83d74ccaacf309dd9cd2743e25db07bee63fd51ce44ca0b86ac415e61",
     ".github/pr-review-build-wheels.txt": "e75343a5ed6ddcd4f3c9fdb52e8a635fd52c4509dca5f0f22d2b29b0d22c9a18",
-    "docs/pr-review.md": "b1034201b36c86a57a350a019319bc5484cdf8e44a01ee292882e58858988bc0",
+    "docs/pr-review.md": "abac662af4cddeb5269fdea80bc322fedf909651e0b86335abcaf3c0520ab8ff",
     ".github/pr-review-policy.json": "44036e011119babc6d6bea0e5ac9a98b05770f73cc8bc8a9d42844c7da810bba",
     ".github/workflows/pr-review.yml": "8c3f490e01e836e5b3e3901fd66140066ec32659cda51fbddfe8e79765cf1700",
     "docs/attribution-consumers.md": "78f8fbc8be4cc07d0c407a5c4fe2eea746d528194dff457ecdcbde80d6c2ade9",

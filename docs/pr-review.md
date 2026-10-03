@@ -217,10 +217,12 @@ request or spending ceiling stops the entire review before inference.
 Findings use absolute after-source lines, or before-source lines for removed
 files. They must refer to a file supplied in that same call.
 
-The larger ceiling expands whole-file eligibility. It does not establish
-universal PR coverage, correct findings or understanding across separate
-chunks. Fragmentation is not enabled; related regions of each accepted file
-remain together in one request to each reviewer.
+The larger ceiling expands whole-file eligibility. The client constructs and
+transmits every admitted record to each authorised route. Response identity and
+coverage checks establish structural completion, without provider-internal
+attestation or model accuracy. Universal PR coverage and understanding across
+separate chunks remain unqualified. Fragmentation is not enabled; related
+regions of each accepted file remain together in one request to each route.
 
 The Dependabot bridge takes the PR number from the triggering run's REST
 `pull_requests` record. It requires exactly one association, the current head
@@ -230,7 +232,7 @@ another PR. Missing or ambiguous run associations stop the review.
 
 The model step receives frozen data and the model key. It cannot write a
 GitHub status. It runs no PR code, loads no PR settings, follows no PR links
-and has no reviewer, helper or model fallback. The two models receive
+and has no reviewer, helper or model fallback. Requests to both routes contain
 identical prompts without PR author rationale or the other model's verdict.
 The native engine must match the pin and have no changed tracked engine files
 or secret configuration files.
@@ -238,8 +240,9 @@ or secret configuration files.
 Every completion must end normally, identify the expected model and provider,
 report billed usage and parse as strict JSON against PR-Agent's review type.
 Duplicate keys, missing fields, invalid finding locations, partial chunks,
-empty responses and truncated output fail. Reported costs cannot exceed the
-reserved ceiling. No automatic paid retries run.
+empty responses and truncated output fail. An unexpected bill invalidates the
+review and stops later calls; its recorded value is preserved. No automatic
+paid retries run.
 
 The publisher has no model key. It checks the context/policy/engine hashes,
 both distinct models, every chunk and the current head/base before success.
