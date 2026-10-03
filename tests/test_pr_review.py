@@ -314,7 +314,10 @@ class ReviewBoundaryTests(unittest.TestCase):
         self.assertEqual(review.publish(snap, report, POLICY, POLICY_SHA, fake_fetch(), post, True), "success")
         self.assertEqual(post.call_args.args[1]["state"], "success")
         for jobs_ok, candidate in ((False, report), (True, None)):
-            self.assertEqual(review.publish(snap, candidate, POLICY, POLICY_SHA, fake_fetch(), post, jobs_ok), "failure")
+            post.reset_mock()
+            with self.assertRaisesRegex(review.ReviewError, "review_execution_incomplete"):
+                review.publish(snap, candidate, POLICY, POLICY_SHA, fake_fetch(), post, jobs_ok)
+            post.assert_not_called()
         report["reviews"][0]["results"][0]["key_issues_to_review"] = [finding()]
         self.assertEqual(review.publish(snap, report, POLICY, POLICY_SHA, fake_fetch(), post, True), "failure")
         for changes, expected in (({"complete": False}, "incomplete_review"), ({"reviews": []}, "independent_review"),
@@ -633,8 +636,35 @@ class ReviewAgentTests(unittest.TestCase):
             self.assertEqual(agent.parse_review(json.dumps({"review": clean_result()})), clean_result())
             with self.assertRaisesRegex(review.ReviewError, "duplicate_review_key"):
                 agent.parse_review('{"review":{},"review":{}}')
-            with self.assertRaises(ValueError):
+            with self.assertRaisesRegex(review.ReviewError, "invalid_review_json"):
                 agent.parse_review("partial {")
+
+    def test_output_categories_are_fixed_and_preserve_strict_rejection(self):
+        validator = mock.Mock()
+        module = types.SimpleNamespace(PRReview=types.SimpleNamespace(model_validate=validator))
+        cases = [("partial private-data", "json_syntax"),
+                 ('{} trailing-private-data', "json_syntax"),
+                 ('```json\n{}\n```', "json_syntax"),
+                 ('{"review":{},"review":{}}', "duplicate_keys"),
+                 ('{"review":{"private-key":1,"private-key":2}}', "duplicate_keys"),
+                 ('{"review":{},"revi\\u0065w":{}}', "duplicate_keys"),
+                 ('null', "root_or_nesting"), ('[]', "root_or_nesting"),
+                 ('{"review":null}', "root_or_nesting"),
+                 ('{"review":"private-data"}', "root_or_nesting")]
+        with mock.patch.dict(sys.modules, {"pr_agent.algo.output_models": module}):
+            self.assertEqual(agent.parse_review(json.dumps({"review": clean_result()})), clean_result())
+            validator.assert_called_once_with({"review": clean_result()}, strict=True)
+            for content, category in cases:
+                with self.subTest(category=category, content=content):
+                    with self.assertRaises(agent.OutputError) as caught:
+                        agent.parse_review(content)
+                    self.assertEqual(caught.exception.category, category)
+                    self.assertNotIn("private", str(caught.exception))
+            validator.side_effect = ValueError("private-value; private-field-path; private-source")
+            with self.assertRaises(agent.OutputError) as caught:
+                agent.parse_review(json.dumps({"review": clean_result()}))
+            self.assertEqual(caught.exception.category, "strict_schema")
+            self.assertNotIn("private", str(caught.exception))
 
     def test_native_adapter_pin_and_context_contract_without_model_calls(self):
         native_system = "Review only concrete defects.\nPreserve uncertainty.\nThe output must be a YAML object equivalent to PRReview.\nExample output:\n```yaml\nreview: {}\n```\nAnswer should be a valid YAML."
@@ -797,6 +827,95 @@ class ReviewCliTests(unittest.TestCase):
             with mock.patch.object(sys, "argv", [str(ROOT / "scripts/pr_review.py"), "fail", *args]), mock.patch.object(review.Path, "stat", side_effect=OSError), self.assertRaises(SystemExit) as caught, redirect_stderr(io.StringIO()):
                 runpy.run_path(str(ROOT / "scripts/pr_review.py"), run_name="__main__")
             self.assertEqual(caught.exception.code, 1)
+
+    def test_completed_findings_do_not_trigger_generic_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snap = snapshot()
+            review.write_json(root / "policy.json", POLICY)
+            review.write_json(root / "snapshot.json", snap)
+            review.write_json(root / "snapshot.identity.json", {key: snap[key] for key in
+                              ("repository", "head", "snapshot_kind", "publication_capability",
+                               "caller_repository", "repository_id", "caller_repository_id")})
+            args = ["--policy", str(root / "policy.json"), "--policy-sha", POLICY_SHA,
+                    "--snapshot", str(root / "snapshot.json"), "--report", str(root / "review.json"),
+                    "--repo", REPO]
+            for changes in ({}, {"key_issues_to_review": [finding()]},
+                            {"merge_recommendation": "merge_with_caution"},
+                            {"security_concerns": "Concern"}, {"risk_level": "medium"}):
+                report = model_report(snap)
+                report["reviews"][0]["results"][0].update(changes)
+                review.write_json(root / "review.json", report)
+                writes = []
+
+                def api(path, payload=None):
+                    if payload is None:
+                        return fake_fetch()(path)
+                    self.assertTrue((root / "summary.md").exists())
+                    writes.append(payload)
+                    return {"state": payload["state"]}
+
+                with mock.patch.object(review, "github", api), \
+                        mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(root / "summary.md")}), \
+                        redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    result = review.main(["publish", *args, "--jobs-ok"])
+                    if result:
+                        review.main(["fail", *args])
+                self.assertEqual(result, 0)
+                self.assertEqual(len(writes), 1)
+                self.assertEqual(writes[0]["state"], "failure" if changes else "success")
+                self.assertIn("complete", writes[0]["description"])
+                (root / "summary.md").unlink()
+
+    def test_operational_failures_publish_only_the_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snap = snapshot()
+            for name, data in (("policy.json", POLICY), ("snapshot.json", snap),
+                               ("snapshot.identity.json", {key: snap[key] for key in
+                                ("repository", "head", "snapshot_kind", "publication_capability",
+                                 "caller_repository", "repository_id", "caller_repository_id")})):
+                review.write_json(root / name, data)
+            args = ["--policy", str(root / "policy.json"), "--policy-sha", POLICY_SHA,
+                    "--snapshot", str(root / "snapshot.json"), "--report", str(root / "review.json"),
+                    "--repo", REPO]
+            for case in ("missing", "incomplete", "stale", "invalid", "render", "save", "api"):
+                report = model_report(snap)
+                if case == "incomplete":
+                    report["complete"] = False
+                if case == "invalid":
+                    report["reviews"][0]["results"][0]["risk_level"] = "private-invalid-value"
+                review.write_json(root / "review.json", report)
+                if case == "missing":
+                    (root / "review.json").unlink()
+                current = metadata()
+                if case == "stale":
+                    current["head"]["sha"] = "f" * 40
+                fetch = fake_fetch(current)
+                writes = []
+                attempted = []
+
+                def api(path, payload=None):
+                    if payload is None:
+                        return fetch(path)
+                    attempted.append(payload)
+                    if case == "api" and len(attempted) == 1:
+                        raise OSError("private-api-error")
+                    writes.append(payload)
+                    return {}
+
+                render = mock.Mock(side_effect=ValueError("private-render-error")) if case == "render" else review.render_summary
+                summary = root / "absent" / "summary.md" if case == "save" else root / "summary.md"
+                with mock.patch.object(review, "github", api), \
+                        mock.patch.object(review, "render_summary", render), \
+                        mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}), \
+                        redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as errors:
+                    self.assertEqual(review.main(["publish", *args, "--jobs-ok"]), 1)
+                    self.assertEqual(review.main(["fail", *args]), 0)
+                self.assertNotIn("private", errors.getvalue())
+                self.assertEqual(len(writes), 1)
+                self.assertEqual(len(attempted), 2 if case == "api" else 1)
+                self.assertEqual(writes[0]["description"], "Review failed or was cancelled; inspect this run")
 
 
 class BenchmarkTests(unittest.TestCase):

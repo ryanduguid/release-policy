@@ -16,9 +16,10 @@ from pr_review import MODELS, canonical, digest, require
 MAX_JOURNAL_BYTES = 131072
 _ID = re.compile(r"gen-[0-9A-Za-z-]+", re.ASCII)
 _FINISH = {"stop", "length", "content_filter", "error", "tool_calls"}
-_CALL_FIELDS = {"model", "provider", "chunk_hash", "transport_state", "output_state",
+_CALL_FIELDS = {"model", "provider", "chunk_hash", "transport_state", "output_state", "diagnostic_category",
                 "generation_id_sha256", "generation_id_valid", "model_matches", "provider_matches",
                 "finish_reason", "usage"}
+_REJECTIONS = {"completion_contract", "json_syntax", "duplicate_keys", "root_or_nesting", "strict_schema"}
 
 
 def generation_id(value: Any) -> str | None:
@@ -57,18 +58,26 @@ class ReceiptJournal:
     def __init__(self, path: Path | None, snapshot: dict[str, Any], groups: list[list[dict[str, Any]]],
                  policy: dict[str, Any], reservation: float):
         self.path = path
-        self.data: dict[str, Any] = {"schema": "receipt_journal_v1",
+        self.data: dict[str, Any] = {"schema": "receipt_journal_v2",
                                      "context_hash": snapshot["context_hash"],
                                      "reservation_usd": reservation, "finished": False,
                                      "calls": [{"model": model, "provider": policy["routes"][model]["name"],
                                                 "chunk_hash": digest(group), "transport_state": "not_started",
-                                                "output_state": "not_checked", **metadata(None, model, "")}
+                                                "output_state": "not_checked", "diagnostic_category": None,
+                                                **metadata(None, model, "")}
                                                for model in MODELS for group in groups]}
         require(len(canonical(self.data)) + 1 <= MAX_JOURNAL_BYTES, "receipt_plan_too_large")
         self.save()
 
     def save(self) -> None:
         require(all(set(call) == _CALL_FIELDS for call in self.data["calls"]), "invalid_receipt_fields")
+        for call in self.data["calls"]:
+            state, category = call["output_state"], call["diagnostic_category"]
+            require((state in ("not_checked", "valid") and category is None)
+                    or (call["transport_state"] == "response_received" and isinstance(category, str)
+                        and ((state == "invalid" and category in _REJECTIONS)
+                             or (state == "indeterminate" and category == "unexpected_runtime"))),
+                    "invalid_receipt_diagnostic")
         if self.path is None:
             return
         raw = canonical(self.data) + b"\n"

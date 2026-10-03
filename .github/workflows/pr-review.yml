@@ -239,6 +239,7 @@ jobs:
           name: independent-review-${{ github.run_id }}-${{ github.run_attempt }}
           path: evidence
       - name: Validate coverage and current revision before publication
+        id: publish_report
         if: ${{ needs.capture.result == 'success' && needs.review.result == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -248,7 +249,7 @@ jobs:
           --policy policy/.github/pr-review-policy.json --policy-sha "$POLICY_SHA"
           --snapshot evidence/snapshot.json --report evidence/review.json
       - name: Publish failure for a failed, skipped or cancelled review
-        if: ${{ always() && (job.status != 'success' || needs.capture.result != 'success' || needs.review.result != 'success') }}
+        if: ${{ always() && (steps.publish_report.outcome != 'success' || needs.capture.result != 'success' || needs.review.result != 'success') }}
         env:
           GH_TOKEN: ${{ github.token }}
           POLICY_SHA: ${{ job.workflow_sha }}

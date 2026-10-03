@@ -473,18 +473,26 @@ def assess_report(snapshot: dict[str, Any], report: dict[str, Any] | None, polic
 
 
 def publish(snapshot: dict[str, Any], report: dict[str, Any] | None, policy: dict[str, Any],
-            policy_sha: str, fetch: Fetch, post: Callable[[str, Any], Any], jobs_ok: bool) -> str:
+            policy_sha: str, fetch: Fetch, post: Callable[[str, Any], Any], jobs_ok: bool, *,
+            summary_path: Path | None = None) -> str:
     require(snapshot.get("snapshot_kind") == "installed_pr_review_v1"
             and snapshot.get("publication_capability") == "status"
             and snapshot.get("caller_repository") == snapshot["repository"]
             and type(snapshot.get("repository_id")) is int and snapshot["repository_id"] > 0  # pylint: disable=unidiomatic-typecheck
             and type(snapshot.get("caller_repository_id")) is int  # pylint: disable=unidiomatic-typecheck
             and snapshot["caller_repository_id"] == snapshot["repository_id"], "status_capability_required")
+    if not jobs_ok or report is None:
+        raise ReviewError("review_execution_incomplete")
     state = assess_report(snapshot, report, policy, policy_sha, fetch, jobs_ok)
+    if summary_path is not None:
+        summary_path.write_text(render_summary(report), encoding="utf-8")
+    # Finish fallible local work before the status write, so a later failure
+    # cannot replace a completed findings verdict with the generic fallback.
+    print(f"Independent PR review: {state} (advisory)", flush=True)
     post(f"repos/{snapshot['repository']}/statuses/{snapshot['head']}",
          {"context": CONTEXT, "state": state,
-          "description": "Both reviews complete; inspect findings and CI" if state == "success"
-          else "Review findings or incomplete review; inspect this run"})
+          "description": "Both reviews complete; inspect CI" if state == "success"
+          else "Reviews complete; findings or caution require attention"})
     return state
 
 
@@ -566,13 +574,10 @@ def main(argv: list[str] | None = None) -> int:
         else:
             snapshot = read_json(args.snapshot)
             report = read_json(args.report) if args.report.exists() else None
-            state = publish(snapshot, report, policy, args.policy_sha, github, github, args.jobs_ok)
-            if report is not None:
-                summary = os.environ.get("GITHUB_STEP_SUMMARY")
-                if summary:
-                    Path(summary).write_text(render_summary(report), encoding="utf-8")
-            print(f"Independent PR review: {state} (advisory)")
-            return 0 if state == "success" else 1
+            summary = os.environ.get("GITHUB_STEP_SUMMARY")
+            publish(snapshot, report, policy, args.policy_sha, github, github, args.jobs_ok,
+                    summary_path=Path(summary) if summary else None)
+            return 0
         return 0
     except Exception as error:
         code = str(error) if isinstance(error, ReviewError) else "invalid_input_or_runtime"
