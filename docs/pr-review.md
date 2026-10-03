@@ -164,7 +164,9 @@ to US$350. Its reset and BYOK guards follow
 
 The runner uses a conservative local reservation estimate from the complete
 request payload, including its response schema and a fixed safety margin, plus up to
-12,288 output tokens per chunk for reasoning and the final answer. A review
+32,768 output tokens per chunk for reasoning and the final answer. This
+allowance is a qualification candidate until immutable live canaries complete.
+A review
 may use at most 12 chunks and reserve at most US$3. Source that exceeds this
 limit needs human review. Actual billed usage is recorded after each call;
 an unexpected bill stops another call when its remaining reservation no

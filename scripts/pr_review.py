@@ -107,7 +107,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
     require(tuple(policy["models"]) == MODELS, "forbidden_model_or_fallback")
     require(policy["private_repositories"] is False, "private_routes_not_qualified")
     for field, ceiling in (("max_pilot_limit_usd", 100), ("max_key_limit_usd", 350), ("max_review_usd", 3),
-                           ("max_chunks", 12), ("chunk_bytes", 60000), ("output_tokens", 12288)):
+                           ("max_chunks", 12), ("chunk_bytes", 60000), ("output_tokens", 32768)):
         value = policy[field]
         require(type(value) in (int, float) and math.isfinite(value) and 0 < value <= ceiling,
                 "invalid_budget_or_size_limit")

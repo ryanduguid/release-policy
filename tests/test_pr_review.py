@@ -114,6 +114,7 @@ class ReviewBoundaryTests(unittest.TestCase):
                              ("spending_mode", "unknown"), ("spending_mode", None),
                              ("private_repositories", True), ("max_review_usd", float("nan")),
                              ("max_review_usd", 4), ("max_pilot_limit_usd", 101),
+                             ("output_tokens", 32769), ("output_tokens", 32768.5), ("output_tokens", True),
                              ("max_chunks", 1.5), ("instructions", "x" * 8001)):
             policy = copy.deepcopy(POLICY)
             policy[field] = value
@@ -535,6 +536,7 @@ class ReviewAgentTests(unittest.TestCase):
             self.assertEqual(body["provider"]["only"], [POLICY["routes"][model]["slug"]])
             self.assertEqual(body["provider"]["quantizations"], ["fp8"])
             self.assertEqual(body["temperature"], 0)
+            self.assertEqual(body["max_tokens"], 32768)
         self.assertEqual(agent.request_body(review.MODELS[1], POLICY, "", "")["reasoning"], {"enabled": True})
         schema = agent.request_body(review.MODELS[0], POLICY, "", "")["response_format"]
         self.assertEqual(schema["type"], "json_schema")
@@ -592,7 +594,7 @@ class ReviewAgentTests(unittest.TestCase):
             response = completion(body["model"])
             # This bill fits the whole reservation but leaves too little for
             # the second model's conservative ceiling.
-            response["usage"]["cost"] = 0.06
+            response["usage"]["cost"] = 0.16
             return response
 
         with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic-fixture-key"}):
@@ -607,8 +609,7 @@ class ReviewAgentTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic-fixture-key"}):
             with self.assertRaisesRegex(review.ReviewError, "review_budget_exceeded"):
                 agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts)
-        self.assertEqual(len(send.call_args_list), 1)
-        self.assertTrue(send.call_args.args[0].endswith("/key"))
+        send.assert_not_called()
 
     def test_billing_overruns_stop_later_calls_after_the_charge(self):
         prompts = {model: [("system", "context")] for model in review.MODELS}
@@ -677,6 +678,8 @@ class ReviewAgentTests(unittest.TestCase):
 
     def test_native_adapter_pin_and_context_contract_without_model_calls(self):
         native_system = "Review only concrete defects.\nPreserve uncertainty.\nThe output must be a YAML object equivalent to PRReview.\nExample output:\n```yaml\nreview: {}\n```\nAnswer should be a valid YAML."
+        native_system = native_system.replace("Example output:",
+            "One or two word title for the issue. For example: 'Possible Bug', etc.\nExample output:")
         native_user = "Preserve complete PR evidence.\nResponse (should be a valid YAML, and nothing else):\n```yaml\n"
         settings = types.SimpleNamespace(pr_review_prompt=types.SimpleNamespace(system=native_system, user=native_user))
         configured = {}
@@ -691,7 +694,8 @@ class ReviewAgentTests(unittest.TestCase):
 
         class FakeNativeReviewer:
             async def _get_prediction(self, model, diff):
-                self.ai_handler.get_output_token_reserve(model)
+                reserve = self.ai_handler.get_output_token_reserve(model)
+                configured.setdefault("reserves", []).append(reserve)
                 return await self.ai_handler.chat_completion(model=model, temperature=0,
                                                              system=self.token_handler.system, user=self.token_handler.user + diff)
 
@@ -716,6 +720,9 @@ class ReviewAgentTests(unittest.TestCase):
                 self.assertIn("review.security_concerns, never beside review at the root", system)
                 self.assertIn('"review":{"key_issues_to_review":[],"merge_recommendation":"merge_with_caution","risk_level":"medium","security_concerns":"No"}', system)
                 self.assertIn(review.canonical(review.REVIEW_SCHEMA).decode(), system)
+                self.assertIn("Title starting with [P0], [P1], [P2] or [P3]", system)
+                self.assertNotIn("One or two word title", system)
+                self.assertEqual(configured["reserves"], [32768, 32768])
                 self.assertNotIn("```yaml", system)
                 self.assertNotIn("Answer should be a valid YAML", system)
                 user = prompts[review.MODELS[0]][0][1]
