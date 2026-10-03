@@ -10,8 +10,10 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import math
 import os
 import subprocess
+from decimal import Context, Decimal, localcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -31,6 +33,23 @@ from pr_review import (
     validate_review,
 )
 
+# Fixed context ceiling; the byte-based input allowance is a local estimate.
+# Runtime usage and exact-route canaries can detect underestimation.
+CONTEXT_TOKENS = 1_048_576
+_MONEY = Context(prec=700)
+
+
+def input_token_bound(body: dict[str, Any]) -> int:
+    bound = len(canonical(body)) + 1000
+    require(bound + body["max_tokens"] <= CONTEXT_TOKENS, "request_exceeds_context_budget")
+    return bound
+
+
+def guard_amount(value: Decimal) -> float:
+    """Pass a one-sided bound to the existing numeric key guard and reports."""
+    amount = float(value)
+    return math.nextafter(amount, math.inf) if Decimal.from_float(amount) < value else amount
+
 
 def request_body(model: str, policy: dict[str, Any], system: str, user: str) -> dict[str, Any]:
     require(model in MODELS, "forbidden_model_or_fallback")
@@ -39,8 +58,7 @@ def request_body(model: str, policy: dict[str, Any], system: str, user: str) -> 
                                             {"role": "user", "content": user}],
             "max_tokens": policy["output_tokens"], "temperature": 0, "stream": False,
             "response_format": {"type": "json_schema", "json_schema": {
-                "name": "pr_review", "strict": True, "schema": REVIEW_SCHEMA}}
-                if model == MODELS[0] else {"type": "json_object"},
+                "name": "pr_review", "strict": True, "schema": REVIEW_SCHEMA}},
             "reasoning": {"effort": "high"} if model == MODELS[0] else {"enabled": True},
             "provider": {"only": [route["slug"]], "allow_fallbacks": False,
                          "quantizations": ["fp8"],
@@ -83,6 +101,9 @@ def prepare_prompts(snapshot: dict[str, Any], groups: list[list[dict[str, Any]]]
     require(example_marker and "The output must be a YAML object" in definitions,
             "unsupported_native_prompt_format")
     system_template = definitions.replace("The output must be a YAML object", "The output must be a JSON object")
+    system_template = system_template.replace(
+        "One or two word title for the issue. For example: 'Possible Bug', etc.",
+        "Title starting with [P0], [P1], [P2] or [P3], then a space and a concise issue description.")
     system_template += "\nReturn exactly one JSON object with one top-level review field. The review must contain exactly key_issues_to_review, security_concerns, merge_recommendation and risk_level. Omit relevant_tests and every other optional field. No YAML or Markdown fences."
     system_template += "\nAll four fields belong inside review. Put the security result at review.security_concerns, never beside review at the root. Output nesting example (choose the values from the evidence): " + canonical({"review": {"key_issues_to_review": [], "security_concerns": "No", "merge_recommendation": "merge_with_caution", "risk_level": "medium"}}).decode()
     system_template += "\nThe JSON must satisfy this exact schema, including priority tags in every issue_header:\n" + canonical(REVIEW_SCHEMA).decode()
@@ -195,43 +216,52 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
     groups = chunks(snapshot, policy)
     prompts = prompt_builder(snapshot, groups, policy)
     require(prompts[MODELS[0]] == prompts[MODELS[1]], "independent_context_mismatch")
+    bodies = {model: [request_body(model, policy, system, user) for system, user in prompts[model]]
+              for model in MODELS}
     # Local reservation estimate: one input token per UTF-8 byte plus a fixed
     # margin and output including reasoning. Upstream token counts may differ.
-    call_reservations = {
-        model: [(len(canonical(request_body(model, policy, system, user))) + 1000) * policy["routes"][model]["prompt"]
-                / 1_000_000 + policy["output_tokens"] * policy["routes"][model]["completion"] / 1_000_000
-                for system, user in prompts[model]] for model in MODELS}
-    reservation = sum(value for values in call_reservations.values() for value in values)
-    reserve_budget(send("https://openrouter.ai/api/v1/key", key), policy, reservation)
+    with localcontext(_MONEY):
+        call_reservations = {
+            model: [(Decimal(input_token_bound(body)) * Decimal(str(policy["routes"][model]["prompt"]))
+                     + Decimal(policy["output_tokens"]) * Decimal(str(policy["routes"][model]["completion"])))
+                    / Decimal(1_000_000) for body in bodies[model]] for model in MODELS}
+        reservation = sum((value for values in call_reservations.values() for value in values), Decimal(0))
+    require(reservation <= Decimal(str(policy["max_review_usd"])), "review_budget_exceeded")
+    guarded_reservation = guard_amount(reservation)
+    reserve_budget(send("https://openrouter.ai/api/v1/key", key), policy, guarded_reservation)
     if snapshot.get("snapshot_kind") == "central_public_report_v1":
         from pr_review_public import verify_live
         verify_live(snapshot, policy, snapshot["policy_sha"])
     from pr_review_receipts import ReceiptJournal, metadata
-    journal = ReceiptJournal(receipt_path, snapshot, groups, policy, reservation)
+    journal = ReceiptJournal(receipt_path, snapshot, groups, policy, guarded_reservation)
     report: dict[str, Any] = {"schema": 2, "context_hash": snapshot["context_hash"],
                               "engine_sha": PR_AGENT_SHA, "complete": False,
                               "remaining_files": [f["path"] for f in snapshot["files"]],
                               "failed_chunks": 0, "spending_mode": policy["spending_mode"],
-                              "reservation_usd": reservation, "reviews": []}
-    spent = 0.0
+                              "reservation_usd": guarded_reservation, "reviews": []}
+    spent = Decimal(0)
     remaining_reservation = reservation
     generation_ids: set[str] = set()
     ordinal = 0
     for model in MODELS:
         entry: dict[str, Any] = {"model": model, "provider": policy["routes"][model]["name"],
                                  "chunk_hashes": [], "results": [], "generations": []}
-        for group, (system, user), call_reservation in zip(groups, prompts[model],
+        for group, body, call_reservation in zip(groups, bodies[model],
                                                           call_reservations[model], strict=True):
-            require(spent + remaining_reservation <= reservation, "unexpected_billed_cost")
+            require(_MONEY.add(spent, remaining_reservation) <= reservation, "unexpected_billed_cost")
             journal.update(ordinal, transport_state="request_intended")
             response = send("https://openrouter.ai/api/v1/chat/completions", key,
-                            request_body(model, policy, system, user),
+                            body,
                             response_observer=lambda: journal.update(ordinal, transport_state="response_observed"))
-            receipt = metadata(response, model, policy["routes"][model]["name"])
+            receipt = metadata(response, model, policy["routes"][model]["name"],
+                               output_tokens=policy["output_tokens"])
             journal.update(ordinal, transport_state="response_received", **receipt)
             category = "completion_contract"
             try:
                 content = validate_completion(response, model, policy["routes"][model])
+                require(response["usage"]["prompt_tokens"] <= input_token_bound(body)
+                        and response["usage"]["completion_tokens"] <= policy["output_tokens"],
+                        "unexpected_token_usage")
                 require(receipt["generation_id_valid"] and response["id"] not in generation_ids,
                         "unusable_or_duplicate_generation_id")
                 category = "strict_schema"
@@ -246,9 +276,10 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
             except Exception:
                 journal.update(ordinal, output_state="indeterminate", diagnostic_category="unexpected_runtime")
                 raise ReviewError("invalid_model_output") from None
-            spent += response["usage"]["cost"]
-            remaining_reservation -= call_reservation
-            require(spent <= reservation and spent <= policy["max_review_usd"], "unexpected_billed_cost")
+            spent = _MONEY.add(spent, Decimal(str(response["usage"]["cost"])))
+            remaining_reservation = _MONEY.subtract(remaining_reservation, call_reservation)
+            require(spent <= reservation and spent <= Decimal(str(policy["max_review_usd"])),
+                    "unexpected_billed_cost")
             generation_ids.add(response["id"])
             journal.update(ordinal, output_state="valid")
             entry["results"].append(review)
@@ -258,7 +289,7 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
                                                    for field in ("prompt_tokens", "completion_tokens", "cost")}})
             ordinal += 1
         report["reviews"].append(entry)
-    report.update(complete=True, remaining_files=[], spent_usd=spent)
+    report.update(complete=True, remaining_files=[], spent_usd=float(spent))
     public_bytes = canonical(report)
     require(all(identifier.encode("ascii") not in public_bytes for identifier in generation_ids),
             "raw_generation_id_in_report")

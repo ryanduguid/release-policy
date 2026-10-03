@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
+import os
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
 from pr_review import (
     _FULL_SHA,
     _REPOSITORY,
+    PR_AGENT_SHA,
+    REVIEW_SCHEMA,
+    canonical,
     collect,
     digest,
     github,
@@ -22,6 +29,19 @@ from pr_review import (
     write_json,
     write_report,
 )
+
+
+def save_manifest(path: Path, manifest: dict[str, Any]) -> None:
+    """Keep the last complete projection if a later write is interrupted."""
+    descriptor, name = tempfile.mkstemp(prefix=".batch-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(canonical(manifest) + b"\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+    finally:
+        Path(name).unlink(missing_ok=True)
 
 
 def prepare_case(case: dict[str, Any], policy: dict[str, Any], policy_sha: str) -> dict[str, Any]:
@@ -74,18 +94,58 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gitleaks", default="gitleaks")
     parser.add_argument("--run", action="store_true", help="Make paid calls under the trusted spending policy")
     args = parser.parse_args(argv)
+    manifest: dict[str, Any] | None = None
+    current: dict[str, Any] | None = None
+    stage = "selection"
     try:
+        args.output.mkdir(parents=True, exist_ok=True)
+        manifest_path = args.output / "manifest.json"
+        previous = read_json(manifest_path) if manifest_path.exists() else None
+        require(previous is None or previous.get("state") == "prepared",
+                "benchmark_requires_fresh_output")
+        draft = {"schema": "benchmark_batch_v2", "batch_id": uuid.uuid4().hex,
+                    "state": "selecting", "finished": False, "records": [], "cases": [],
+                    "paid_calls_requested": args.run, "adjudication": "pending_human_review",
+                    "stop_after_first_failure": True, "automatic_resume": False}
+        if previous is None:
+            manifest = draft
         policy = read_json(args.policy)
         validate_policy(policy)
         require(0 < args.limit <= 200 and args.offset >= 0, "invalid_benchmark_range")
-        cases = read_json(args.cases)["cases"][args.offset:args.offset + args.limit]
+        case_manifest = read_json(args.cases)
+        cases = case_manifest["cases"][args.offset:args.offset + args.limit]
         require(cases, "empty_benchmark_range")
-        args.output.mkdir(parents=True, exist_ok=True)
-        completed = []
         for case in cases:
+            require(isinstance(case["id"], str) and case["id"].isascii()
+                    and case["id"].isalnum(), "invalid_benchmark_case_id")
+            require(_REPOSITORY.fullmatch(case["repository"])
+                    and type(case["pr"]) is int and case["pr"] > 0  # pylint: disable=unidiomatic-typecheck
+                    and _FULL_SHA.fullmatch(case["head"]) and _FULL_SHA.fullmatch(case["base"]),
+                    "invalid_benchmark_identity")
+        require(len({case["id"] for case in cases}) == len(cases), "duplicate_benchmark_case_id")
+        candidate = {"policy": policy, "schema": REVIEW_SCHEMA, "engine_sha": PR_AGENT_SHA,
+                     "source_sha256": {name: hashlib.sha256(
+                         Path(__file__).with_name(name).read_bytes()).hexdigest()
+                         for name in ("pr_review.py", "pr_review_agent.py", "pr_review_receipts.py")}}
+        draft.update(state="running", policy_sha=args.policy_sha,
+                        candidate_sha256=digest(candidate), benchmark_sha256=digest(case_manifest),
+                        qualification="local_only", models=policy["models"],
+                        records=[{**{key: case[key] for key in ("id", "repository", "pr", "base", "head")},
+                                  "state": "unstarted"} for case in cases])
+        if previous is not None:
+            require(previous["candidate_sha256"] == draft["candidate_sha256"]
+                    and previous["benchmark_sha256"] == draft["benchmark_sha256"]
+                    and previous["policy_sha"] == args.policy_sha
+                    and [record["id"] for record in previous["records"]] == [case["id"] for case in cases],
+                    "benchmark_configuration_changed")
+        manifest = draft
+        save_manifest(manifest_path, manifest)
+        for case, current in zip(cases, manifest["records"], strict=True):
+            stage = "preparation"
+            current["state"] = "preparing"
+            save_manifest(manifest_path, manifest)
             path = args.output / f"{case['id']}.snapshot.json"
             # Case IDs are data, not filesystem paths.
-            require(case["id"].isalnum(), "invalid_benchmark_case_id")
             if path.exists():
                 snap = read_json(path)
             else:
@@ -95,17 +155,36 @@ def main(argv: list[str] | None = None) -> int:
             verify_snapshot(snap, policy, args.policy_sha)
             require(snap["repository"] == case["repository"] and snap["pr"] == case["pr"]
                     and snap["head"] == case["head"] and snap["base"] == case["base"], "benchmark_case_mismatch")
+            current.update(state="prepared", context_hash=snap["context_hash"])
+            save_manifest(manifest_path, manifest)
             if args.run:
                 from pr_review_agent import review_snapshot
+                stage = "model"
+                current["state"] = "reviewing"
+                save_manifest(manifest_path, manifest)
                 report = review_snapshot(snap, policy,
                                          receipt_path=args.output / f"{case['id']}.review.receipts.json")
+                stage = "report"
                 write_report(args.output / f"{case['id']}.review.json", report)
-            completed.append(case["id"])
-        write_json(args.output / "manifest.json", {"cases": completed, "paid_calls_requested": args.run,
-                                                    "adjudication": "pending_human_review"})
-        print(f"Prepared {len(completed)} cases; human adjudication pending")
+                current.update(state="complete_report", report_sha256=digest(report))
+            manifest["cases"].append(case["id"])
+            save_manifest(manifest_path, manifest)
+        manifest.update(state="complete" if args.run else "prepared", finished=True)
+        save_manifest(manifest_path, manifest)
+        print(f"Prepared {len(manifest['cases'])} cases; human adjudication pending")
         return 0
     except Exception:
+        if manifest is not None:
+            manifest.update(state="failed", finished=False, stop_stage=stage)
+            if current is not None:
+                current["state"] = {"preparation": "preparation_failed", "model": "model_failed",
+                                    "report": "report_failed"}[stage]
+            try:
+                save_manifest(args.output / "manifest.json", manifest)
+            except Exception:
+                # A prior durable 'preparing' or 'reviewing' checkpoint remains
+                # interrupted evidence; storage failure cannot become success.
+                print("Batch evidence write failed; prior checkpoint is incomplete", file=sys.stderr)
         print("Benchmark stopped; incomplete cases cannot count as passed", file=sys.stderr)
         return 1
 

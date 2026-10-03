@@ -128,10 +128,12 @@ The adapter preserves the native review rules and type definitions, and
 replaces its YAML example and user response prefix with JSON instructions
 before tokenisation. A
 changed native prompt layout fails before inference.
-Both prompts include the same strict JSON schema. GLM requests schema mode;
+Both requests include the same strict JSON schema in schema mode;
 an explicit nesting example keeps all four required fields inside `review`.
-MiMo requests JSON object mode after schema requests repeated complete results
-until truncation during qualification. Local and native
+The fixed Xiaomi route must pass exact-schema qualification before a caller
+migrates to this source. The previous JSON object request could produce valid
+JSON that failed native validation. There is no schema downgrade or repair.
+Local and native
 validators check every response, including fields, priority tags and source
 locations.
 
@@ -164,7 +166,9 @@ to US$350. Its reset and BYOK guards follow
 
 The runner uses a conservative local reservation estimate from the complete
 request payload, including its response schema and a fixed safety margin, plus up to
-12,288 output tokens per chunk for reasoning and the final answer. A review
+32,768 output tokens per chunk for reasoning and the final answer. This
+allowance is a qualification candidate until immutable live canaries complete.
+A review
 may use at most 12 chunks and reserve at most US$3. Source that exceeds this
 limit needs human review. Actual billed usage is recorded after each call;
 an unexpected bill stops another call when its remaining reservation no
@@ -202,6 +206,24 @@ before writing the snapshot. Excluded credential paths, binary files,
 unavailable blobs, truncated patches and excessive source stop the run.
 Gitleaks 8.30.1 scans raw source before it can enter a model request.
 
+Each chunk contains unsplit complete file records and is limited to 180,000
+canonical UTF-8 bytes, including source, diff, paths and JSON escaping. The
+planner includes every changed file before inference. The publisher recomputes
+the same ordered chunk hashes from the frozen snapshot and requires an accepted
+result for every chunk from both models. The snapshot's policy hash binds the
+size limit; changing the limit requires a fresh snapshot. Missing, reordered or substituted
+chunks fail coverage validation. Source exceeding the file, chunk, complete
+request or spending ceiling stops the entire review before inference.
+Findings use absolute after-source lines, or before-source lines for removed
+files. They must refer to a file supplied in that same call.
+
+The larger ceiling expands whole-file eligibility. The client constructs and
+transmits every admitted record to each authorised route. Response identity and
+coverage checks establish structural completion, without provider-internal
+attestation or model accuracy. Universal PR coverage and understanding across
+separate chunks remain unqualified. Fragmentation is not enabled; related
+regions of each accepted file remain together in one request to each route.
+
 The Dependabot bridge takes the PR number from the triggering run's REST
 `pull_requests` record. It requires exactly one association, the current head
 and the actual Dependabot author. The trigger path must match exactly, with
@@ -210,7 +232,7 @@ another PR. Missing or ambiguous run associations stop the review.
 
 The model step receives frozen data and the model key. It cannot write a
 GitHub status. It runs no PR code, loads no PR settings, follows no PR links
-and has no reviewer, helper or model fallback. The two models receive
+and has no reviewer, helper or model fallback. Requests to both routes contain
 identical prompts without PR author rationale or the other model's verdict.
 The native engine must match the pin and have no changed tracked engine files
 or secret configuration files.
@@ -218,8 +240,9 @@ or secret configuration files.
 Every completion must end normally, identify the expected model and provider,
 report billed usage and parse as strict JSON against PR-Agent's review type.
 Duplicate keys, missing fields, invalid finding locations, partial chunks,
-empty responses and truncated output fail. Reported costs cannot exceed the
-reserved ceiling. No automatic paid retries run.
+empty responses and truncated output fail. An unexpected bill invalidates the
+review and stops later calls; its recorded value is preserved. No automatic
+paid retries run.
 
 The publisher has no model key. It checks the context/policy/engine hashes,
 both distinct models, every chunk and the current head/base before success.
@@ -284,6 +307,15 @@ Both publishers require the model job to succeed, including receipt upload,
 before downloading or assessing a complete report. Receipt failures can veto
 completeness; receipts cannot establish it.
 
+Receipt journal version 3 adds `usage.reasoning_tokens`. The only permitted
+source is `usage.completion_tokens_details.reasoning_tokens`. An exact
+non-negative integer must fit both the valid completion count and the requested
+output allowance. Missing, invalid or excessive values become null. No reasoning
+text or other nested usage fields are retained. The count is diagnostic: it
+cannot change billing, release a reservation, authorise another call, accept
+output or select a status. Old journals do not supply this measurement; an
+absent count is never interpreted as zero. Public report schema 2 is unchanged.
+
 Public report schema 2 and journals publish `generation_id_sha256`, the full
 lower-case SHA-256 digest of the exact validated ASCII provider ID. Raw IDs
 remain transient for response validation and distinct-call checks. Legacy raw
@@ -327,6 +359,71 @@ use a fresh output directory for repetitions. Preparation refuses unsupported
 comparisons and oversized cases. Record those as coverage failures, never
 as clean reviews. The four synthetic controls occupy offsets 196 to 199.
 
+`benchmarks/pr-review-controls.json` is the fixed six-case regression set. It
+reuses those four clean controls and adds a deleted guard in a modified file
+and a removed file. Both deletion cases still need human assessment. They
+exercise source capture and location representation, not measured model recall.
+The native format supplies a file and line range without a side field. For a
+modified file, validation uses the current file's bounds; a deleted old line
+outside those bounds is rejected. For a removed file, it uses the original
+file's bounds. The adapter does not silently move a finding to another line.
+An accepted location establishes only valid bounds, not semantic correctness.
+
+After changing a prompt, schema, policy or route candidate, run the local
+contract regressions and prepare the fixed set using a fresh output directory:
+
+```bash
+python -m unittest discover -s tests -p "test_pr_review*.py" -v
+python scripts/pr_review_benchmark.py \
+  --cases benchmarks/pr-review-controls.json \
+  --policy .github/pr-review-policy.json --policy-sha "$POLICY_SHA" \
+  --output control-snapshots --limit 6
+```
+
+Set `POLICY_SHA` to the reviewed full source commit and make the pinned
+`gitleaks` executable available as described above. Preparation makes no model
+calls; synthetic snapshots have no live publication capability. Unit tests use
+fabricated outputs. Passing them cannot qualify provider behaviour, deletion
+recall or human accuracy. Paid reruns require the existing spending authority
+and resolved billing holds. Keep the same six case identities when comparing
+candidate runs, alongside their candidate, context, report and receipt hashes.
+
+Each batch saves `benchmark_batch_v2` before preparing its first case. Its
+records include every selected immutable case, initially `unstarted`, and the
+policy, engine, schema and adapter identities. Atomic checkpoints distinguish
+preparation, model and report-storage failures. The first failure stops the
+batch; later cases remain unstarted. A saved `preparing` or `reviewing` state
+after interruption is incomplete evidence. A failed or completed batch cannot
+resume paid execution. A prepared batch can reuse checked snapshots only with
+the same configuration and selected cases. Repetitions need a fresh directory.
+
+Summarise explicitly selected sanitised journals without source or model calls:
+
+```bash
+python scripts/pr_review_measurements.py \
+  --journal attempt1=first.review.receipts.json \
+  --journal attempt2=second.review.receipts.json \
+  --output operational-summary.json
+```
+
+Use a stable, unique attempt identity, such as a workflow run ID and its attempt
+number. Supply one final journal per attempt. Identical copies with the same
+identity count once; conflicting copies fail. Separate attempts keep their
+bills even when generation digests repeat. The summary flags those repeated
+digests. It accepts sanitised journal versions 2 and 3 and sums their recorded
+decimal bills. Those numbers can already contain upstream rounding. Missing
+bills on intended calls remain unknown; `accounting_complete` covers only the
+selected recorded attempts. Funding fees, other account activity and lost
+journals are outside that result. The output cannot overwrite an input journal.
+
+Per-model counts separate planned, unstarted, received, accepted, rejected and
+indeterminate calls. Rates include their integer numerator and denominator;
+an empty denominator has no rate. Completion of both models is reported
+separately. Early failure makes later model observations a selected subset,
+so these counts cannot establish which model reviews code better. The
+`strict_schema` category still combines native, local and finding-location
+checks. Journals do not provide model latency or human accuracy.
+
 Keep reference labels out of prompts. Have a person compare each finding
 with source and a reproduction or existing confirmed human evidence. Record
 precision, must-block defect recall, noise on clean controls, location accuracy,
@@ -334,3 +431,21 @@ cost and latency for each model. Repeat serious defects and controls. Do not
 use Claude, Codex or an LLM judge. GLM is the provisional lead; the benchmark
 must determine whether either model earns that role. No model accuracy result
 has been established. Complete live route and event checks before activation.
+Record confirmed true, confirmed false, indeterminate and unassessed findings
+separately, with evidence and immutable case/report identities. Known misses
+are not recall unless a human has established the full relevant defect set.
+
+To measure each reviewer's contribution, have a person assign stable defect
+identities within each case and link confirmed true findings to those identities.
+Repeated findings about one defect count once in defect coverage; record their
+duplicate and assessment workload separately. Compare shared and model-only
+defect sets only when both models completed the same case and all their findings
+were adjudicated. An unstarted, failed or unassessed second review cannot prove
+that the first model found a unique defect. Keep partial coverage visible.
+
+Record each model's confirmed false, indeterminate and unassessed findings,
+known inference subtotal, unknown bill count and assessment minutes. Count
+shared time for reading source and reconciling findings once. Cost per confirmed defect
+is unavailable when bills are unknown or the defect count is zero. Assessed
+precision is unavailable when its denominator is zero. These measurements
+support a later human comparison; they do not establish a lead model by themselves.
