@@ -149,15 +149,39 @@ def prepare_prompts(snapshot: dict[str, Any], groups: list[list[dict[str, Any]]]
     return asyncio.run(capture_all())
 
 
+class OutputError(ReviewError):
+    """A trusted validation stage with a fixed public error code."""
+
+    def __init__(self, category: str):
+        self.category = category
+        super().__init__({"json_syntax": "invalid_review_json",
+                          "duplicate_keys": "duplicate_review_key",
+                          "root_or_nesting": "invalid_review_root",
+                          "strict_schema": "invalid_native_review_schema"}[category])
+
+
 def parse_review(content: str) -> dict[str, Any]:
     from pr_agent.algo.output_models import PRReview
+    from pydantic import ValidationError
 
     def unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        require(len(pairs) == len({key for key, _ in pairs}), "duplicate_review_key")
+        if len(pairs) != len({key for key, _ in pairs}):
+            raise OutputError("duplicate_keys")
         return dict(pairs)
 
-    data = json.loads(content, object_pairs_hook=unique_keys)
-    PRReview.model_validate(data, strict=True)
+    def invalid_constant(_value: str) -> Any:
+        raise OutputError("json_syntax")
+
+    try:
+        data = json.loads(content, object_pairs_hook=unique_keys, parse_constant=invalid_constant)
+    except json.JSONDecodeError:
+        raise OutputError("json_syntax") from None
+    if not isinstance(data, dict) or ("review" in data and not isinstance(data["review"], dict)):
+        raise OutputError("root_or_nesting")
+    try:
+        PRReview.model_validate(data, strict=True)
+    except ValidationError:
+        raise OutputError("strict_schema") from None
     return data["review"]
 
 
@@ -205,17 +229,22 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
                             response_observer=lambda: journal.update(ordinal, transport_state="response_observed"))
             receipt = metadata(response, model, policy["routes"][model]["name"])
             journal.update(ordinal, transport_state="response_received", **receipt)
+            category = "completion_contract"
             try:
                 content = validate_completion(response, model, policy["routes"][model])
                 require(receipt["generation_id_valid"] and response["id"] not in generation_ids,
                         "unusable_or_duplicate_generation_id")
+                category = "strict_schema"
                 review = parser(content)
                 validate_review(review, group)
+            except OutputError as error:
+                journal.update(ordinal, output_state="invalid", diagnostic_category=error.category)
+                raise
             except ReviewError:
-                journal.update(ordinal, output_state="invalid")
+                journal.update(ordinal, output_state="invalid", diagnostic_category=category)
                 raise
             except Exception:
-                journal.update(ordinal, output_state="invalid")
+                journal.update(ordinal, output_state="indeterminate", diagnostic_category="unexpected_runtime")
                 raise ReviewError("invalid_model_output") from None
             spent += response["usage"]["cost"]
             remaining_reservation -= call_reservation

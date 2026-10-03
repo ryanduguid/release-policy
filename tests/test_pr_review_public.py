@@ -22,6 +22,7 @@ from test_pr_review import (
     PR,
     REPO,
     ROOT,
+    SchemaRejection,
     agent,
     clean_result,
     completion,
@@ -387,12 +388,17 @@ class ReceiptTests(unittest.TestCase):
                     response["choices"][0]["message"]["content"] = "private malformed response"
                 return response
 
-            with self.assertRaisesRegex(review.ReviewError, "invalid_model_output"):
+            native = SimpleNamespace(PRReview=SimpleNamespace(model_validate=mock.Mock()))
+            with mock.patch.dict(sys.modules, {"pr_agent.algo.output_models": native,
+                                               "pydantic": SimpleNamespace(ValidationError=SchemaRejection)}), \
+                    self.assertRaisesRegex(review.ReviewError, "invalid_review_json"):
                 agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
-                                      lambda text: json.loads(text)["review"], receipt_path=path)
+                                      receipt_path=path)
             data = review.read_json(path)
+            self.assertEqual(data["schema"], "receipt_journal_v2")
             self.assertFalse(data["finished"])
             self.assertEqual([call["output_state"] for call in data["calls"]], ["valid", "invalid"])
+            self.assertEqual([call["diagnostic_category"] for call in data["calls"]], [None, "json_syntax"])
             self.assertEqual([call["usage"]["cost"] for call in data["calls"]], [0.0001, 0.0001])
             self.assertEqual(len(paid), 2)
             self.assertNotIn("private", path.read_text())
@@ -403,6 +409,115 @@ class ReceiptTests(unittest.TestCase):
                                            lambda *args: prompts, lambda text: clean_result(), receipt_path=path)
             self.assertTrue(report["complete"])
             self.assertTrue(review.read_json(path)["finished"])
+
+    def test_diagnostic_receipts_require_closed_categories_and_matching_states(self):
+        snap = snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receipts.json"
+            journal = receipts.ReceiptJournal(path, snap, review.chunks(snap, POLICY), POLICY, 1)
+            initial = copy.deepcopy(journal.data)
+            allowed = {"model", "provider", "chunk_hash", "transport_state", "output_state",
+                       "diagnostic_category", "generation_id_sha256", "generation_id_valid",
+                       "model_matches", "provider_matches", "finish_reason", "usage"}
+            self.assertEqual(set(initial["calls"][0]), allowed)
+            for category in ("completion_contract", "json_syntax", "duplicate_keys", "root_or_nesting", "strict_schema"):
+                journal.update(0, transport_state="response_received", output_state="invalid",
+                               diagnostic_category=category)
+                self.assertEqual(review.read_json(path)["calls"][0]["diagnostic_category"], category)
+            journal.update(0, output_state="indeterminate", diagnostic_category="unexpected_runtime")
+            prior = path.read_bytes()
+            for changes in ({"diagnostic_category": None}, {"diagnostic_category": True},
+                            {"diagnostic_category": 1}, {"diagnostic_category": []},
+                            {"diagnostic_category": {}}, {"diagnostic_category": "private-canary"},
+                            {"output_state": "invalid", "diagnostic_category": "unexpected_runtime"},
+                            {"output_state": "valid", "diagnostic_category": "strict_schema"},
+                            {"output_state": "not_checked", "diagnostic_category": "strict_schema"},
+                            {"output_state": "unknown", "diagnostic_category": None},
+                            {"transport_state": "request_intended", "output_state": "invalid",
+                             "diagnostic_category": "json_syntax"}):
+                journal.data = copy.deepcopy(initial)
+                journal.data["calls"][0].update(transport_state="response_received", output_state="invalid",
+                                               diagnostic_category="json_syntax")
+                with self.assertRaisesRegex(review.ReviewError, "invalid_receipt_diagnostic"):
+                    journal.update(0, **changes)
+                self.assertEqual(path.read_bytes(), prior)
+            journal.data = copy.deepcopy(initial)
+            with self.assertRaisesRegex(review.ReviewError, "invalid_receipt_fields"):
+                journal.update(0, message="private-canary")
+            self.assertNotIn("private", path.read_text())
+
+    def test_runtime_failure_is_indeterminate_and_never_exposes_exception_data(self):
+        prompts = {model: [("system", "context")] for model in review.MODELS}
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+            path = Path(directory) / "receipts.json"
+            send = mock.Mock(side_effect=[{"data": {"limit": None, "limit_remaining": None}}, completion(review.MODELS[0])])
+
+            def parser(content):
+                call = review.read_json(path)["calls"][0]
+                self.assertEqual(call["transport_state"], "response_received")
+                self.assertEqual(call["output_state"], "not_checked")
+                self.assertIsNone(call["diagnostic_category"])
+                raise RuntimeError("private-message private-value private-field-path private-source")
+
+            with self.assertRaisesRegex(review.ReviewError, "^invalid_model_output$"):
+                agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts, parser, receipt_path=path)
+            call = review.read_json(path)["calls"][0]
+            self.assertEqual(call["output_state"], "indeterminate")
+            self.assertEqual(call["diagnostic_category"], "unexpected_runtime")
+            self.assertEqual(call["usage"]["cost"], 0.0001)
+            self.assertEqual(send.call_count, 2)
+            self.assertNotIn("private", path.read_text())
+
+    def test_native_value_error_is_runtime_and_typed_rejection_is_invalid(self):
+        prompts = {model: [("system", "context")] for model in review.MODELS}
+        for rejected_model in review.MODELS:
+            for error, state, category in ((ValueError("private-value"), "indeterminate", "unexpected_runtime"),
+                                           (SchemaRejection("private-field-path"), "invalid", "strict_schema")):
+                with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+                    path = Path(directory) / "receipts.json"
+                    paid = []
+
+                    def send(url, key, body=None, **kwargs):
+                        if body is None:
+                            return {"data": {"limit": None, "limit_remaining": None}}
+                        paid.append(body["model"])
+                        return completion(body["model"])
+
+                    def validate(data, strict):
+                        self.assertTrue(strict)
+                        call = review.read_json(path)["calls"][len(paid) - 1]
+                        self.assertEqual(call["transport_state"], "response_received")
+                        if paid[-1] == rejected_model:
+                            raise error
+
+                    native = SimpleNamespace(PRReview=SimpleNamespace(model_validate=validate))
+                    with mock.patch.dict(sys.modules, {"pr_agent.algo.output_models": native,
+                                                       "pydantic": SimpleNamespace(ValidationError=SchemaRejection)}), \
+                            self.assertRaises(review.ReviewError) as caught:
+                        agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts, receipt_path=path)
+                    self.assertNotIn("private", str(caught.exception))
+                    journal = review.read_json(path)
+                    self.assertFalse(journal["finished"])
+                    call = journal["calls"][len(paid) - 1]
+                    self.assertEqual(call["output_state"], state)
+                    self.assertEqual(call["diagnostic_category"], category)
+                    self.assertEqual(call["usage"]["cost"], 0.0001)
+                    self.assertEqual(paid, list(review.MODELS[:review.MODELS.index(rejected_model) + 1]))
+                    self.assertNotIn("private", path.read_text())
+
+    def test_primary_and_fallback_cannot_write_with_corrupt_capabilities(self):
+        for changes in ({"repository": "other/repo"}, {"head": "invalid"},
+                        {"snapshot_kind": "central_public_report_v1"},
+                        {"publication_capability": "none"}, {"caller_repository": "other/repo"},
+                        {"repository_id": 0}, {"caller_repository_id": True},
+                        {"caller_repository_id": 999}):
+            candidate = {**snapshot(), **changes}
+            post = mock.Mock()
+            with self.assertRaises(review.ReviewError):
+                review.publish(candidate, model_report(candidate), POLICY, POLICY_SHA, fake_fetch(), post, True)
+            with self.assertRaises(review.ReviewError):
+                review.failed_status(candidate, REPO, post)
+            post.assert_not_called()
 
     def test_unknown_transport_duplicate_ids_and_disk_failure_stop_later_calls(self):
         prompts = {model: [("system", "context")] for model in review.MODELS}

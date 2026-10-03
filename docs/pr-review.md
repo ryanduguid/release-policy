@@ -224,7 +224,15 @@ reserved ceiling. No automatic paid retries run.
 The publisher has no model key. It checks the context/policy/engine hashes,
 both distinct models, every chunk and the current head/base before success.
 Any finding, security concern or cautious verdict produces a failing advisory
-status. Failed, skipped and cancelled jobs also fail. Forced cancellation or
+status. The publisher exits zero after a validated report, summary and status
+write complete, including a failing advisory verdict. Its exit code reports
+publication success; the commit status and report carry the advisory verdict.
+Consumer gates must read that verdict, not infer it from the publisher job's
+success. Summary rendering and local writes precede the status API call.
+Missing or invalid reports, stale revisions, rendering errors and failed API
+writes exit nonzero and invoke the generic execution-failure status. Completed
+findings retain their specific description. The fallback checks the publisher
+step's operational outcome. Failed, skipped and cancelled review jobs also fail. Forced cancellation or
 a failed GitHub API write can leave the status pending; pending is never a
 passing review. After resolving the failure, start a fresh manual dispatch.
 
@@ -244,8 +252,28 @@ A malformed response therefore retains earlier and current known generation
 ID digests, token counts and bills. A transport failure can leave an intended request
 with an unknown ID and bill; a missing bill is never recorded as zero.
 
-Receipts contain only the planned model/provider and chunk hash, transport and
-validation states, a generation ID digest, identity-match booleans, an allowed
+Receipt journal version 2 adds `diagnostic_category` to every call. It is null
+before validation and for accepted output. Rejected output records exactly one
+fixed category for the first failed stage:
+
+- `completion_contract` covers model/provider, finish, usage and generation checks.
+- `json_syntax` covers JSON decoding failures.
+- `duplicate_keys` covers repeated decoded object members, including nested objects.
+- `root_or_nesting` covers a non-object root or a present `review` container that is not an object.
+- `strict_schema` covers native and local schema, type, required-field and finding-location checks.
+
+An unexpected exception inside output acceptance records `unexpected_runtime`
+with `output_state: indeterminate`. It does not prove invalid model output and
+must not count as a model format failure. Transport, reservation and billed-cost
+ceilings, receipt writes, capture identity, rendering and status operations
+retain their separate failure paths.
+The categories come from trusted validation stages. Exception messages, field
+paths, arbitrary keys, values and excerpts are never included. Old version-one
+receipts remain unclassified; their original failures cannot be reconstructed.
+There is no output repair, coercion, fence removal or paid retry.
+
+Receipts contain the planned model/provider and chunk hash, transport and
+validation states, the fixed diagnostic category, a generation ID digest, identity-match booleans, an allowed
 finish reason and finite usage numbers. They exclude source, prompts, response
 content, unexpected identity strings, headers and raw errors. Receipt write
 failures stop subsequent calls. The journal cannot authorise a verdict, release
