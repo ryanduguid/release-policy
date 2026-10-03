@@ -159,11 +159,13 @@ def main(argv: list[str] | None = None) -> int:
             save_manifest(manifest_path, manifest)
             if args.run:
                 from pr_review_agent import review_snapshot
+                from pr_review_receipts import generation_metadata
                 stage = "model"
                 current["state"] = "reviewing"
                 save_manifest(manifest_path, manifest)
                 report = review_snapshot(snap, policy,
-                                         receipt_path=args.output / f"{case['id']}.review.receipts.json")
+                                         receipt_path=args.output / f"{case['id']}.review.receipts.json",
+                                         metadata_lookup=generation_metadata)
                 stage = "report"
                 write_report(args.output / f"{case['id']}.review.json", report)
                 current.update(state="complete_report", report_sha256=digest(report))
