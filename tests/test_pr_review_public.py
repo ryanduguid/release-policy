@@ -423,7 +423,7 @@ class ReceiptTests(unittest.TestCase):
                 self.assertTrue(data["finished"])
                 self.assertNotIn("private-canary", path.read_text())
                 self.assertEqual([call["usage"]["reasoning_tokens"] for call in data["calls"]],
-                                 [value, value] if type(value) is int else [None, None])
+                                 [value, value] if isinstance(value, int) else [None, None])
         self.assertTrue(all(report == reports[0] for report in reports))
 
     def test_length_failure_retains_reasoning_count_and_stops_later_calls(self):

@@ -22,9 +22,9 @@ _MONEY = Context(prec=700)
 
 
 def money(value: Any) -> bool:
-    if type(value) is int:
+    if isinstance(value, int) and not isinstance(value, bool):
         return 0 <= value < 10**24
-    return (type(value) is Decimal and value.is_finite()
+    return (isinstance(value, Decimal) and value.is_finite()
             and 0 <= value <= Decimal("1.7976931348623157e308")
             and int(value.as_tuple().exponent) >= -324 and len(value.as_tuple().digits) <= 350)
 
@@ -47,7 +47,7 @@ def read_receipt(path: Path) -> dict[str, Any]:
         "invalid_measurement_input")
     require(data["schema"] in ("receipt_journal_v2", "receipt_journal_v3")
             and isinstance(data["context_hash"], str) and _HASH.fullmatch(data["context_hash"])
-            and money(data["reservation_usd"]) and type(data["finished"]) is bool
+            and money(data["reservation_usd"]) and isinstance(data["finished"], bool)
             and isinstance(data["calls"], list) and 0 < len(data["calls"]) <= 24
             and len(data["calls"]) % 2 == 0,
             "invalid_measurement_input")
@@ -56,53 +56,7 @@ def read_receipt(path: Path) -> dict[str, Any]:
                 and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", data["updated_at"]),
                 "invalid_measurement_input")
     for call in data["calls"]:
-        require(isinstance(call, dict) and set(call) == _CALL_FIELDS,
-                "invalid_measurement_input")
-        require(call["model"] in MODELS
-                and call["provider"] == ("Parasail" if call["model"] == MODELS[0] else "Xiaomi")
-                and isinstance(call["chunk_hash"], str) and _HASH.fullmatch(call["chunk_hash"])
-                and call["transport_state"] in _TRANSPORT
-                and call["output_state"] in ("not_checked", "valid", "invalid", "indeterminate")
-                and call["finish_reason"] in _FINISH | {None}, "invalid_measurement_input")
-        require(type(call["generation_id_valid"]) is bool
-                and all(call[field] is None or type(call[field]) is bool
-                        for field in ("model_matches", "provider_matches"))
-                and (call["generation_id_sha256"] is None
-                     or (isinstance(call["generation_id_sha256"], str)
-                         and _HASH.fullmatch(call["generation_id_sha256"]))),
-                "invalid_measurement_input")
-        state, category = call["output_state"], call["diagnostic_category"]
-        require((state in ("not_checked", "valid") and category is None)
-                or (call["transport_state"] == "response_received"
-                    and ((state == "invalid" and category in _REJECTIONS)
-                         or (state == "indeterminate" and category == "unexpected_runtime"))),
-                "invalid_measurement_input")
-        usage = call["usage"]
-        fields = {"prompt_tokens", "completion_tokens", "total_tokens", "cost"}
-        if data["schema"] == "receipt_journal_v3":
-            fields.add("reasoning_tokens")
-        require(isinstance(usage, dict) and set(usage) == fields, "invalid_measurement_input")
-        require(all(value is None or (type(value) is int and 0 <= value <= 1_000_000_000)
-                    for key, value in usage.items() if key != "cost")
-                and (usage["cost"] is None or money(usage["cost"])), "invalid_measurement_input")
-        if usage.get("reasoning_tokens") is not None:
-            require(type(usage["completion_tokens"]) is int
-                    and usage["reasoning_tokens"] <= usage["completion_tokens"],
-                    "invalid_measurement_input")
-        if call["transport_state"] == "not_started":
-            require(state == "not_checked" and call["finish_reason"] is None
-                    and call["generation_id_sha256"] is None
-                    and not any(call[field] for field in
-                                ("generation_id_valid", "model_matches", "provider_matches"))
-                    and all(value is None for value in usage.values()), "invalid_measurement_input")
-        if state == "valid":
-            require(call["transport_state"] == "response_received"
-                    and call["finish_reason"] == "stop" and call["generation_id_valid"]
-                    and call["generation_id_sha256"] is not None
-                    and call["model_matches"] and call["provider_matches"]
-                    and all(usage[field] is not None for field in
-                            ("prompt_tokens", "completion_tokens", "cost")),
-                    "invalid_measurement_input")
+        validate_call(call, data["schema"])
     half = len(data["calls"]) // 2
     require(all(call["model"] == MODELS[0] for call in data["calls"][:half])
             and all(call["model"] == MODELS[1] for call in data["calls"][half:])
@@ -113,12 +67,68 @@ def read_receipt(path: Path) -> dict[str, Any]:
     return data
 
 
+def validate_call(call: Any, schema: str) -> None:
+    require(isinstance(call, dict) and set(call) == _CALL_FIELDS,
+            "invalid_measurement_input")
+    require(call["model"] in MODELS
+            and call["provider"] == ("Parasail" if call["model"] == MODELS[0] else "Xiaomi")
+            and isinstance(call["chunk_hash"], str) and _HASH.fullmatch(call["chunk_hash"])
+            and call["transport_state"] in _TRANSPORT
+            and call["output_state"] in ("not_checked", "valid", "invalid", "indeterminate")
+            and call["finish_reason"] in _FINISH | {None}, "invalid_measurement_input")
+    require(isinstance(call["generation_id_valid"], bool)
+            and all(call[field] is None or isinstance(call[field], bool)
+                    for field in ("model_matches", "provider_matches"))
+            and (call["generation_id_sha256"] is None
+                 or (isinstance(call["generation_id_sha256"], str)
+                     and _HASH.fullmatch(call["generation_id_sha256"]))),
+            "invalid_measurement_input")
+    state, category = call["output_state"], call["diagnostic_category"]
+    require((state in ("not_checked", "valid") and category is None)
+            or (call["transport_state"] == "response_received"
+                and ((state == "invalid" and category in _REJECTIONS)
+                     or (state == "indeterminate" and category == "unexpected_runtime"))),
+            "invalid_measurement_input")
+    usage = call["usage"]
+    validate_usage(usage, schema)
+    if call["transport_state"] == "not_started":
+        require(state == "not_checked" and call["finish_reason"] is None
+                and call["generation_id_sha256"] is None
+                and not any(call[field] for field in
+                            ("generation_id_valid", "model_matches", "provider_matches"))
+                and all(value is None for value in usage.values()), "invalid_measurement_input")
+    if state == "valid":
+        require(call["transport_state"] == "response_received"
+                and call["finish_reason"] == "stop" and call["generation_id_valid"]
+                and call["generation_id_sha256"] is not None
+                and call["model_matches"] and call["provider_matches"]
+                and all(usage[field] is not None for field in
+                        ("prompt_tokens", "completion_tokens", "cost")),
+                "invalid_measurement_input")
+
+
+def validate_usage(usage: Any, schema: str) -> None:
+    fields = {"prompt_tokens", "completion_tokens", "total_tokens", "cost"}
+    if schema == "receipt_journal_v3":
+        fields.add("reasoning_tokens")
+    require(isinstance(usage, dict) and set(usage) == fields, "invalid_measurement_input")
+    require(all(value is None or (isinstance(value, int) and not isinstance(value, bool)
+                                 and 0 <= value <= 1_000_000_000)
+                for key, value in usage.items() if key != "cost")
+            and (usage["cost"] is None or money(usage["cost"])), "invalid_measurement_input")
+    if usage.get("reasoning_tokens") is not None:
+        require(isinstance(usage["completion_tokens"], int)
+                and not isinstance(usage["completion_tokens"], bool)
+                and usage["reasoning_tokens"] <= usage["completion_tokens"],
+                "invalid_measurement_input")
+
+
 def ratio(numerator: int, denominator: int) -> dict[str, Any]:
     return {"numerator": numerator, "denominator": denominator,
             "fraction": None if denominator == 0 else numerator / denominator}
 
 
-def summarise(inputs: list[tuple[str, Path]]) -> dict[str, Any]:
+def read_attempts(inputs: list[tuple[str, Path]]) -> tuple[dict[str, Any], int]:
     attempts: dict[str, Any] = {}
     copies = 0
     for identifier, path in inputs:
@@ -130,6 +140,11 @@ def summarise(inputs: list[tuple[str, Path]]) -> dict[str, Any]:
         else:
             attempts[identifier] = data
     require(attempts, "empty_measurement_input")
+    return attempts, copies
+
+
+def summarise(inputs: list[tuple[str, Path]]) -> dict[str, Any]:
+    attempts, copies = read_attempts(inputs)
     models: dict[str, Any] = {}
     generations: Counter[str] = Counter()
     total = Decimal(0)

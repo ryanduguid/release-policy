@@ -40,7 +40,8 @@ def metadata(response: Any, model: str, provider: str, *, output_tokens: int | N
     details = usage.get("completion_tokens_details")
     reasoning = details.get("reasoning_tokens") if isinstance(details, dict) else None
     completion = numbers["completion_tokens"]
-    numbers["reasoning_tokens"] = (reasoning if type(reasoning) is int and output_tokens is not None
+    numbers["reasoning_tokens"] = (reasoning if isinstance(reasoning, int) and not isinstance(reasoning, bool)
+                                   and output_tokens is not None
                                    and completion is not None and 0 <= reasoning <= min(completion, output_tokens)
                                    else None)
     cost = usage.get("cost")
