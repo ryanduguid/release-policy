@@ -857,7 +857,8 @@ class ReviewAgentTests(unittest.TestCase):
 
         class FakeNativeReviewer:
             async def _get_prediction(self, model, diff):
-                reserve = self.ai_handler.get_output_token_reserve(model)
+                configured.setdefault("previous_findings", []).append(self.vars["previous_findings"])
+                reserve = self.ai_handler.get_output_token_reserve(model, 1000)
                 configured.setdefault("reserves", []).append(reserve)
                 return await self.ai_handler.chat_completion(model=model, temperature=0,
                                                              system=self.token_handler.system, user=self.token_handler.user + diff)
@@ -886,6 +887,7 @@ class ReviewAgentTests(unittest.TestCase):
                 self.assertIn("Title starting with [P0], [P1], [P2] or [P3]", system)
                 self.assertNotIn("One or two word title", system)
                 self.assertEqual(configured["reserves"], [32768, 32768])
+                self.assertEqual(configured["previous_findings"], ["", ""])
                 self.assertNotIn("```yaml", system)
                 self.assertNotIn("Answer should be a valid YAML", system)
                 user = prompts[review.MODELS[0]][0][1]

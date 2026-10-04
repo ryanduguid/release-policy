@@ -27,7 +27,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from required_checks import _FULL_SHA, _REPOSITORY
 
 MODELS = ("z-ai/glm-5.3", "xiaomi/mimo-v2.6-pro")
-PR_AGENT_SHA = "1d01f24f455bb879c1d9c557ad7de3d72dcc7975"
+PR_AGENT_SHA = "3be92e293fc55b24a54aa303595e9eaa32519954"
 CONTEXT = "Independent PR review (advisory)"
 MAX_RESPONSE_BYTES = 12_000_000
 Fetch = Callable[[str], Any]

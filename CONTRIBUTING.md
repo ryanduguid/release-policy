@@ -9,9 +9,8 @@ reviewed schedule.
 
 ## Local checks
 
-Python 3.11 or newer; `scripts/python_release.py` reads pyproject metadata
-with `tomllib`, which arrived in 3.11, and CI runs the suite on 3.11, 3.12, 3.13
-and 3.14. Install the pinned tools, then run what `.github/workflows/ci.yml` runs:
+Python 3.14 or newer; `scripts/python_release.py` reads pyproject metadata
+with `tomllib`. CI runs the suite on Python 3.14. Install the pinned tools, then run what `.github/workflows/ci.yml` runs:
 
 ```bash
 python -m pip install --require-hashes --only-binary :all: --requirement requirements-ci.txt
@@ -32,8 +31,8 @@ platforms. After editing an input, regenerate both files with uv and review
 the dependency changes:
 
 ```bash
-uv pip compile requirements-build.in --universal --python-version 3.11 --generate-hashes --output-file requirements-build.txt
-uv pip compile requirements-ci.in --universal --python-version 3.11 --generate-hashes --output-file requirements-ci.txt
+uv pip compile requirements-build.in --universal --python-version 3.14 --generate-hashes --output-file requirements-build.txt
+uv pip compile requirements-ci.in --universal --python-version 3.14 --generate-hashes --output-file requirements-ci.txt
 ```
 
 `attribution-policy.yml` pins `.github/actions/no-ai-attribution` by commit.
