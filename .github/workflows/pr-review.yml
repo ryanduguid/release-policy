@@ -29,6 +29,8 @@ jobs:
     if: ${{ github.run_attempt == 1 && inputs.mode == 'installed' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      disposition: ${{ steps.capture_context.outputs.capture_disposition }}
     permissions:
       contents: read
       pull-requests: read
@@ -57,6 +59,7 @@ jobs:
           tar -xzf gitleaks.tar.gz gitleaks
           mkdir evidence
       - name: Capture and scan immutable source
+        id: capture_context
         env:
           GH_TOKEN: ${{ github.token }}
           POLICY_SHA: ${{ job.workflow_sha }}
@@ -74,7 +77,7 @@ jobs:
           --policy policy/.github/pr-review-policy.json --policy-sha "$POLICY_SHA"
           --snapshot evidence/snapshot.json
       - name: Retain evidence for this run
-        if: ${{ always() }}
+        if: ${{ always() && steps.capture_context.outputs.capture_disposition != 'closed_before_admission' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: frozen-pr-${{ github.run_id }}-${{ github.run_attempt }}
@@ -135,7 +138,8 @@ jobs:
     name: GLM and MiMo independent review
     if: >-
       !cancelled() && github.run_attempt == 1 &&
-      (needs.capture.result == 'success' || needs.central_capture.result == 'success')
+      ((needs.capture.result == 'success' && needs.capture.outputs.disposition == 'captured') ||
+       needs.central_capture.result == 'success')
     needs: [capture, central_capture]
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -211,7 +215,9 @@ jobs:
   publish:
     name: Publish advisory status
     needs: [capture, review]
-    if: ${{ always() && github.run_attempt == 1 && inputs.mode == 'installed' }}
+    if: >-
+      always() && github.run_attempt == 1 && inputs.mode == 'installed' &&
+      !(needs.capture.result == 'success' && needs.capture.outputs.disposition == 'closed_before_admission')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -220,6 +226,11 @@ jobs:
       pull-requests: read
       statuses: write
     steps:
+      - name: Reject a missing or invalid capture disposition
+        if: ${{ needs.capture.result == 'success' }}
+        env:
+          CAPTURE_DISPOSITION: ${{ needs.capture.outputs.disposition }}
+        run: test "$CAPTURE_DISPOSITION" = captured
       - name: Check out trusted policy
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

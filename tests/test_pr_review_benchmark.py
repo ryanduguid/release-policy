@@ -60,7 +60,7 @@ class BenchmarkFailureTests(unittest.TestCase):
         self.assertEqual(data["records"][0]["report_sha256"], review.digest(model_report()))
 
     def test_report_storage_failure_keeps_prior_receipt_and_no_later_calls(self):
-        def paid(snapshot, policy, *, receipt_path):
+        def paid(snapshot, policy, *, receipt_path, metadata_lookup):
             review.write_json(receipt_path, {"fixture_known_bill_usd": 0.01})
             return model_report()
         with mock.patch.object(agent, "review_snapshot", side_effect=paid) as calls, mock.patch.object(benchmark, "write_report", side_effect=OSError("fixture")):
