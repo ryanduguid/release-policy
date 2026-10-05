@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import base64
 import copy
 import importlib
@@ -108,7 +109,118 @@ def model_report(snap=None):
                                  for i, _ in enumerate(groups)]} for model in review.MODELS]}
 
 
+class AdvisoryStatusTests(unittest.TestCase):
+    def setUp(self):
+        local = mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "false"})
+        local.start()
+        self.addCleanup(local.stop)
+
+    def actions_context(self):
+        return {"GITHUB_ACTIONS": "true", "GITHUB_SERVER_URL": "https://github.com",
+                "GITHUB_REPOSITORY": REPO, "GITHUB_REPOSITORY_ID": "123",
+                "GITHUB_RUN_ID": "456", "GITHUB_RUN_ATTEMPT": "1"}
+
+    def test_actions_paths_publish_exact_run_and_attempt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            review.write_json(root / "policy.json", POLICY)
+            args = ["--policy", str(root / "policy.json"), "--policy-sha", POLICY_SHA,
+                    "--snapshot", str(root / "snapshot.json"), "--repo", REPO]
+            writes = []
+
+            def api(path, payload=None):
+                if payload is None:
+                    return fake_fetch()(path)
+                writes.append((path, payload))
+                return {}
+
+            with mock.patch.dict(os.environ, self.actions_context()), \
+                    mock.patch.object(review, "github", api), \
+                    mock.patch.object(review, "scan_context"), \
+                    redirect_stdout(io.StringIO()):
+                self.assertEqual(review.main(["capture", *args, "--pr", str(PR),
+                                              "--publish-pending"]), 0)
+                snap = review.read_json(root / "snapshot.json")
+                for findings in (False, True):
+                    report = model_report(snap)
+                    if findings:
+                        report["reviews"][0]["results"][0]["key_issues_to_review"] = [finding()]
+                    self.assertEqual(review.publish(snap, report, POLICY, POLICY_SHA,
+                                                    fake_fetch(), api, True),
+                                     "failure" if findings else "success")
+                self.assertEqual(review.main(["fail", *args]), 0)
+            expected = [("pending", "Two independent reviews requested"),
+                        ("success", "Both reviews complete; inspect CI"),
+                        ("failure", "Reviews complete; findings or caution require attention"),
+                        ("failure", "Review failed or was cancelled; inspect this run")]
+            self.assertEqual(writes, [(f"repos/{REPO}/statuses/{HEAD}",
+                                      {"state": state, "context": review.CONTEXT,
+                                       "description": description,
+                                       "target_url": f"https://github.com/{REPO}/actions/runs/456/attempts/1"})
+                                     for state, description in expected])
+            self.assertNotIn("target_url", json.dumps(snap))
+
+    def test_actions_context_fails_before_status_write(self):
+        invalid = {"GITHUB_SERVER_URL": [None, "https://github.com/", "https://example.com"],
+                   "GITHUB_REPOSITORY": [None, "other/repo"],
+                   "GITHUB_REPOSITORY_ID": [None, "0", "-1", "+123", " 123", "0123", "124"],
+                   "GITHUB_RUN_ID": [None, "0", "+456", " 456", "0456", "x", "1" * 21],
+                   "GITHUB_RUN_ATTEMPT": [None, "0", "2", "01", " 1"]}
+        for field, values in invalid.items():
+            for value in values:
+                with self.subTest(field=field, value=value), \
+                        mock.patch.dict(os.environ, self.actions_context()):
+                    if value is None:
+                        os.environ.pop(field)
+                    else:
+                        os.environ[field] = value
+                    post = mock.Mock()
+                    with self.assertRaisesRegex(review.ReviewError,
+                                                "invalid_status_run_context|workflow_rerun_requires_fresh_dispatch"):
+                        review.post_advisory_status(REPO, 123, HEAD, "pending", post)
+                    post.assert_not_called()
+
+    def test_status_identity_and_outcome_fail_before_post(self):
+        for repo, repository_id, head, outcome in (("invalid", 123, HEAD, "pending"),
+                (REPO, True, HEAD, "pending"), (REPO, 0, HEAD, "pending"),
+                (REPO, 123, HEAD.upper(), "pending"), (REPO, 123, "bad", "pending"),
+                (REPO, 123, HEAD, "unknown")):
+            with self.subTest(repo=repo, repository_id=repository_id, head=head, outcome=outcome):
+                post = mock.Mock()
+                with self.assertRaisesRegex(review.ReviewError, "invalid_status_identity"):
+                    review.post_advisory_status(repo, repository_id, head, outcome, post)
+                post.assert_not_called()
+
+    def test_local_statuses_omit_run_url(self):
+        for actions in (None, "false", "True"):
+            with self.subTest(actions=actions), mock.patch.dict(os.environ,
+                    {"GITHUB_RUN_ID": "456", "GITHUB_REPOSITORY_ID": "999"}):
+                if actions is None:
+                    os.environ.pop("GITHUB_ACTIONS", None)
+                else:
+                    os.environ["GITHUB_ACTIONS"] = actions
+                for outcome in ("pending", "clear", "findings", "execution_failure"):
+                    post = mock.Mock()
+                    review.post_advisory_status(REPO, 123, HEAD, outcome, post)
+                    self.assertNotIn("target_url", post.call_args.args[1])
+
+    def test_common_helper_owns_every_advisory_status_post(self):
+        source = ast.parse((ROOT / "scripts/pr_review.py").read_text())
+        owners = [function.name for function in source.body if isinstance(function, ast.FunctionDef)
+                  for node in ast.walk(function) if isinstance(node, ast.JoinedStr)
+                  and any(isinstance(part, ast.Constant) and "/statuses/" in str(part.value)
+                          for part in node.values)]
+        self.assertEqual(owners, ["post_advisory_status"])
+        helper = next(node for node in source.body if isinstance(node, ast.FunctionDef)
+                      and node.name == "post_advisory_status")
+        self.assertNotIn("target_url", [argument.arg for argument in helper.args.args])
+
+
 class ReviewBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        local = mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "false"})
+        local.start()
+        self.addCleanup(local.stop)
     def test_policy_allows_exactly_two_distinct_models(self):
         review.validate_policy(POLICY)
         for field, value in (("models", ["claude"]), ("mode", "enforce"), ("schema", 2),

@@ -478,6 +478,30 @@ def assess_report(snapshot: dict[str, Any], report: dict[str, Any] | None, polic
     return state
 
 
+def post_advisory_status(repo: str, repository_id: int, head: str, outcome: str,
+                         post: Callable[[str, Any], Any]) -> None:
+    statuses = {
+        "pending": ("pending", "Two independent reviews requested"),
+        "clear": ("success", "Both reviews complete; inspect CI"),
+        "findings": ("failure", "Reviews complete; findings or caution require attention"),
+        "execution_failure": ("failure", "Review failed or was cancelled; inspect this run"),
+    }
+    require(_REPOSITORY.fullmatch(repo) and type(repository_id) is int and repository_id > 0
+            and _FULL_SHA.fullmatch(head) and outcome in statuses, "invalid_status_identity")
+    state, description = statuses[outcome]
+    payload = {"state": state, "context": CONTEXT, "description": description}
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        require(os.environ.get("GITHUB_RUN_ATTEMPT") == "1",
+                "workflow_rerun_requires_fresh_dispatch")
+        run_id = os.environ.get("GITHUB_RUN_ID", "")
+        require(os.environ.get("GITHUB_SERVER_URL") == "https://github.com"
+                and os.environ.get("GITHUB_REPOSITORY") == repo
+                and os.environ.get("GITHUB_REPOSITORY_ID") == str(repository_id)
+                and re.fullmatch(r"[1-9][0-9]{0,19}", run_id), "invalid_status_run_context")
+        payload["target_url"] = f"https://github.com/{repo}/actions/runs/{run_id}/attempts/1"
+    post(f"repos/{repo}/statuses/{head}", payload)
+
+
 def publish(snapshot: dict[str, Any], report: dict[str, Any] | None, policy: dict[str, Any],
             policy_sha: str, fetch: Fetch, post: Callable[[str, Any], Any], jobs_ok: bool, *,
             summary_path: Path | None = None) -> str:
@@ -496,10 +520,8 @@ def publish(snapshot: dict[str, Any], report: dict[str, Any] | None, policy: dic
     # Finish fallible local work before the status write, so a later failure
     # cannot replace a completed findings verdict with the generic fallback.
     print(f"Independent PR review: {state} (advisory)", flush=True)
-    post(f"repos/{snapshot['repository']}/statuses/{snapshot['head']}",
-         {"context": CONTEXT, "state": state,
-          "description": "Both reviews complete; inspect CI" if state == "success"
-          else "Reviews complete; findings or caution require attention"})
+    post_advisory_status(snapshot["repository"], snapshot["repository_id"], snapshot["head"],
+                         "clear" if state == "success" else "findings", post)
     return state
 
 
@@ -526,8 +548,7 @@ def failed_status(minimal: dict[str, Any], repo: str, post: Callable[[str, Any],
             and type(minimal.get("repository_id")) is int and minimal["repository_id"] > 0  # pylint: disable=unidiomatic-typecheck
             and type(minimal.get("caller_repository_id")) is int  # pylint: disable=unidiomatic-typecheck
             and minimal["caller_repository_id"] == minimal["repository_id"], "invalid_failure_identity")
-    post(f"repos/{repo}/statuses/{minimal['head']}",
-         {"state": "failure", "context": CONTEXT, "description": "Review failed or was cancelled; inspect this run"})
+    post_advisory_status(repo, minimal["repository_id"], minimal["head"], "execution_failure", post)
 
 
 def capture_disposition(value: str) -> None:
@@ -586,8 +607,8 @@ def main(argv: list[str] | None = None) -> int:
             # Persist the captured head before any operation that may fail.
             write_json(args.snapshot.with_suffix(".identity.json"), minimal)
             if args.publish_pending:
-                github(f"repos/{args.repo}/statuses/{pr['head']['sha']}",
-                       {"state": "pending", "context": CONTEXT, "description": "Two independent reviews requested"})
+                post_advisory_status(args.repo, minimal["repository_id"], pr["head"]["sha"],
+                                     "pending", github)
             snapshot = collect(github, args.repo, number, args.policy_sha, policy)
             require({key: snapshot[key] for key in minimal} == minimal, "revision_changed_before_capture")
             scan_context(snapshot, args.gitleaks)
