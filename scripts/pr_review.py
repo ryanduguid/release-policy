@@ -486,7 +486,7 @@ def post_advisory_status(repo: str, repository_id: int, head: str, outcome: str,
         "findings": ("failure", "Reviews complete; findings or caution require attention"),
         "execution_failure": ("failure", "Review failed or was cancelled; inspect this run"),
     }
-    require(_REPOSITORY.fullmatch(repo) and type(repository_id) is int and repository_id > 0
+    require(_REPOSITORY.fullmatch(repo) and type(repository_id) is int and repository_id > 0  # pylint: disable=unidiomatic-typecheck
             and _FULL_SHA.fullmatch(head) and outcome in statuses, "invalid_status_identity")
     state, description = statuses[outcome]
     payload = {"state": state, "context": CONTEXT, "description": description}
