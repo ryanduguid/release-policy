@@ -23,6 +23,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/pr-review-central.yml": "6f0086664fbafebbba915133fdf631f6f3868738e8caeb6e2509f8eafd87b344",
     ".github/workflows/pr-review-trigger.yml": "6f2da6fecf622d02643f0d97172abe24c1f009049a09da63fea2a34f87783542",
     ".github/workflows/pr-review-consumer.yml": "d8c91be83d74ccaacf309dd9cd2743e25db07bee63fd51ce44ca0b86ac415e61",
+    ".github/workflows/pr-review-event-probe.yml": "ea49c18f142c4cf93063612c9c01820d29e8e795c2ea5c32cefd381fc17f1a02",
     ".github/pr-review-build-wheels.txt": "e75343a5ed6ddcd4f3c9fdb52e8a635fd52c4509dca5f0f22d2b29b0d22c9a18",
     "docs/pr-review.md": "a99b4ad691efdff500f0adac2f63484581d260514aabf1643328bf5ad1be3782",
     ".github/pr-review-policy.json": "44036e011119babc6d6bea0e5ac9a98b05770f73cc8bc8a9d42844c7da810bba",
