@@ -3,11 +3,11 @@
     {
       "current_policy_sha": "87767ec809dc7f77bcd45808219adaf67841ae7b",
       "evidence": {
-        "head_sha": "c1f775669489f19763b7e575504cc9f1a1d9e077",
+        "head_sha": "9d7ba2ab9b6f68c3170583bc0620e40bb962e6bd",
         "policy_sha": "87767ec809dc7f77bcd45808219adaf67841ae7b",
-        "ref": "v0.1.7",
-        "run_id": 36309766060,
-        "started_at": "2026-09-27T09:33:43Z"
+        "ref": "v0.2.1",
+        "run_id": 37223150857,
+        "started_at": "2026-10-04T18:07:11Z"
       },
       "family": "archive",
       "policy_workflow": ".github/workflows/release-archive.yml",
@@ -17,11 +17,11 @@
     {
       "current_policy_sha": "ec6b0ee76446f11aefb7fa0c203f2e01b4c9a711",
       "evidence": {
-        "head_sha": "c6e932d2439623ec26f851379620f9fe057020ba",
+        "head_sha": "4dad67630f760745055deeee7bf3973f2f066394",
         "policy_sha": "ec6b0ee76446f11aefb7fa0c203f2e01b4c9a711",
-        "ref": "review-ready-gate/v0.1.10",
-        "run_id": 36706810938,
-        "started_at": "2026-09-30T11:09:39Z"
+        "ref": "review-ready-gate/v0.2.0",
+        "run_id": 37221476851,
+        "started_at": "2026-10-04T17:41:34Z"
       },
       "family": "python",
       "policy_workflow": ".github/workflows/release-python.yml",
@@ -32,11 +32,11 @@
     {
       "current_policy_sha": "87767ec809dc7f77bcd45808219adaf67841ae7b",
       "evidence": {
-        "head_sha": "1776cc31c7041b7263a6c475bd6c2f0bc05984e7",
+        "head_sha": "2e16e47016c6451c0fe8fc8af8a47cf7e7fc3034",
         "policy_sha": "87767ec809dc7f77bcd45808219adaf67841ae7b",
-        "ref": "v0.3.0",
-        "run_id": 36532645566,
-        "started_at": "2026-09-29T06:44:19Z"
+        "ref": "v0.3.1",
+        "run_id": 37189530651,
+        "started_at": "2026-10-04T08:37:35Z"
       },
       "family": "skills",
       "policy_workflow": ".github/workflows/release-skills.yml",
