@@ -262,8 +262,16 @@ def _referenced_policy_sha(run: dict[str, object], canary: Canary) -> str | None
 def _latest_relevant_run(payload: object, canary: Canary) -> dict[str, object] | None:
     if not isinstance(payload, dict) or not isinstance(payload.get("workflow_runs"), list):
         return None
-    for run in payload["workflow_runs"]:
-        if not isinstance(run, dict) or run.get("conclusion") != "success":
+    # The listing has returned an older success ahead of newer ones on the same
+    # page (30 September and 7 October 2026), so order by start time, newest
+    # first, instead of trusting the response order.
+    runs = sorted(
+        (run for run in payload["workflow_runs"] if isinstance(run, dict)),
+        key=lambda run: str(run.get("run_started_at") or ""),
+        reverse=True,
+    )
+    for run in runs:
+        if run.get("conclusion") != "success":
             continue
         branch = run.get("head_branch")
         if canary.family == "verify":
