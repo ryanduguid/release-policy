@@ -98,8 +98,8 @@ read` and `statuses: write` for the policy repository. Each executed central
 capture, model and summary job explicitly reduces that maximum to its required
 read scopes. The token is scoped to the policy repository; the different
 target repository receives no authenticated requests or writes. A read-only
-caller was rejected before jobs started in the
-[permission qualification](https://github.com/ryanduguid/release-policy/actions/runs/37073390988).
+caller was rejected before jobs started in the permission qualification,
+run 37073390988.
 
 The same installer and two-model review job serve installed and central runs.
 Unknown workflow modes fail before source access or inference. A current head
