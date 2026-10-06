@@ -17,6 +17,13 @@ updates:
       codeql-action:
         patterns:
           - "github/codeql-action*"
+    ignore:
+      # This repository's own pins sit in digest-protected documents, so a bot
+      # bump can only fail tests/test_repository_baseline.sh. Re-pin by hand with
+      # the digest in the same pull request, as CONTRIBUTING.md describes and
+      # the consumer repositories already do.
+      - dependency-name: "ryanduguid/release-policy/.github/actions/*"
+      - dependency-name: "ryanduguid/release-policy/.github/workflows/*"
   - package-ecosystem: pip
     directory: /fixtures/demo-pkg
     schedule:
