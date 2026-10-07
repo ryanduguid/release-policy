@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this work, cite it with this metadata and the release tag or commit you used."
+title: "release-policy"
+type: software
+authors:
+  - family-names: Duguid
+    given-names: Ryan
+abstract: "Reusable workflows for releases, provenance attestations and Python package checks."
+repository-code: "https://github.com/ryanduguid/release-policy"
+license: MIT
+keywords:
+  - github-actions
+  - packaging
+  - provenance
+  - python
+  - release
+  - release-automation
+  - reusable-workflows
+  - sbom
+  - semver
+  - supply-chain-security
