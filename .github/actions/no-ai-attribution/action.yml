@@ -1,6 +1,14 @@
 name: Check attribution
 description: Check pull request metadata and raw commit identities for authorship credits.
 
+inputs:
+  snapshot:
+    description: Private PR snapshot supplied by the trusted policy wrapper.
+    default: ''
+  result:
+    description: Private completion file consumed by the trusted policy wrapper.
+    default: ''
+
 runs:
   using: composite
   steps:
@@ -16,9 +24,13 @@ runs:
         BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '0000000000000000000000000000000000000000' }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        POLICY_SNAPSHOT: ${{ inputs.snapshot }}
+        POLICY_RESULT: ${{ inputs.result }}
       shell: bash
       run: |
         python - <<'PY'
+        import hashlib
+        import json
         import os
         import re
         import subprocess
@@ -176,8 +188,8 @@ runs:
                         hit, found = "authorship credit", warn
                     if hit and (at, hit) not in reported:
                         reported.add((at, hit))
-                        found.append("%s line %d: %s (%s)"
-                                     % (label, at, lines[at - 1].strip()[:120], hit))
+                        detail = hit if label == "pull request body" else lines[at - 1].strip()[:120]
+                        found.append("%s line %d: %s (%s)" % (label, at, detail, hit))
             return bad, warn
 
         # Titles are plain text. Whole-word names and one separator grammar
@@ -538,9 +550,20 @@ runs:
             if bool(scan_pr(title, "")[0]) != blocked:
                 sys.exit("Attribution policy self-test failed")
 
-        failures, warnings = scan_pr(os.environ.get("PR_TITLE"), os.environ.get("PR_BODY"))
-
-        base, head = os.environ["BASE_SHA"], os.environ["HEAD_SHA"]
+        value = None
+        if os.environ.get("POLICY_SNAPSHOT"):
+            try:
+                with open(os.environ["POLICY_SNAPSHOT"], encoding="utf-8") as handle:
+                    value = json.load(handle)
+                if not isinstance(value, dict) or not all(isinstance(value.get(key), str)
+                        for key in ("title", "body", "base_sha", "head_sha")):
+                    raise ValueError("invalid snapshot")
+            except (OSError, ValueError):
+                sys.exit("Could not read the policy snapshot")
+        failures, warnings = scan_pr(value["title"] if value else os.environ.get("PR_TITLE"),
+                                    value["body"] if value else os.environ.get("PR_BODY"))
+        base, head = ((value["base_sha"], value["head_sha"]) if value else
+                      (os.environ["BASE_SHA"], os.environ["HEAD_SHA"]))
         # The policy runs from the base branch. Fetch PR objects as data only.
         for ref in (base, head):
             if not re.fullmatch(r"[0-9a-f]{40}", ref):
@@ -613,6 +636,11 @@ runs:
             bad, warn = scan("commit " + sha[:12], msg.decode("utf-8", "replace"))
             failures += bad
             warnings += warn
+
+        if value and os.environ.get("POLICY_RESULT"):
+            with open(os.environ["POLICY_RESULT"], "x", encoding="utf-8") as handle:
+                json.dump({"head_sha": head, "clean": not failures,
+                           "fingerprint": hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()}, handle)
 
         if warnings:
             print("Possible AI credit in prose (warning only, check before merging):\n")

@@ -74,6 +74,51 @@ were removed; the trusted-branch status remains required everywhere.
 
 ## Verification and rollout
 
+The prepared snapshot protocol adds a private PR snapshot and a completion file
+bound to its head and fingerprint. The scanner reads that snapshot instead of a
+stale event's title and body. Before publishing success, the wrapper rereads the
+current metadata and requires the same snapshot and an explicitly clean scan.
+Changed metadata, a failed prerequisite or unreadable evidence closes the owned
+pending status as failure when the API is available. Metadata diagnostics print
+only the field, line and rule.
+
+[The stage-two wrapper](attribution-policy-stage2.yml) is a non-deployable draft:
+its action pin can be filled only after the action change merges. Publish the
+action first, then the wrapper pinned to that main commit, then consumer pins.
+In the qualified wrapper rollout, use per-PR groups for metadata coalescing and
+a unique run key for each push or manual dispatch:
+
+```yaml
+concurrency:
+  group: attribution-${{ github.event_name }}-${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+```
+
+Surviving coalesced PR events read current data. A shared per-SHA key can discard
+a pending push even when cancellation of running work is off. Unique run keys
+keep each immutable push range separate. Keep the deletion exclusion. The
+default queue's pending replacement is documented in [GitHub's concurrency
+guide](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+
+A shared commit-status context cannot prove that every range was audited.
+Use the workflow runs and their job evidence for that completeness judgement.
+Before consumer migration, qualify at least three overlapping pushes with the
+same SHA on different refs and distinguishable ranges, including a rejected
+range. Every non-deletion event must reach a terminal audit result.
+
+Validate rapid edits and pushes, failures and fork PRs on GitHub before broad
+migration. Avoid overlap between old and new status writers. API reads and status
+writes are not atomic, and statuses are shared by PRs involving the same SHA;
+per-PR serialisation does not isolate those PRs. A runner termination or API
+outage can prevent cleanup and require an explicit rerun.
+
+Stage-two activation is held until shared-head ownership is resolved and tested.
+A clean PR and a rejected PR can share a SHA and overwrite the same required
+status. Metadata can also change between the last read and the status write.
+The prepared action supplies scan evidence; the draft wrapper does not establish
+strict current-PR authority. Qualify a single-owner or combined-PR policy, or a
+merge-time check, before publishing the wrapper or migrating consumers.
+
 The standard policy unittest command runs the action's embedded scanner against
 fabricated Git repositories, including rejected metadata, raw identities,
 initial pushes and unreadable commit ranges. The repository baseline pins the
