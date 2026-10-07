@@ -219,6 +219,33 @@ class CanaryManifestTests(unittest.TestCase):
                 self.assertTrue(any(message in error for error in result.errors))
                 self.assertEqual(result.warnings, ())
 
+    def test_live_audit_orders_successes_by_start_time(self) -> None:
+        # GitHub has listed an older success ahead of newer ones; the audit must
+        # still compare the newest relevant success with the recorded run.
+        recorded = run_payload()
+        older = {
+            **run_payload(run_id=100, ref="v1.2.2"),
+            "run_started_at": "2026-08-01T00:00:00Z",
+        }
+
+        def fetch_json(endpoint: str) -> object:
+            if "/compare/" in endpoint:
+                return {"status": "behind"}
+            if endpoint.endswith("/actions/runs/123"):
+                return recorded
+            return {"workflow_runs": [older, recorded]}
+
+        result = check_canaries.check_live(
+            check_canaries.parse_manifest(manifest()),
+            fetch_json=fetch_json,
+            fetch_text=lambda _: (
+                "uses: ryanduguid/release-policy/.github/workflows/"
+                f"release-python.yml@{SHA}\n"
+            ),
+        )
+        self.assertEqual(result.errors, ())
+        self.assertEqual(result.warnings, ())
+
     def test_live_legacy_release_and_verify_select_only_their_expected_refs(self) -> None:
         for family in ("archive", "python", "skills", "verify"):
             with self.subTest(family=family):
