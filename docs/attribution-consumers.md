@@ -119,6 +119,14 @@ The prepared action supplies scan evidence; the draft wrapper does not establish
 strict current-PR authority. Qualify a single-owner or combined-PR policy, or a
 merge-time check, before publishing the wrapper or migrating consumers.
 
+The helper is a trusted-only CLI: its invoker, executable search path and every
+process able to replace or modify its snapshot and proof must share the status
+token's authority. The fingerprint checks consistency, not producer identity.
+Before activation, inspect the hosted runner's temporary-directory ownership,
+ancestor and ACL permissions, permitted writers and resolved GitHub CLI. Confirm
+that `RUNNER_TEMP` and `runner.temp` identify the same directory. Local file-mode
+and symlink tests do not establish hosted isolation or concurrent-write safety.
+
 The standard policy unittest command runs the action's embedded scanner against
 fabricated Git repositories, including rejected metadata, raw identities,
 initial pushes and unreadable commit ranges. The repository baseline pins the

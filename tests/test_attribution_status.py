@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import runpy
+import stat
 import subprocess
 import sys
 import tempfile
@@ -39,7 +41,30 @@ class SnapshotTests(unittest.TestCase):
         self.posts: list[tuple[str, str]] = []
         self.fetch = lambda _: payload()
         self.post = lambda head, state: self.posts.append((head, state))
+        self.process_guard = self.enterContext(
+            mock.patch.object(
+                policy.subprocess, "run", side_effect=AssertionError("unexpected external process")
+            )
+        )
         policy.prepare(REPOSITORY, 1, self.path, self.fetch, self.post)
+
+    def cli_args(self, operation: str = "finish") -> list[str]:
+        return [
+            "policy",
+            operation,
+            "--repository",
+            REPOSITORY,
+            "--number",
+            "1",
+            "--snapshot",
+            str(self.path),
+            "--result",
+            str(self.result),
+            "--job-status",
+            "success",
+            "--run-url",
+            "https://github.com/example/policy/actions/runs/1",
+        ]
 
     def proof(self, **changes: object) -> None:
         value = json.loads(self.path.read_text())
@@ -72,8 +97,10 @@ class SnapshotTests(unittest.TestCase):
 
     def test_missing_malformed_or_mismatched_proof_fails(self) -> None:
         self.assertFalse(self.finish())
+        self.assertEqual(self.posts[-1], (HEAD, "failure"))
         self.result.write_text("not json")
         self.assertFalse(self.finish())
+        self.assertEqual(self.posts[-1], (HEAD, "failure"))
         for changes in (
             {"head_sha": BASE},
             {"clean": False},
@@ -82,11 +109,13 @@ class SnapshotTests(unittest.TestCase):
         ):
             self.proof(**changes)
             self.assertFalse(self.finish())
+            self.assertEqual(self.posts[-1], (HEAD, "failure"))
 
     def test_failed_or_cancelled_prerequisite_never_publishes_success(self) -> None:
         self.proof()
         for status in ("failure", "cancelled", "skipped"):
             self.assertFalse(self.finish(status))
+            self.assertEqual(self.posts[-1], (HEAD, "failure"))
 
     def test_api_read_failure_closes_owned_pending(self) -> None:
         self.proof()
@@ -102,6 +131,9 @@ class SnapshotTests(unittest.TestCase):
             None,
             {},
             payload(number=2),
+            payload(number=True),
+            payload(number=False),
+            payload(number=1.0),
             payload(body=1),
             payload(title=None),
             payload(head={"sha": "bad", "repo": {"full_name": "example/fork"}}),
@@ -126,30 +158,18 @@ class SnapshotTests(unittest.TestCase):
                 policy.snapshot(value, REPOSITORY, 1)
 
     def test_unreadable_owned_snapshot_cannot_write_an_arbitrary_status(self) -> None:
-        for text in ("[]", '{"head_sha":"invalid"}'):
-            self.path.write_text(text)
+        for raw in (None, b"not json", b"\xff", b"[]", b"{}", b'{"head_sha":"invalid"}'):
+            if raw is None:
+                self.path.unlink()
+            else:
+                self.path.write_bytes(raw)
             count = len(self.posts)
-            with self.assertRaises(ValueError):
+            with self.subTest(raw=raw), self.assertRaises((OSError, ValueError)):
                 self.finish()
             self.assertEqual(len(self.posts), count)
 
     def test_cli_reports_only_policy_outcome_and_closes_failed_scan(self) -> None:
-        args = [
-            "policy",
-            "finish",
-            "--repository",
-            REPOSITORY,
-            "--number",
-            "1",
-            "--snapshot",
-            str(self.path),
-            "--result",
-            str(self.result),
-            "--job-status",
-            "success",
-            "--run-url",
-            "https://github.com/example/policy/actions/runs/1",
-        ]
+        args = self.cli_args()
         with (
             mock.patch.object(sys, "argv", args),
             mock.patch.object(policy, "gh_json", self.fetch),
@@ -165,13 +185,21 @@ class SnapshotTests(unittest.TestCase):
             self.path.unlink()
             args[1] = "prepare"
             self.assertEqual(policy.main(), 0)
-        with mock.patch.object(sys, "argv", args), redirect_stderr(io.StringIO()):
+        original = self.path.read_bytes()
+        with (
+            mock.patch.object(sys, "argv", args),
+            mock.patch.object(policy, "gh_json", side_effect=self.fetch) as fetch,
+            redirect_stderr(io.StringIO()),
+        ):
             self.assertEqual(policy.main(), 1)  # Existing snapshot refuses overwrite.
+        fetch.assert_called_once_with(f"repos/{REPOSITORY}/pulls/1")
+        self.assertEqual(self.path.read_bytes(), original)
+        self.process_guard.assert_not_called()
         args[args.index(REPOSITORY)] = "invalid"
         with mock.patch.object(sys, "argv", args), redirect_stderr(io.StringIO()):
             self.assertEqual(policy.main(), 1)
 
-    def test_failed_status_delivery_and_unreadable_api_never_pass(self) -> None:
+    def test_failed_and_unreadable_api_responses_never_pass(self) -> None:
         for response in (
             subprocess.CompletedProcess([], 1, b"", b"private error"),
             subprocess.CompletedProcess([], 0, b"not json", b""),
@@ -184,37 +212,47 @@ class SnapshotTests(unittest.TestCase):
         response = subprocess.CompletedProcess([], 0, b'{"number":1}', b"")
         with mock.patch.object(policy.subprocess, "run", return_value=response):
             self.assertEqual(policy.gh_json("endpoint"), {"number": 1})
-        args = [
-            "policy",
-            "finish",
-            "--repository",
-            REPOSITORY,
-            "--number",
-            "1",
-            "--snapshot",
-            str(self.path),
-            "--result",
-            str(self.result),
-            "--job-status",
-            "success",
-            "--run-url",
-            "https://github.com/example/policy/actions/runs/1",
-        ]
+
+    def test_cli_redacts_failed_status_delivery(self) -> None:
+        args = self.cli_args()
         self.proof()
         output = io.StringIO()
         with (
             mock.patch.object(sys, "argv", args),
             mock.patch.object(policy, "gh_json", self.fetch),
             mock.patch.object(
-                policy.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)
+                policy.subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess(
+                    [], 1, b"private status output", b"private status error"
+                ),
             ),
             redirect_stderr(output),
         ):
             self.assertEqual(policy.main(), 1)
-        self.assertNotIn("private error", output.getvalue())
+        self.assertEqual(output.getvalue(), "Attribution status validation could not complete\n")
+
+    def test_cli_redacts_failed_or_malformed_api_reads(self) -> None:
+        for response in (
+            subprocess.CompletedProcess([], 1, b"private API output", b"private API error"),
+            subprocess.CompletedProcess([], 0, b"private malformed API content", b""),
+        ):
+            output = io.StringIO()
+            with (
+                self.subTest(response=response),
+                mock.patch.object(sys, "argv", self.cli_args("prepare")),
+                mock.patch.object(policy.subprocess, "run", return_value=response),
+                redirect_stderr(output),
+            ):
+                self.assertEqual(policy.main(), 1)
+            self.assertEqual(
+                output.getvalue(), "Attribution status validation could not complete\n"
+            )
+
+    def test_cli_entry_point_finishes_a_clean_scan(self) -> None:
+        self.proof()
         with (
-            mock.patch.object(sys, "argv", args),
-            mock.patch.object(policy, "gh_json", self.fetch),
+            mock.patch.object(sys, "argv", self.cli_args()),
             mock.patch.object(
                 policy.subprocess,
                 "run",
@@ -223,6 +261,27 @@ class SnapshotTests(unittest.TestCase):
             self.assertRaisesRegex(SystemExit, "0"),
         ):
             runpy.run_path(str(Path(policy.__file__)), run_name="__main__")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file modes and symlinks")
+    def test_snapshot_creation_is_private_and_refuses_final_symlinks(self) -> None:
+        private = self.path.with_name("private.json")
+        previous_umask = os.umask(0)
+        try:
+            policy.prepare(REPOSITORY, 1, private, self.fetch, self.post)
+        finally:
+            os.umask(previous_umask)
+        self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o600)
+        original = self.path.read_bytes()
+        before = list(self.posts)
+        for target in (self.path, self.path.with_name("missing.json")):
+            link = self.path.with_name("link.json")
+            link.symlink_to(target)
+            with self.assertRaises(FileExistsError):
+                policy.prepare(REPOSITORY, 1, link, self.fetch, self.post)
+            self.assertEqual(self.posts, before)
+            self.assertEqual(self.path.read_bytes(), original)
+            self.assertFalse(self.path.with_name("missing.json").exists())
+            link.unlink()
 
     def test_surviving_old_event_reads_current_metadata(self) -> None:
         self.path.unlink()

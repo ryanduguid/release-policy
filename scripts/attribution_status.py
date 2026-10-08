@@ -1,4 +1,9 @@
-"""Bind attribution statuses to one current PR snapshot and completed scan."""
+"""Bind attribution statuses to one current PR snapshot and completed scan.
+
+Only trusted invokers may choose paths or mutate snapshot/proof files. The
+filesystem and executable search path must share the status token's trust;
+the snapshot fingerprint does not authenticate an untrusted file writer.
+"""
 
 from __future__ import annotations
 
