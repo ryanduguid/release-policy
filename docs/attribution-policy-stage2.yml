@@ -1,0 +1,83 @@
+# Non-deployable preparation. Replace ACTION_COMMIT_AFTER_STAGE1 only after
+# the action has merged to main, then review and publish as attribution-policy.yml.
+name: Attribution policy
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  policy:
+    timeout-minutes: 10
+    name: Attribution policy runner
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Check out trusted policy helpers at the calling pin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ryanduguid/release-policy
+          ref: ${{ job.workflow_sha }}
+          path: policy
+          persist-credentials: false
+      - name: Retain the trusted status helper outside the consumer checkout
+        env:
+          MODULE_SHA: ${{ job.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
+          cp policy/scripts/attribution_status.py "$RUNNER_TEMP/attribution_status.py"
+      - name: Prepare current PR snapshot and pending status
+        if: ${{ github.event_name == 'pull_request_target' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash
+        run: |
+          python "$RUNNER_TEMP/attribution_status.py" prepare \
+            --repository "$GITHUB_REPOSITORY" --number "$PR_NUMBER" \
+            --snapshot "$RUNNER_TEMP/attribution-snapshot.json" \
+            --result "$RUNNER_TEMP/attribution-result.json" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Mark immutable audit pending
+        if: ${{ github.event_name != 'pull_request_target' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --method POST \
+            -f state=pending -f context='Attribution audit' \
+            -f description='Checking commit identities and authorship credits' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --silent
+      - uses: ryanduguid/release-policy/.github/actions/no-ai-attribution@ACTION_COMMIT_AFTER_STAGE1
+        with:
+          snapshot: ${{ github.event_name == 'pull_request_target' && format('{0}/attribution-snapshot.json', runner.temp) || '' }}
+          result: ${{ github.event_name == 'pull_request_target' && format('{0}/attribution-result.json', runner.temp) || '' }}
+      - name: Finish owned PR snapshot validation
+        if: ${{ always() && github.event_name == 'pull_request_target' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          JOB_STATUS: ${{ job.status }}
+        shell: bash
+        run: |
+          python "$RUNNER_TEMP/attribution_status.py" finish \
+            --repository "$GITHUB_REPOSITORY" --number "$PR_NUMBER" \
+            --snapshot "$RUNNER_TEMP/attribution-snapshot.json" \
+            --result "$RUNNER_TEMP/attribution-result.json" --job-status "$JOB_STATUS" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Finish immutable audit
+        if: ${{ always() && github.event_name != 'pull_request_target' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
+        shell: bash
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --method POST \
+            -f state="$STATE" -f context='Attribution audit' \
+            -f description='Commit identity and authorship credit policy' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --silent
