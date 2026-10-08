@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -92,15 +92,18 @@ class SnapshotTests(unittest.TestCase):
             payload(base={"sha": BASE, "ref": "other", "repo": {"full_name": REPOSITORY}}),
         ):
             with self.subTest(changed=changed):
+                before = len(self.posts)
                 self.assertFalse(self.finish(fetch=lambda _: changed))
-                self.assertEqual(self.posts[-1], (HEAD, "failure"))
+                self.assertEqual(self.posts[before:], [(HEAD, "failure")])
 
     def test_missing_malformed_or_mismatched_proof_fails(self) -> None:
+        before = len(self.posts)
         self.assertFalse(self.finish())
-        self.assertEqual(self.posts[-1], (HEAD, "failure"))
+        self.assertEqual(self.posts[before:], [(HEAD, "failure")])
         self.result.write_text("not json")
+        before = len(self.posts)
         self.assertFalse(self.finish())
-        self.assertEqual(self.posts[-1], (HEAD, "failure"))
+        self.assertEqual(self.posts[before:], [(HEAD, "failure")])
         for changes in (
             {"head_sha": BASE},
             {"clean": False},
@@ -108,14 +111,16 @@ class SnapshotTests(unittest.TestCase):
             {"fingerprint": "different"},
         ):
             self.proof(**changes)
+            before = len(self.posts)
             self.assertFalse(self.finish())
-            self.assertEqual(self.posts[-1], (HEAD, "failure"))
+            self.assertEqual(self.posts[before:], [(HEAD, "failure")])
 
     def test_failed_or_cancelled_prerequisite_never_publishes_success(self) -> None:
         self.proof()
         for status in ("failure", "cancelled", "skipped"):
+            before = len(self.posts)
             self.assertFalse(self.finish(status))
-            self.assertEqual(self.posts[-1], (HEAD, "failure"))
+            self.assertEqual(self.posts[before:], [(HEAD, "failure")])
 
     def test_api_read_failure_closes_owned_pending(self) -> None:
         self.proof()
@@ -217,6 +222,7 @@ class SnapshotTests(unittest.TestCase):
         args = self.cli_args()
         self.proof()
         output = io.StringIO()
+        stdout = io.StringIO()
         with (
             mock.patch.object(sys, "argv", args),
             mock.patch.object(policy, "gh_json", self.fetch),
@@ -226,10 +232,32 @@ class SnapshotTests(unittest.TestCase):
                 return_value=subprocess.CompletedProcess(
                     [], 1, b"private status output", b"private status error"
                 ),
-            ),
+            ) as run,
             redirect_stderr(output),
+            redirect_stdout(stdout),
         ):
             self.assertEqual(policy.main(), 1)
+        run.assert_called_once_with(
+            [
+                "gh",
+                "api",
+                f"repos/{REPOSITORY}/statuses/{HEAD}",
+                "--method",
+                "POST",
+                "-f",
+                "state=success",
+                "-f",
+                "context=Attribution policy",
+                "-f",
+                "description=PR snapshot and attribution validation",
+                "-f",
+                "target_url=https://github.com/example/policy/actions/runs/1",
+                "--silent",
+            ],
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(stdout.getvalue(), "")
         self.assertEqual(output.getvalue(), "Attribution status validation could not complete\n")
 
     def test_cli_redacts_failed_or_malformed_api_reads(self) -> None:
@@ -238,13 +266,21 @@ class SnapshotTests(unittest.TestCase):
             subprocess.CompletedProcess([], 0, b"private malformed API content", b""),
         ):
             output = io.StringIO()
+            stdout = io.StringIO()
             with (
                 self.subTest(response=response),
                 mock.patch.object(sys, "argv", self.cli_args("prepare")),
-                mock.patch.object(policy.subprocess, "run", return_value=response),
+                mock.patch.object(policy.subprocess, "run", return_value=response) as run,
                 redirect_stderr(output),
+                redirect_stdout(stdout),
             ):
                 self.assertEqual(policy.main(), 1)
+            run.assert_called_once_with(
+                ["gh", "api", f"repos/{REPOSITORY}/pulls/1"],
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(stdout.getvalue(), "")
             self.assertEqual(
                 output.getvalue(), "Attribution status validation could not complete\n"
             )
