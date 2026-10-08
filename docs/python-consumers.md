@@ -19,7 +19,7 @@ Caller workflow (`.github/workflows/release.yml` in the consumer):
         with:
           required-checks: |
             .github/workflows/ci.yml: lint
-            .github/workflows/ci.yml: test (3.12)
+            .github/workflows/ci.yml: test (3.14)
 
 Root callers need no other inputs: `source-directory` defaults to `.` and
 `tag-prefix` defaults to an empty string, so their package paths and `vX.Y.Z`
@@ -27,8 +27,8 @@ tags are unchanged.
 
 `required-checks` names the consumer checks that must have succeeded for the
 exact release commit, one per line as `<workflow path>: <job name>`, where the
-job name is the check name GitHub shows (`lint`, `test (3.12)`,
-`payday-super-checker / test (3.12)`). The gate reads the consumer's workflow
+job name is the check name GitHub shows (`lint`, `test (3.14)`,
+`payday-super-checker / test (3.14)`). The gate reads the consumer's workflow
 runs for that commit, counts only `push` and `workflow_dispatch` runs of `main`
 in the consumer repository, and requires every such run of the named workflow to
 report that check as a success. It waits up to 10 minutes for a check that is
@@ -64,7 +64,7 @@ namespace explicitly:
           required-checks: |
             .github/workflows/ci.yml: lint
             .github/workflows/ci.yml: payday-super-checker / lint
-            .github/workflows/ci.yml: payday-super-checker / test (3.12)
+            .github/workflows/ci.yml: payday-super-checker / test (3.14)
             .github/workflows/ci.yml: payday-super-checker / build
 
 The GitHub tag is then `payday-super-checker/vX.Y.Z`; the component-local
@@ -97,7 +97,7 @@ Give every mandatory job a name no other job in its run shares. A display name
 is not an identifier, and GitHub lets two jobs carry the same one, so a check
 that matches more than one job is refused as ambiguous even when both matched
 jobs succeeded. A matrix needs each dimension that distinguishes its jobs in the
-name, which is what `test (3.12)` and `payday-super-checker / test (3.12)` do:
+name, which is what `test (3.14)` and `payday-super-checker / test (3.14)` do:
 a matrix over Python versions and operating systems named only `test` reports
 several jobs under that one name and cannot be selected. Rename the colliding
 jobs; do not name an aggregate gates job to work around it.

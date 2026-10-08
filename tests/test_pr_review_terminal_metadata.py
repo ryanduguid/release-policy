@@ -55,7 +55,7 @@ class TerminalMetadataTests(unittest.TestCase):
         self.args = ["--policy", str(self.policy), "--policy-sha", POLICY_SHA,
                      "--snapshot", str(self.root / "snapshot.json"), "--repo", REPO]
         for context in (redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()),
-                        mock.patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": "1",
+                        mock.patch.dict(os.environ, {"GITHUB_RUN_ATTEMPT": "1", "GITHUB_ACTIONS": "false",
                             "GITHUB_OUTPUT": str(self.root / "output"),
                             "GITHUB_STEP_SUMMARY": str(self.root / "summary")})):
             context.__enter__()

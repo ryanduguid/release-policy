@@ -32,7 +32,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install the pinned fuzzer
         run: >-
@@ -54,17 +54,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # scripts/python_release.py reads pyproject metadata with tomllib,
-        # which arrived in Python 3.11, so 3.11 is the floor under test.
-        python: ["3.11", "3.12", "3.13", "3.14"]
+        # Test the declared Python 3.14 minimum.
+        python: ["3.14"]
         # Temporary leg on the image ubuntu-latest becomes between 19 October
-        # and 19 November 2026 (actions/runner-images#14748). "3.12.x" makes it
+        # and 19 November 2026 (actions/runner-images#14748). "3.14.x" makes it
         # a new combination, so the required check names above stay unchanged.
         # Remove it once ubuntu-latest is 26.04.
         include:
-          - python: "3.12.x"
+          - python: "3.14.x"
             runner: ubuntu-26.04
     env:
+      # Follow the CI maintenance interpreter rather than the exact local pin.
+      UV_PYTHON: "3.14"
       ACTIONLINT_VERSION: "1.7.12"
       ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
       SHELLCHECK_VERSION: "0.11.0"
@@ -79,9 +80,9 @@ jobs:
           persist-credentials: false
 
       # shellcheck and actionlint do not depend on the Python under test, so
-      # they download and run once, on the 3.12 leg, like the live canary audit.
+      # they download and run once, on the 3.14 leg, like the live canary audit.
       - name: Download and verify shellcheck
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         shell: bash
         run: |
           set -euo pipefail
@@ -90,12 +91,12 @@ jobs:
           tar -xJf "shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
 
       - name: Shellcheck the scripts and tests
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         run: |
           "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" -x scripts/*.sh tests/*.sh
 
       - name: Download and verify actionlint
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         shell: bash
         run: |
           set -euo pipefail
@@ -108,7 +109,7 @@ jobs:
       # add it. Until that ships, ignore this one known false positive; remove the
       # -ignore flag once #707 lands in a release.
       - name: Actionlint the workflows
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         run: |
           ./actionlint \
             -shellcheck "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" \
@@ -127,28 +128,28 @@ jobs:
           --requirement requirements-ci.txt
 
       - name: Ruff the policy scripts and tests
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         run: python -m ruff check .
 
       - name: Type-check the policy scripts
         run: python -m mypy
 
       - name: Validate the release-family canary manifest
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         run: python scripts/check_canaries.py
 
       - name: Audit live canary pins and successful-run evidence
-        if: github.event_name == 'schedule' && matrix.python == '3.12'
+        if: github.event_name == 'schedule' && matrix.python == '3.14'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/check_canaries.py --live --require-current-evidence
 
       - name: Check repository baseline
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         run: bash tests/test_repository_baseline.sh
 
       - name: Check the published prose for egress findings
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         # Layers B and C only: the layer A terms file is private and never
         # reaches CI, which is the point of keeping it out of the repository.
         # --allow-structural because SECURITY.md names a dotenv file in prose,
@@ -243,6 +244,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

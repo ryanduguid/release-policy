@@ -20,7 +20,7 @@ Set the input, then add a second job:
           upload-dist-artifact: true
           required-checks: |
             .github/workflows/ci.yml: lint
-            .github/workflows/ci.yml: test (3.12)
+            .github/workflows/ci.yml: test (3.14)
 
       pypi:
         name: publish to PyPI
