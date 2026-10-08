@@ -38,7 +38,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/codeql.yml": "74269f88ca9a8103a89351cdbbe61c025c1a9742c574a3cdef4c411a10cd8ba0",
     ".github/workflows/scorecard.yml": "32586611b864795d9ebf5f127005703f07214869d97a6e132c7932834e5f2626",
     ".github/workflows/no-ai-attribution.yml": "2c517d6f7eda8667c8a2eba186ef15d9e27b4c91d4617a39083b0a31f26f2834",
-    ".github/workflows/attribution-policy.yml": "c956c865c80e77d87d4f86eadee8dca6c95991ae2452db96599e6a4b402b20b1",
+    ".github/workflows/attribution-policy.yml": "55eb47f6abbd0c08297bca7edf1c751193f537906092c3f4f4be0d07a1c5b3b9",
     ".github/workflows/publish-archives.yml": "f85b24e289d1516bd9572b4516edc67b7aa5ef84a12c0db7cb724f234dfe2ce8",
     ".github/workflows/release-archive.yml": "e293a419e3949931d56b15b2604002db2990ae37d29dfdb30af531ebf8256715",
     ".github/workflows/release-python.yml": "a884408be5d8a279336a8bf7d0c86db670561839822e7e8dbf39420041499be7",
