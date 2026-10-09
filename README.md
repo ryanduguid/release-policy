@@ -5,6 +5,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ryanduguid/release-policy/badge)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/release-policy)
 [![release](https://img.shields.io/github/v/release/ryanduguid/release-policy?color=5C2D91&labelColor=04001F)](https://github.com/ryanduguid/release-policy/releases/latest)
 [![licence: MIT](https://img.shields.io/badge/licence-MIT-5C2D91.svg?labelColor=04001F)](LICENSE)
+[![Codacy code quality](https://app.codacy.com/project/badge/Grade/49440ac0ee144a12b5fc1380425e9773?branch=main)](https://app.codacy.com/gh/ryanduguid/release-policy/dashboard)
 
 Policy checks establish release evidence, not accounting correctness.
 
