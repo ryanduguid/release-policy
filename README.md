@@ -23,6 +23,8 @@ uses: ryanduguid/release-policy/.github/workflows/release-python.yml@fcf25e532e9
 
 This snapshot was checked against [canaries.json](canaries.json) on 10 September 2026. The manifest retains the source commit, policy SHA and run identity; consult it for later updates. This repository has no package installation command.
 
+Start with the [consumer prerequisites](docs/consumer-prerequisites.md) before choosing a release workflow.
+
 <details>
 <summary>Consumer setup, policy guarantees and historical limits</summary>
 
