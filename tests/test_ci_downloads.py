@@ -63,6 +63,7 @@ class CIDownloadTests(unittest.TestCase):
                 check=True, capture_output=True,
             )
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.load_cert_chain(cert, key)
             secure.socket = context.wrap_socket(secure.socket, server_side=True)
             threads = [threading.Thread(target=server.serve_forever, daemon=True)
