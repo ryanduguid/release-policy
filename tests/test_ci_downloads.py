@@ -15,6 +15,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _fixture_tls_context(root: Path) -> tuple[ssl.SSLContext, Path]:
+    # Disposable fixture material, generated here and never uploaded or retained.
+    cert, key = root / "fixture.pem", root / "fixture-key.pem"
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+         "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+         "-keyout", str(key), "-out", str(cert)],
+        check=True, capture_output=True,
+    )
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(cert, key)
+    return context, cert
+
+
 class CIDownloadTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("curl") and shutil.which("openssl"), "curl and openssl required")
     def test_ci_commands_refuse_https_to_http_redirects(self) -> None:
@@ -54,17 +69,7 @@ class CIDownloadTests(unittest.TestCase):
         secure = ThreadingHTTPServer(("127.0.0.1", 0), SecureHandler)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            # Disposable fixture material, generated here and never uploaded or retained.
-            cert, key = root / "fixture.pem", root / "fixture-key.pem"
-            subprocess.run(
-                ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-                 "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
-                 "-keyout", str(key), "-out", str(cert)],
-                check=True, capture_output=True,
-            )
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            context.minimum_version = ssl.TLSVersion.TLSv1_2
-            context.load_cert_chain(cert, key)
+            context, cert = _fixture_tls_context(root)
             secure.socket = context.wrap_socket(secure.socket, server_side=True)
             threads = [threading.Thread(target=server.serve_forever, daemon=True)
                        for server in (plain, secure)]
