@@ -78,6 +78,7 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
             "run",
         ) as run:
             run.side_effect = (
+                subprocess.CompletedProcess(["git", "rev-parse"], 0, stdout="a" * 40 + "\n"),
                 subprocess.CompletedProcess(
                     ["git", "show"], 0, stdout="1234567890\n", stderr=""
                 ),
@@ -91,16 +92,16 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
                 cwd=ROOT,
             )
 
-        self.assertEqual(3, run.call_count)
+        self.assertEqual(4, run.call_count)
         self.assertEqual(
-            ("git", "show", "-s", "--format=%ct", "deadbeef^{commit}"),
-            run.call_args_list[0].args[0],
+            ("git", "show", "-s", "--format=%ct", "a" * 40),
+            run.call_args_list[1].args[0],
         )
         self.assertEqual(
             ("example-1.2.3.zip", "example-1.2.3.tar.gz"),
             tuple(path.name for path in outputs),
         )
-        for call in run.call_args_list[1:]:
+        for call in run.call_args_list[2:]:
             self.assertEqual(
                 (
                     "git",
@@ -121,9 +122,10 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
         with TemporaryDirectory() as temporary, mock.patch.object(
             release_archives.subprocess,
             "run",
-            return_value=subprocess.CompletedProcess(
-                ["git", "show"], 0, stdout="not-a-timestamp\n", stderr=""
-            ),
+            side_effect=[
+                subprocess.CompletedProcess(["git", "rev-parse"], 0, stdout="a" * 40),
+                subprocess.CompletedProcess(["git", "show"], 0, stdout="not-a-timestamp\n"),
+            ],
         ), self.assertRaisesRegex(ValueError, "timestamp"):
             release_archives.build_release_archives(
                 commit="deadbeef",
@@ -316,6 +318,156 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
                     cwd=ROOT,
                 )
             self.assertEqual([], list(outside.iterdir()))
+
+    def test_invalid_revisions_and_relative_traversal_have_no_write_side_effects(self) -> None:
+        with TemporaryDirectory(dir=ROOT) as temporary:
+            parent = Path(temporary)
+            outside = parent / "escaped"
+            for revision in ("--help", "--format=%ct", "missing", "HEAD^{tree}"):
+                with self.subTest(revision=revision), self.assertRaises(ValueError):
+                    release_archives.build_release_archives(
+                        commit=revision, prefix="safe/", output_base=outside / "archive", cwd=ROOT,
+                    )
+                self.assertEqual([], list(parent.iterdir()))
+            relative = Path(os.path.relpath(parent, ROOT)) / ".." / parent.name / "escaped/archive"
+            with self.assertRaises(ValueError):
+                release_archives.build_release_archives(
+                    commit="HEAD", prefix="safe/", output_base=relative, cwd=ROOT,
+                )
+            self.assertEqual([], list(parent.iterdir()))
+
+    def test_intermediate_and_dangling_parent_links_create_nothing(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            outside = root / "outside"
+            outside.mkdir()
+            for target in (outside, root / "missing"):
+                link = root / "linked"
+                try:
+                    link.symlink_to(target, target_is_directory=True)
+                except OSError as error:
+                    self.skipTest(f"directory symlinks are unavailable: {error}")
+                before = sorted(str(path.relative_to(root)) for path in root.rglob("*"))
+                with self.assertRaises(ValueError):
+                    release_archives.build_release_archives(
+                        commit="HEAD", prefix="safe/", output_base=link / "nested/archive", cwd=ROOT,
+                    )
+                self.assertEqual(before, sorted(str(path.relative_to(root)) for path in root.rglob("*")))
+                self.assertEqual([], list(outside.iterdir()))
+                self.assertFalse((root / "missing").exists())
+                link.unlink()
+
+    def test_existing_and_dangling_archive_links_are_preserved(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "target"
+            for suffix in (".zip", ".tar.gz"):
+                link = root / f"archive{suffix}"
+                try:
+                    link.symlink_to(target)
+                except OSError as error:
+                    self.skipTest(f"file symlinks are unavailable: {error}")
+                with self.assertRaises(FileExistsError):
+                    release_archives.build_release_archives(
+                        commit="HEAD", prefix="safe/", output_base=root / "archive", cwd=ROOT,
+                    )
+                self.assertTrue(link.is_symlink())
+                self.assertFalse(target.exists())
+                link.unlink()
+
+    def test_preflight_rejects_resolved_parent_aliases_without_writing(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            outside = root / "outside"
+            outside.mkdir()
+            link = root / "linked"
+            try:
+                link.symlink_to(outside, target_is_directory=True)
+            except OSError as error:
+                self.skipTest(f"directory symlinks are unavailable: {error}")
+            before = sorted(path.name for path in root.iterdir())
+            original = Path.is_symlink
+
+            # Junction-like aliases can resolve elsewhere without being reported
+            # as symbolic links. Exercise the separate resolved-parent invariant.
+            def is_symlink(path: Path) -> bool:
+                return False if path == link else original(path)
+
+            with mock.patch.object(Path, "is_symlink", is_symlink), self.assertRaisesRegex(
+                ValueError, "symbolic links"
+            ):
+                release_archives._preflight_outputs(link / "archive", root, relative=False)
+            self.assertEqual(before, sorted(path.name for path in root.iterdir()))
+            self.assertEqual([], list(outside.iterdir()))
+            self.assertTrue(link.is_symlink())
+
+    def test_preflight_refuses_a_relative_destination_outside_the_repository(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            repository = root / "checkout"
+            repository.mkdir()
+            before = sorted(str(path.relative_to(root)) for path in root.rglob("*"))
+            with self.assertRaisesRegex(ValueError, "inside the repository"):
+                release_archives._preflight_outputs(
+                    root / "outside" / "archive", repository, relative=True
+                )
+            self.assertEqual(before, sorted(str(path.relative_to(root)) for path in root.rglob("*")))
+
+    def test_component_must_be_a_tree_at_the_selected_historical_commit(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            repository = root / "checkout"
+            repository.mkdir()
+            subprocess.run(["git", "init", "--quiet", "-b", "main"], cwd=repository, check=True)
+            for key, value in (
+                ("user.email", "test@example.invalid"),
+                ("user.name", "Release Policy Test"),
+                ("maintenance.auto", "false"),
+            ):
+                subprocess.run(["git", "config", key, value], cwd=repository, check=True)
+            component = repository / "component"
+            component.write_text("formerly a file\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=repository, check=True)
+            subprocess.run(["git", "commit", "--quiet", "-m", "blob"], cwd=repository, check=True)
+            old_commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repository,
+                check=True, capture_output=True, text=True,
+            ).stdout.strip()
+            component.unlink()
+            component.mkdir()
+            (component / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=repository, check=True)
+            subprocess.run(["git", "commit", "--quiet", "-m", "tree"], cwd=repository, check=True)
+            before = sorted(str(path.relative_to(root)) for path in root.rglob("*"))
+            with self.assertRaisesRegex(ValueError, "tree at the selected commit"):
+                release_archives.build_release_archives(
+                    commit=old_commit, prefix="safe/", source_directory="component",
+                    output_base=root / "outside" / "archive", cwd=repository,
+                )
+            self.assertEqual(before, sorted(str(path.relative_to(root)) for path in root.rglob("*")))
+
+    def test_failed_archive_generation_removes_only_partial_outputs(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            keep = root / "keep"
+            keep.write_bytes(b"keep")
+            original = release_archives.subprocess.run
+
+            def fail_archive(args, **kwargs):
+                if "archive" in args:
+                    output = next(argument.removeprefix("--output=") for argument in args
+                                  if argument.startswith("--output="))
+                    Path(output).write_bytes(b"partial")
+                    raise subprocess.CalledProcessError(1, args)
+                return original(args, **kwargs)
+
+            with mock.patch.object(release_archives.subprocess, "run", side_effect=fail_archive), \
+                    self.assertRaises(subprocess.CalledProcessError):
+                release_archives.build_release_archives(
+                    commit="HEAD", prefix="safe/", output_base=root / "archive", cwd=ROOT,
+                )
+            self.assertEqual([keep], list(root.iterdir()))
+            self.assertEqual(b"keep", keep.read_bytes())
 
 
 class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):

@@ -21,6 +21,7 @@ from datetime import date
 from itertools import takewhile
 from pathlib import Path
 
+from git_revision import resolve_commit
 from verify_skills import VerificationError, require_tracked_regular_file
 
 INDEX_PATH = "reviews/index.json"
@@ -561,8 +562,6 @@ def _entries_by_id(document: object) -> dict[str, object]:
 
 
 def _base_document(root: Path, base: str, path: str) -> bytes | None:
-    if _git(root, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}").returncode != 0:
-        raise VerificationError(f"base revision is not a commit in this checkout: {base}")
     result = subprocess.run(
         ["git", "show", f"{base}:{path}"],
         cwd=root,
@@ -582,7 +581,11 @@ def require_append_only(
     current_index: object,
     current_register: dict[str, KnownUnknown],
 ) -> None:
-    raw_index = _base_document(root, base, INDEX_PATH)
+    try:
+        commit = resolve_commit(root, base)
+    except ValueError as error:
+        raise VerificationError(f"base revision is not a commit in this checkout: {base}") from error
+    raw_index = _base_document(root, commit, INDEX_PATH)
     if raw_index is not None:
         base_index = load_index_document(raw_index, label=f"base {base} review index")
         parse_index(base_index)
@@ -592,7 +595,7 @@ def require_append_only(
                 raise VerificationError(
                     f"review {review_id} was listed at {base} and must not change or disappear"
                 )
-    raw_register = _base_document(root, base, KNOWN_UNKNOWNS_PATH)
+    raw_register = _base_document(root, commit, KNOWN_UNKNOWNS_PATH)
     if raw_register is None:
         return
     base_register = parse_known_unknowns(canonical_text(raw_register, label=f"base {base} register"))
