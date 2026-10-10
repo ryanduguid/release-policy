@@ -8,12 +8,16 @@ command -v python3 >/dev/null 2>&1 || export PYTHON=python
 
 run_case() {
   local name="$1"; shift
+  local started=$SECONDS
   if "$@" >/dev/null 2>&1; then echo "ok   $name"; else echo "FAIL $name"; FAILURES=$((FAILURES+1)); fi
+  printf 'elapsed %ss: %s\n' "$((SECONDS-started))" "$name"
 }
 
 expect_fail() {
   local name="$1"; shift
+  local started=$SECONDS
   if "$@" >/dev/null 2>&1; then echo "FAIL $name (expected failure)"; FAILURES=$((FAILURES+1)); else echo "ok   $name"; fi
+  printf 'elapsed %ss: %s\n' "$((SECONDS-started))" "$name"
 }
 
 make_repo() {
