@@ -19,6 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from git_revision import resolve_commit
+
 ROOT = Path(__file__).resolve().parents[1]
 FAMILIES = {
     "release-python": ".github/workflows/release-python.yml",
@@ -30,6 +32,7 @@ FAMILIES = {
 WORKFLOW = re.compile(r"\.github/workflows/[\w.-]+\.yml")
 ACTION = re.compile(r"\.github/actions/[\w.-]+")
 SCRIPT = re.compile(r"\b[\w-]+\.(?:py|sh)\b")
+PYTHON_IMPORT = re.compile(r"^\s*(?:from|import)\s+([\w]+)\b", re.MULTILINE)
 
 
 def git(root: Path, *args: str) -> str:
@@ -39,6 +42,10 @@ def git(root: Path, *args: str) -> str:
 
 def inputs(entry: str, commit: str, root: Path = ROOT) -> set[str]:
     """Every file the family rooted at `entry` executes at `commit`."""
+    return _inputs(entry, resolve_commit(root, commit), root)
+
+
+def _inputs(entry: str, commit: str, root: Path) -> set[str]:
     tree = set(git(root, "ls-tree", "-r", "--name-only", commit).splitlines())
     scripts = {Path(path).name: path for path in tree if path.startswith("scripts/")}
     found: set[str] = set()
@@ -54,14 +61,19 @@ def inputs(entry: str, commit: str, root: Path = ROOT) -> set[str]:
         for action in ACTION.findall(text):
             queue += [member for member in tree if member.startswith(action + "/")]
         queue += [scripts[name] for name in SCRIPT.findall(text) if name in scripts]
+        if path.endswith(".py"):
+            queue += [scripts[name + ".py"] for name in PYTHON_IMPORT.findall(text)
+                      if name + ".py" in scripts]
     return found
 
 
 def changed(old: str, new: str, root: Path = ROOT) -> dict[str, list[str]]:
     """For each family, the files it executes that differ between the 2 commits."""
+    old = resolve_commit(root, old)
+    new = resolve_commit(root, new)
     result = {}
     for family, entry in FAMILIES.items():
-        paths = sorted(inputs(entry, old, root) | inputs(entry, new, root))
+        paths = sorted(_inputs(entry, old, root) | _inputs(entry, new, root))
         # With no paths, git diff would compare the whole tree: a family absent from both moves nothing.
         result[family] = git(root, "diff", "--name-only", old, new, "--", *paths).split() if paths else []
     return result
@@ -71,7 +83,12 @@ def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print(__doc__.split("\n\n")[1], file=sys.stderr)
         return 2
-    for family, paths in changed(argv[0], argv[1]).items():
+    try:
+        families = changed(argv[0], argv[1])
+    except ValueError as error:
+        print(f"pin_families: {error}", file=sys.stderr)
+        return 1
+    for family, paths in families.items():
         print(f"{family}: {'re-pin (' + ', '.join(paths) + ')' if paths else 'keep the pin'}")
     return 0
 

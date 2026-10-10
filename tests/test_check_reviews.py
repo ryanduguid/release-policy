@@ -534,6 +534,9 @@ class CheckReviewsTests(unittest.TestCase):
         self._git("commit", "--quiet", "-m", "ledgers")
 
         self._assert_refused("base revision is not a commit", base="no-such-ref")
+        for base in ("--help", "--format=%ct", "HEAD^{tree}"):
+            with self.subTest(base=base):
+                self._assert_refused("base revision is not a commit", base=base)
         check_reviews.check_consumer(self.root, base=self.head)
         check_reviews.check_consumer(self.root, base="HEAD")
 
@@ -567,6 +570,23 @@ class CheckReviewsTests(unittest.TestCase):
         self._git("commit", "--quiet", "-m", "index only")
         self._install()
         check_reviews.check_consumer(self.root, base="HEAD")
+
+    def test_both_historical_ledgers_use_the_same_resolved_commit(self) -> None:
+        self._install()
+        self._git("commit", "--quiet", "-m", "ledgers")
+        base = self._git("rev-parse", "HEAD").stdout.strip()
+        self._git("update-ref", "refs/heads/moving", base)
+        original = check_reviews._base_document
+        observed = []
+
+        def move_ref(root, commit, path):
+            observed.append(commit)
+            self._git("update-ref", "-d", "refs/heads/moving")
+            return original(root, commit, path)
+
+        with mock.patch.object(check_reviews, "_base_document", side_effect=move_ref):
+            check_reviews.check_consumer(self.root, base="moving")
+        self.assertEqual([base, base], observed)
 
 
 if __name__ == "__main__":

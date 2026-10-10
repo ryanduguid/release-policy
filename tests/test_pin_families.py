@@ -80,6 +80,33 @@ class PinFamilyTests(unittest.TestCase):
         self.assertEqual(pin_families.inputs(".github/workflows/verify-skills.yml", head, self.root), {
             ".github/workflows/verify-skills.yml", "scripts/verify_skills.py"})
 
+    def test_option_revisions_fail_without_a_keep_pin_verdict(self) -> None:
+        for revision in ("--help", "--format=%ct", "missing", "HEAD^{tree}"):
+            with self.subTest(revision=revision), self.assertRaises(ValueError):
+                pin_families.changed(revision, "HEAD", self.root)
+            with self.subTest(direct=revision), self.assertRaises(ValueError):
+                pin_families.inputs(pin_families.FAMILIES["release-python"], revision, self.root)
+        with redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()):
+            self.assertNotEqual(0, pin_families.main(["--help", "--help"]))
+        self.assertNotIn("keep the pin", out.getvalue())
+
+    def test_ref_is_resolved_before_tree_and_diff_operations(self) -> None:
+        before = self.commits[0]
+        after = self.commit({"scripts/python_release.py": "print('new')\n"})
+        self.git("update-ref", "refs/heads/moving", before)
+        original = pin_families.git
+        observed = []
+
+        def move_ref(root: Path, *args: str) -> str:
+            observed.append(args)
+            self.git("update-ref", "refs/heads/moving", after)
+            return original(root, *args)
+
+        with mock.patch.object(pin_families, "git", side_effect=move_ref):
+            result = pin_families.changed("moving", after, self.root)
+        self.assertTrue(result["release-python"])
+        self.assertTrue(all("moving" not in argument for args in observed for argument in args))
+
     def test_verifier_changes_move_both_skill_families(self) -> None:
         for path, text in {
             ".github/workflows/verify-skills.yml": FILES[".github/workflows/verify-skills.yml"]
@@ -88,6 +115,14 @@ class PinFamilyTests(unittest.TestCase):
         }.items():
             with self.subTest(path=path):
                 self.assertEqual(self.moved({path: text}), {"release-skills", "verify-skills"})
+
+    def test_imported_policy_helpers_move_the_families_that_execute_them(self) -> None:
+        self.commit({
+            "scripts/python_release.py": "from git_revision import resolve_commit\n",
+            "scripts/git_revision.py": "def resolve_commit(): return 'first'\n",
+        })
+        self.assertEqual(self.moved({"scripts/git_revision.py": "def resolve_commit(): return 'second'\n"}),
+                         {"release-python", "release-archive"})
 
     def test_release_only_changes_preserve_the_verifier_pin(self) -> None:
         path = ".github/workflows/release-skills.yml"
