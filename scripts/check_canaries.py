@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -37,6 +40,29 @@ MAX_RUN_PAGES = 10
 # starts, so a pin that matches the consumer's workflow byte for byte can still
 # be dead after a history rewrite of this repository.
 _REACHABLE_STATUSES = frozenset({"identical", "behind"})
+# From 1 October 2026 GitHub deletes workflow runs older than the repository's
+# retention period, at most 90 days for a public repository. A recorded run
+# that returns 404 only after that, plus a day's margin for long runs, has
+# expired; an earlier 404 is a missing run and stays an error.
+RETENTION = timedelta(days=90)
+EXPIRY_MARGIN = timedelta(days=1)
+_STARTED_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
+# The release-policy workflow whose certificate signs each release family's
+# provenance, read from verified attestations of the 4 October 2026 releases.
+_SIGNER_WORKFLOWS = {
+    "archive": ".github/workflows/publish-archives.yml",
+    "python": ".github/workflows/release-python.yml",
+    "skills": ".github/workflows/publish-archives.yml",
+}
+SLSA_PROVENANCE = "https://slsa.dev/provenance/v1"
+
+
+class GitHubError(RuntimeError):
+    """A failed GitHub read, with the HTTP status when GitHub returned one."""
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass(frozen=True)
@@ -63,6 +89,8 @@ class Canary:
 class CheckResult:
     errors: tuple[str, ...]
     warnings: tuple[str, ...]
+    # Verified conditions a reviewer should know about; never fail the audit.
+    notices: tuple[str, ...] = ()
 
 
 def _mapping(
@@ -174,6 +202,9 @@ def parse_manifest(document: object) -> tuple[Canary, ...]:
                 raise ValueError("verify evidence must use main")
         elif not _matches_release_tag(ref, tag_prefix):
             raise ValueError(f"{family} release evidence must use a canonical version tag")
+        started_at = _text(evidence_raw["started_at"], label=f"{family}.evidence.started_at")
+        if _STARTED_AT.fullmatch(started_at) is None:
+            raise ValueError(f"{family}.evidence.started_at must be a UTC timestamp")
 
         canaries.append(
             Canary(
@@ -193,10 +224,7 @@ def parse_manifest(document: object) -> tuple[Canary, ...]:
                     policy_sha=_sha(
                         evidence_raw["policy_sha"], label=f"{family}.evidence.policy_sha"
                     ),
-                    started_at=_text(
-                        evidence_raw["started_at"],
-                        label=f"{family}.evidence.started_at",
-                    ),
+                    started_at=started_at,
                 ),
                 tag_prefix=tag_prefix,
             )
@@ -282,14 +310,121 @@ def _latest_relevant_run(payload: object, canary: Canary) -> dict[str, object] |
     return None
 
 
+def _started_at(canary: Canary) -> datetime:
+    return datetime.strptime(canary.evidence.started_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc
+    )
+
+
+def _review_instruction(canary: Canary, newer: str) -> str:
+    return (
+        f"NEWER_RELEASE_REVIEW_REQUIRED: recorded run {canary.evidence.run_id} "
+        f"({canary.evidence.ref}) is overtaken by {newer}. Review the newer release's "
+        "run, source SHA and policy pin, record it in canaries.json in canonical "
+        "form, then rerun the live audit."
+    )
+
+
+def _release_freshness_errors(
+    canary: Canary, fetch_json: Callable[[str], object], prefix: str
+) -> list[str]:
+    """Check the published releases once the recorded run has expired.
+
+    Runs disappear after retention, so an empty run listing cannot show that no
+    newer release happened. Published releases stay, and every release family
+    publishes one, so the newest release in the family's tag namespace by
+    publication time has to be the recorded one.
+    """
+    releases: list[dict[str, object]] = []
+    try:
+        for page in range(1, MAX_RUN_PAGES + 1):
+            payload = fetch_json(
+                f"repos/{canary.repository}/releases?per_page=100&page={page}"
+            )
+            if not isinstance(payload, list):
+                return [f"{prefix}: release listing is not a list"]
+            releases.extend(item for item in payload if isinstance(item, dict))
+            if len(payload) < 100:
+                break
+        else:
+            return [
+                f"{prefix}: more than {MAX_RUN_PAGES} pages of releases were read "
+                "without reaching the end"
+            ]
+    except RuntimeError as error:
+        return [f"{prefix}: could not read releases: {error}"]
+    relevant = [
+        release
+        for release in releases
+        if release.get("draft") is False
+        and _matches_release_tag(release.get("tag_name"), canary.tag_prefix)
+        and isinstance(release.get("published_at"), str)
+    ]
+    if not relevant:
+        return [f"{prefix}: no published release in the family's tag namespace"]
+    newest = max(relevant, key=lambda release: str(release["published_at"]))
+    newest_tag = newest.get("tag_name")
+    if newest_tag != canary.evidence.ref:
+        return [f"{prefix}: {_review_instruction(canary, f'release {newest_tag!r}')}"]
+    return []
+
+
+def _expired_verify_errors(
+    canary: Canary,
+    latest: dict[str, object],
+    fetch_json: Callable[[str], object],
+    prefix: str,
+) -> list[str]:
+    """Require a later, readable verification success once the recorded one expired.
+
+    The expired record stays a reviewed pointer; current verification is shown by
+    a different success that can still be read in full.
+    """
+    run_id = latest.get("id")
+    if run_id == canary.evidence.run_id or str(latest.get("run_started_at") or "") <= (
+        canary.evidence.started_at
+    ):
+        return [
+            f"{prefix}: evidence run {canary.evidence.run_id} has expired and no later "
+            "success replaces it; run the verification workflow on main and review it"
+        ]
+    try:
+        detail = fetch_json(f"repos/{canary.repository}/actions/runs/{run_id}")
+    except RuntimeError as error:
+        return [f"{prefix}: could not read current success {run_id!r}: {error}"]
+    if not isinstance(detail, dict):
+        return [f"{prefix}: current success {run_id!r} response is not an object"]
+    expected = {
+        "conclusion": "success",
+        "head_branch": "main",
+        "path": canary.workflow_path,
+    }
+    return [
+        f"{prefix}: current success {run_id!r} {field} {detail.get(field)!r} != {value!r}"
+        for field, value in expected.items()
+        if detail.get(field) != value
+    ]
+
+
 def check_live(
     canaries: Sequence[Canary],
     *,
     fetch_json: Callable[[str], object],
     fetch_text: Callable[[str], str],
+    verify_provenance: Callable[[Canary], None] | None = None,
+    now: datetime | None = None,
 ) -> CheckResult:
+    """Audit each canary against GitHub.
+
+    ``verify_provenance`` raises RuntimeError unless the recorded release's signed
+    provenance verifies. When supplied it runs for every release family, so the
+    path an expired run depends on is exercised every week; without it an
+    expired release run is an error.
+    """
+    current = now or datetime.now(timezone.utc)
     errors: list[str] = []
     warnings: list[str] = []
+    notices: list[str] = []
     for canary in canaries:
         prefix = f"{canary.family} ({canary.repository})"
         workflow_endpoint = (
@@ -326,14 +461,23 @@ def check_live(
                 )
 
         run_endpoint = f"repos/{canary.repository}/actions/runs/{canary.evidence.run_id}"
+        run_expired = False
         try:
             raw_run = fetch_json(run_endpoint)
         except RuntimeError as error:
-            errors.append(f"{prefix}: could not read evidence run: {error}")
             raw_run = None
-        if not isinstance(raw_run, dict):
+            if getattr(error, "status", None) != 404:
+                errors.append(f"{prefix}: could not read evidence run: {error}")
+            elif current - _started_at(canary) > RETENTION + EXPIRY_MARGIN:
+                run_expired = True
+            else:
+                errors.append(
+                    f"{prefix}: evidence run {canary.evidence.run_id} is missing "
+                    f"before its retention period ended (started {canary.evidence.started_at})"
+                )
+        if raw_run is not None and not isinstance(raw_run, dict):
             errors.append(f"{prefix}: evidence run response is not an object")
-        else:
+        elif isinstance(raw_run, dict):
             expected = {
                 "conclusion": "success",
                 "head_branch": canary.evidence.ref,
@@ -353,56 +497,90 @@ def check_live(
                     f"{canary.evidence.policy_sha}"
                 )
 
-        workflow_name = Path(canary.workflow_path).name
-        # Page through the successes until the relevant run appears or the
-        # pages run out. Reading one page let a namespaced release run hide
-        # behind newer successes from other namespaces.
-        latest = None
-        partial_page_seen = False
-        try:
-            for page in range(1, MAX_RUN_PAGES + 1):
-                runs_endpoint = (
-                    f"repos/{canary.repository}/actions/workflows/{workflow_name}/runs"
-                    f"?status=success&per_page=100&page={page}"
-                )
-                payload = fetch_json(runs_endpoint)
-                latest = _latest_relevant_run(payload, canary)
-                runs = payload.get("workflow_runs") if isinstance(payload, dict) else None
-                if latest is not None:
-                    break
-                if not isinstance(runs, list) or len(runs) < 100:
-                    partial_page_seen = True
-                    break
-            if latest is None and not partial_page_seen:
+        if canary.family in _RELEASE_FAMILIES and verify_provenance is not None:
+            try:
+                verify_provenance(canary)
+            except RuntimeError as error:
+                errors.append(f"{prefix}: release provenance not verified: {error}")
+            else:
+                if run_expired:
+                    notices.append(
+                        f"{prefix}: evidence run {canary.evidence.run_id} has expired; "
+                        f"release {canary.evidence.ref} and its signed provenance were "
+                        "verified instead. The run's start time and conclusion can no "
+                        "longer be checked."
+                    )
+
+        if run_expired and canary.family in _RELEASE_FAMILIES:
+            if verify_provenance is None:
                 errors.append(
-                    f"{prefix}: more than {MAX_RUN_PAGES} pages of successful runs "
-                    "were searched without finding the relevant one"
+                    f"{prefix}: evidence run {canary.evidence.run_id} has expired and "
+                    "no provenance verifier was supplied"
                 )
-        except RuntimeError as error:
-            errors.append(f"{prefix}: could not read latest successes: {error}")
-            latest = None
-        if latest is None and partial_page_seen:
-            errors.append(f"{prefix}: no relevant successful workflow run was returned")
-        elif latest is None:
-            # The pagination-exceeded error above already names this condition;
-            # nothing more can be compared without a run.
-            pass
-        elif canary.family in _RELEASE_FAMILIES:
-            if latest.get("id") != canary.evidence.run_id:
-                errors.append(
-                    f"{prefix}: latest successful run {latest.get('id')!r} != recorded "
-                    f"{canary.evidence.run_id}"
-                )
+            errors.extend(_release_freshness_errors(canary, fetch_json, prefix))
         else:
-            # The recorded run stays the reviewed example, checked above like any
-            # other. Freshness comes from the live listing instead: the newest
-            # success has to be running the pin the consumer declares today.
-            observed_pin = _referenced_policy_sha(latest, canary)
-            if observed_pin != canary.current_policy_sha:
-                errors.append(
-                    f"{prefix}: latest successful run {latest.get('id')!r} used policy "
-                    f"pin {observed_pin!r} != current {canary.current_policy_sha}"
-                )
+            workflow_name = Path(canary.workflow_path).name
+            # Page through the successes until the relevant run appears or the
+            # pages run out. Reading one page let a namespaced release run hide
+            # behind newer successes from other namespaces.
+            latest = None
+            partial_page_seen = False
+            try:
+                for page in range(1, MAX_RUN_PAGES + 1):
+                    runs_endpoint = (
+                        f"repos/{canary.repository}/actions/workflows/{workflow_name}/runs"
+                        f"?status=success&per_page=100&page={page}"
+                    )
+                    payload = fetch_json(runs_endpoint)
+                    latest = _latest_relevant_run(payload, canary)
+                    runs = payload.get("workflow_runs") if isinstance(payload, dict) else None
+                    if latest is not None:
+                        break
+                    if not isinstance(runs, list) or len(runs) < 100:
+                        partial_page_seen = True
+                        break
+                if latest is None and not partial_page_seen:
+                    errors.append(
+                        f"{prefix}: more than {MAX_RUN_PAGES} pages of successful runs "
+                        "were searched without finding the relevant one"
+                    )
+            except RuntimeError as error:
+                errors.append(f"{prefix}: could not read latest successes: {error}")
+                latest = None
+            if latest is None and partial_page_seen:
+                errors.append(f"{prefix}: no relevant successful workflow run was returned")
+            elif latest is None:
+                # The pagination-exceeded error above already names this condition;
+                # nothing more can be compared without a run.
+                pass
+            elif canary.family in _RELEASE_FAMILIES:
+                if latest.get("id") != canary.evidence.run_id:
+                    errors.append(
+                        f"{prefix}: latest successful run {latest.get('id')!r} != recorded "
+                        f"{canary.evidence.run_id}; "
+                        + _review_instruction(
+                            canary, f"run {latest.get('id')!r} ({latest.get('head_branch')!r})"
+                        )
+                    )
+            else:
+                # The recorded run stays the reviewed example, checked above like any
+                # other. Freshness comes from the live listing instead: the newest
+                # success has to be running the pin the consumer declares today.
+                observed_pin = _referenced_policy_sha(latest, canary)
+                if observed_pin != canary.current_policy_sha:
+                    errors.append(
+                        f"{prefix}: latest successful run {latest.get('id')!r} used policy "
+                        f"pin {observed_pin!r} != current {canary.current_policy_sha}"
+                    )
+                elif run_expired:
+                    expiry_errors = _expired_verify_errors(canary, latest, fetch_json, prefix)
+                    errors.extend(expiry_errors)
+                    if not expiry_errors:
+                        notices.append(
+                            f"{prefix}: evidence run {canary.evidence.run_id} has expired; "
+                            f"current success {latest.get('id')!r} on the current pin "
+                            "was verified instead."
+                        )
 
         if (
             canary.family in _RELEASE_FAMILIES
@@ -412,22 +590,127 @@ def check_live(
                 f"{prefix}: current pin lacks release evidence; latest success used "
                 f"{canary.evidence.policy_sha}"
             )
-    return CheckResult(errors=tuple(errors), warnings=tuple(warnings))
+    return CheckResult(
+        errors=tuple(errors), warnings=tuple(warnings), notices=tuple(notices)
+    )
+
+
+_STATUS_LINE = re.compile(r"HTTP/[0-9.]+ ([0-9]{3})")
 
 
 def _gh_json(endpoint: str) -> object:
+    # --include puts the status line first, so a 404 is read from GitHub's
+    # response rather than guessed from error text.
     result = subprocess.run(
-        ["gh", "api", endpoint],
+        ["gh", "api", "--include", endpoint],
         capture_output=True,
         check=False,
         text=True,
     )
+    head, _, body = result.stdout.partition("\n\n")
+    match = _STATUS_LINE.match(head)
+    status = int(match.group(1)) if match else None
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or f"gh api failed for {endpoint}")
+        raise GitHubError(
+            result.stderr.strip() or f"gh api failed for {endpoint}", status=status
+        )
     try:
-        return json.loads(result.stdout)
+        return json.loads(body)
     except json.JSONDecodeError as error:
-        raise RuntimeError(f"GitHub returned invalid JSON for {endpoint}") from error
+        raise GitHubError(f"GitHub returned invalid JSON for {endpoint}", status) from error
+
+
+def _run_gh(arguments: Sequence[str]) -> str:
+    result = subprocess.run(
+        ["gh", *arguments], capture_output=True, check=False, text=True
+    )
+    if result.returncode != 0:
+        raise GitHubError(result.stderr.strip() or f"gh {arguments[0]} failed")
+    return result.stdout
+
+
+def _tag_commit(repository: str, tag: str) -> str | None:
+    target = _gh_json(f"repos/{repository}/git/ref/tags/{tag}")
+    for _ in range(5):
+        obj = target.get("object") if isinstance(target, dict) else None
+        if not isinstance(obj, dict):
+            return None
+        if obj.get("type") == "commit":
+            sha = obj.get("sha")
+            return sha if isinstance(sha, str) else None
+        if obj.get("type") != "tag":
+            return None
+        target = _gh_json(f"repos/{repository}/git/tags/{obj.get('sha')}")
+    return None
+
+
+def _verify_provenance(canary: Canary) -> None:
+    """Verify the recorded release's signed SLSA provenance, or raise RuntimeError.
+
+    The certificate binds the signer workflow and its commit (the policy pin),
+    the source tag and commit, and the run; gh checks the first four against the
+    flags below, and the run is matched exactly here. The release and its tag
+    are read live, so a later move or deletion fails.
+    """
+    repository, ref = canary.repository, canary.evidence.ref
+    release = _gh_json(f"repos/{repository}/releases/tags/{ref}")
+    if (
+        not isinstance(release, dict)
+        or release.get("draft") is not False
+        or release.get("immutable") is not True
+    ):
+        raise RuntimeError(f"release {ref} is not a published immutable release")
+    tag_sha = _tag_commit(repository, ref)
+    if tag_sha != canary.evidence.head_sha:
+        raise RuntimeError(f"tag {ref} points to {tag_sha!r}, not {canary.evidence.head_sha}")
+    assets = [
+        asset
+        for asset in release.get("assets") or []
+        if isinstance(asset, dict) and str(asset.get("name", "")).endswith(".tar.gz")
+    ]
+    if len(assets) != 1:
+        raise RuntimeError(f"release {ref} has {len(assets)} .tar.gz assets, expected 1")
+    name = str(assets[0]["name"])
+    with tempfile.TemporaryDirectory() as directory:
+        _run_gh(
+            ["release", "download", ref, "--repo", repository,
+             "--pattern", name, "--dir", directory]
+        )
+        path = Path(directory) / name
+        digest = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest != assets[0].get("digest"):
+            raise RuntimeError(f"{name} digest {digest} != release {assets[0].get('digest')!r}")
+        output = _run_gh(
+            [
+                "attestation", "verify", str(path),
+                "--repo", repository,
+                "--signer-workflow",
+                f"ryanduguid/release-policy/{_SIGNER_WORKFLOWS[canary.family]}",
+                "--signer-digest", canary.evidence.policy_sha,
+                "--source-ref", f"refs/tags/{ref}",
+                "--source-digest", canary.evidence.head_sha,
+                "--predicate-type", SLSA_PROVENANCE,
+                "--format", "json",
+            ]
+        )
+    if not _names_run(json.loads(output), repository, canary.evidence.run_id):
+        raise RuntimeError(f"no verified attestation of {name} names run {canary.evidence.run_id}")
+
+
+def _names_run(results: object, repository: str, run_id: int) -> bool:
+    """True when a verified certificate's run invocation is exactly this run."""
+    expected = re.compile(
+        re.escape(f"https://github.com/{repository}/actions/runs/{run_id}/attempts/")
+        + r"[1-9][0-9]*\Z"
+    )
+    for result in results if isinstance(results, list) else []:
+        try:
+            uri = result["verificationResult"]["signature"]["certificate"]["runInvocationURI"]
+        except (KeyError, TypeError):
+            continue
+        if isinstance(uri, str) and expected.fullmatch(uri):
+            return True
+    return False
 
 
 def _gh_text(endpoint: str) -> str:
@@ -467,7 +750,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"canary manifest valid: {len(canaries)} release families")
         return 0
 
-    result = check_live(canaries, fetch_json=_gh_json, fetch_text=_gh_text)
+    result = check_live(
+        canaries,
+        fetch_json=_gh_json,
+        fetch_text=_gh_text,
+        verify_provenance=_verify_provenance,
+    )
+    for notice in result.notices:
+        print(f"INFO {notice}")
     for warning in result.warnings:
         print(f"WARN {warning}")
     for error in result.errors:
