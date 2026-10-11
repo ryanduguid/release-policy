@@ -50,7 +50,7 @@ CANONICAL_SHA256 = {
     "docs/archive-consumers.md": "a44fe21608b94ab1d29f2c795e65be2a6295c46cbe2dcc705c5b692aeab0e95d",
     "docs/skill-consumers.md": "db6d8ae9d72582cf472d60afa2cc7d5313740d2a52f06ef9f21d749c2d701456",
     "docs/consumer-prerequisites.md": "4e0070c583a7ad88e52b9bf5810526d314c51ab24a2b2e5df2df6056becff97c",
-    "docs/guarantees-and-evidence.md": "55591352b70163ddf1af06eac5712c24cd5b15a02941a37188b3284fc4ec6038",
+    "docs/guarantees-and-evidence.md": "ddca73f948d7b19c40a7db0bb4bd8e4f58066baf41ee634732bfc54f95f3756d",
     "docs/egress-check.md": "2d8f86aad40c65edec23d370cbfb39864cf5a101d24839055c7b2718592f5994",
     "docs/re-pinning.md": "eb1b361cf717bcbabd383e0cf5592998fe5b045ae90982b0c6dd84eda626fe0f",
     "SECURITY.md": "9f9cea868cdb60a00c98ebaa892125d83a94fba1589d55227cd239c6af7804f9",
