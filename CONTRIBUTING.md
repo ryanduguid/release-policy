@@ -10,7 +10,8 @@ reviewed schedule.
 ## Local checks
 
 Python 3.14 or newer; `scripts/python_release.py` reads pyproject metadata
-with `tomllib`. CI runs the suite on Python 3.14. Install the pinned tools, then run what `.github/workflows/ci.yml` runs:
+with `tomllib`. CI runs the suite on Python 3.14 and 3.15. Install the pinned
+tools, then run what `.github/workflows/ci.yml` runs:
 
 ```bash
 python -m pip install --require-hashes --only-binary :all: --requirement requirements-ci.txt
