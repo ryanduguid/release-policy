@@ -681,6 +681,8 @@ class CanaryRetentionTests(unittest.TestCase):
         def retained(endpoint: str) -> object:
             if "/compare/" in endpoint:
                 return {"status": "behind"}
+            if "/releases?" in endpoint:
+                return [release("v1.2.3", "2026-08-27T00:05:00Z")]
             if endpoint.endswith("/actions/runs/123"):
                 return run_payload()
             return {"workflow_runs": [run_payload()]}
@@ -696,6 +698,8 @@ class CanaryRetentionTests(unittest.TestCase):
         def fetch_json(endpoint: str) -> object:
             if "/compare/" in endpoint:
                 return {"status": "behind"}
+            if "/releases?" in endpoint:
+                return [release("v1.2.3", "2026-08-27T00:05:00Z")]
             if endpoint.endswith("/actions/runs/123"):
                 return run_payload()
             return {"workflow_runs": [run_payload()]}
@@ -806,6 +810,56 @@ class CanaryRetentionTests(unittest.TestCase):
             ],
         )
 
+    def test_a_newer_release_without_a_successful_run_fails_while_the_run_exists(self) -> None:
+        releases = [
+            release("v1.2.3", "2026-08-27T00:05:00Z"),
+            release("v1.2.4", "2026-09-30T00:00:00Z"),
+            release("other-tool/v9.0.0", "2026-10-01T00:00:00Z"),
+        ]
+
+        def fetch_json(endpoint: str) -> object:
+            if "/compare/" in endpoint:
+                return {"status": "behind"}
+            if "/releases?" in endpoint:
+                return releases
+            if endpoint.endswith("/actions/runs/123"):
+                return run_payload()
+            return {"workflow_runs": [run_payload()]}
+
+        result = audit(manifest(), fetch_json, verifier=accept, now=BEFORE_EXPIRY)
+        self.assertTrue(any("NEWER_RELEASE_REVIEW_REQUIRED" in e and "v1.2.4" in e
+                            for e in result.errors), result.errors)
+        releases.pop(1)
+        result = audit(manifest(), fetch_json, verifier=accept, now=BEFORE_EXPIRY)
+        self.assertEqual(result.errors, ())
+
+    def test_expired_verify_run_trusts_only_the_replacement_run_record(self) -> None:
+        later = verify_run(789, "2026-11-20T00:00:00Z")
+        older_pin = verify_run(789, "2026-11-20T00:00:00Z", policy_sha=OLDER_SHA)
+        no_pin = dict(later)
+        del no_pin["referenced_workflows"]
+        cases = [
+            ("id 790 != 789", dict(later, id=790)),
+            ("used policy pin", older_pin),
+            ("used policy pin", no_pin),
+            ("is not later", dict(later, run_started_at=RECORDED)),
+            ("is not later", dict(later, run_started_at="soon")),
+        ]
+        for expected, detail in cases:
+            result = audit(
+                manifest(family="verify", ref="main"),
+                expired_fetch(listing={"workflow_runs": [later]}, details={789: detail}),
+                pin=VERIFY_PIN,
+            )
+            self.assertTrue(any(expected in e for e in result.errors), (expected, result.errors))
+            self.assertEqual(result.notices, ())
+        result = audit(
+            manifest(family="verify", ref="main"),
+            expired_fetch(listing={"workflow_runs": [dict(later, id="789")]}),
+            pin=VERIFY_PIN,
+        )
+        self.assertTrue(any("no later success" in e for e in result.errors), result.errors)
+
     def test_main_prints_notices_without_failing_strict_mode(self) -> None:
         result = check_canaries.CheckResult(errors=(), warnings=(), notices=("expired",))
         with mock.patch.object(check_canaries, "check_live", return_value=result), \
@@ -835,6 +889,14 @@ class GitHubReadTests(unittest.TestCase):
             run.return_value = completed("HTTP/2.0 200 OK\n\nnot json")
             with self.assertRaisesRegex(check_canaries.GitHubError, "invalid JSON"):
                 check_canaries._gh_json("repos/x")
+
+    def test_gh_text_returns_raw_content_or_raises(self) -> None:
+        with mock.patch.object(check_canaries.subprocess, "run") as run:
+            run.return_value = completed("uses: x@y")
+            self.assertEqual(check_canaries._gh_text("repos/x/contents/f"), "uses: x@y")
+            run.return_value = completed("", 1, "")
+            with self.assertRaisesRegex(RuntimeError, "gh api failed"):
+                check_canaries._gh_text("repos/x/contents/f")
 
     def test_run_gh_returns_output_or_raises(self) -> None:
         with mock.patch.object(check_canaries.subprocess, "run") as run:

@@ -381,8 +381,11 @@ def _expired_verify_errors(
     a different success that can still be read in full.
     """
     run_id = latest.get("id")
-    if run_id == canary.evidence.run_id or str(latest.get("run_started_at") or "") <= (
-        canary.evidence.started_at
+    if (
+        not isinstance(run_id, int)
+        or run_id < 1
+        or run_id == canary.evidence.run_id
+        or str(latest.get("run_started_at") or "") <= canary.evidence.started_at
     ):
         return [
             f"{prefix}: evidence run {canary.evidence.run_id} has expired and no later "
@@ -394,16 +397,33 @@ def _expired_verify_errors(
         return [f"{prefix}: could not read current success {run_id!r}: {error}"]
     if not isinstance(detail, dict):
         return [f"{prefix}: current success {run_id!r} response is not an object"]
-    expected = {
-        "conclusion": "success",
-        "head_branch": "main",
-        "path": canary.workflow_path,
-    }
-    return [
+    # The listing only nominates the run; every property it is accepted for has
+    # to come from the run's own record.
+    errors = [
         f"{prefix}: current success {run_id!r} {field} {detail.get(field)!r} != {value!r}"
-        for field, value in expected.items()
+        for field, value in {
+            "id": run_id,
+            "conclusion": "success",
+            "head_branch": "main",
+            "path": canary.workflow_path,
+        }.items()
         if detail.get(field) != value
     ]
+    started = detail.get("run_started_at")
+    if not isinstance(started, str) or _STARTED_AT.fullmatch(started) is None or (
+        started <= canary.evidence.started_at
+    ):
+        errors.append(
+            f"{prefix}: current success {run_id!r} run_started_at {started!r} is not "
+            f"later than the expired {canary.evidence.started_at}"
+        )
+    pin = _referenced_policy_sha(detail, canary)
+    if pin != canary.current_policy_sha:
+        errors.append(
+            f"{prefix}: current success {run_id!r} used policy pin {pin!r} != current "
+            f"{canary.current_policy_sha}"
+        )
+    return errors
 
 
 def check_live(
@@ -417,9 +437,10 @@ def check_live(
     """Audit each canary against GitHub.
 
     ``verify_provenance`` raises RuntimeError unless the recorded release's signed
-    provenance verifies. When supplied it runs for every release family, so the
-    path an expired run depends on is exercised every week; without it an
-    expired release run is an error.
+    provenance verifies. Supplying it selects release evidence mode, which ``main``
+    always uses: provenance and the published-release freshness check run for
+    every release family on every audit, so the path an expired run depends on
+    is exercised every week. Without it an expired release run is an error.
     """
     current = now or datetime.now(timezone.utc)
     errors: list[str] = []
@@ -511,13 +532,18 @@ def check_live(
                         "longer be checked."
                     )
 
+        # A release can be published without a successful run to show for it,
+        # so release evidence mode reads the published releases on every audit.
+        if canary.family in _RELEASE_FAMILIES and (
+            run_expired or verify_provenance is not None
+        ):
+            errors.extend(_release_freshness_errors(canary, fetch_json, prefix))
         if run_expired and canary.family in _RELEASE_FAMILIES:
             if verify_provenance is None:
                 errors.append(
                     f"{prefix}: evidence run {canary.evidence.run_id} has expired and "
                     "no provenance verifier was supplied"
                 )
-            errors.extend(_release_freshness_errors(canary, fetch_json, prefix))
         else:
             workflow_name = Path(canary.workflow_path).name
             # Page through the successes until the relevant run appears or the

@@ -74,7 +74,10 @@ GitHub reports, then runs `gh attestation verify` with the signer workflow and
 the recorded policy pin as `--signer-digest`, the tag as `--source-ref` and the
 commit as `--source-digest`. The verified certificate must name exactly the
 recorded run. The archive and skills releases are signed by
-`publish-archives.yml`, Python releases by `release-python.yml`.
+`publish-archives.yml`, Python releases by `release-python.yml`. The same audit
+reads the published releases and requires the newest release in the family's
+tag namespace, by publication time, to be the recorded tag, because a release
+can be published without a successful run to show for it.
 
 From 1 October 2026 GitHub deletes workflow runs after the repository's
 retention period, at most 90 days for a public repository, so every recorded
@@ -86,8 +89,9 @@ reports `INFO` instead of failing:
   newest published release in the family's tag namespace, by publication time,
   is still the recorded tag. The run's start time and conclusion can no longer
   be checked; the provenance establishes the signed release, not the run record.
-- for the verification family, when the newest success on `main` is a later run,
-  running the current pin, that can still be read in full.
+- for the verification family, when the newest success on `main` is a later run
+  whose own record confirms its ID, success, branch, workflow, later start time
+  and the current pin.
 
 A newer release still fails as `NEWER_RELEASE_REVIEW_REQUIRED` until a person
 records it, whether or not the old run has expired. Expiry alone never requires
