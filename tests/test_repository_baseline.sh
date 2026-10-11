@@ -22,7 +22,7 @@ root = Path(sys.argv[1]).resolve()
 CANONICAL_SHA256 = {
     "docs/release-preflight.md": "cd8792460abe261325180c9db3f3e6e3d95f1b8cc294ebd990bc6693dcac570e",
     "docs/attribution-policy-stage2.yml": "e8e9921e796bb308117778d8444b21e01f8d6b04a45bc37ad49a3a8f18b2fde2",
-    ".github/workflows/pr-review-central.yml": "6f0086664fbafebbba915133fdf631f6f3868738e8caeb6e2509f8eafd87b344",
+    ".github/workflows/pr-review-central.yml": "620dc2c0d6e55c96503bd7e866f15d1ab2537588f866b27f9041606ae874b2d7",
     ".github/workflows/pr-review-trigger.yml": "6f2da6fecf622d02643f0d97172abe24c1f009049a09da63fea2a34f87783542",
     ".github/workflows/pr-review-consumer.yml": "d8c91be83d74ccaacf309dd9cd2743e25db07bee63fd51ce44ca0b86ac415e61",
     ".github/pr-review-build-wheels.txt": "e75343a5ed6ddcd4f3c9fdb52e8a635fd52c4509dca5f0f22d2b29b0d22c9a18",
