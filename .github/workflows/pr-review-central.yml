@@ -1,31 +1,83 @@
-name: Review my public upstream PR
+name: Qualify the Python 3.14 installed reviewer
 
 on:
   workflow_dispatch:
     inputs:
-      pr-url:
-        description: Public github.com PR URL authored by Ryan
+      pr-number:
+        description: Approved policy pull request number
+        required: true
+        type: string
+      activation-id:
+        description: Exact approved qualification identifier
+        required: true
+        type: string
+      caller-sha:
+        description: Exact caller commit bound by the approved request
+        required: true
+        type: string
+      intent-start:
+        description: Saved UTC start with whole-second precision
+        required: true
+        type: string
+      intent-end:
+        description: Saved UTC end no more than two minutes after start
         required: true
         type: string
 
 permissions:
   contents: read
 
+concurrency:
+  group: python-314-policy-141-20261006-q5
+  cancel-in-progress: false
+
 jobs:
-  review:
+  admit:
+    name: Temporary qualification admission
     if: >-
-      github.run_attempt == 1 && github.ref == 'refs/heads/main' &&
-      github.actor_id == '152749594' && github.repository_id == '1336599635'
+      github.run_attempt == 1 &&
+      github.ref == 'refs/heads/codex/python-314-review-central-q5-20261006' &&
+      github.actor_id == '152749594' && github.repository_id == '1336599635' &&
+      inputs.pr-number == '141' && inputs.activation-id == 'python-314-policy-141-20261006-q5' &&
+      inputs.caller-sha == github.sha && github.workflow_sha == github.sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       actions: read
-      # GitHub validates skipped installed jobs against this caller maximum.
-      # Actual central jobs explicitly reduce it to read permissions.
+      pull-requests: read
+    steps:
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Check out the approved qualification caller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Admit the exact server-created run without model credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir evidence
+          python scripts/pr_review_qualification_gate.py --output evidence/qualification-admission.json
+      - name: Retain the qualification admission
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: qualification-admission-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/qualification-admission.json
+          retention-days: 1
+          if-no-files-found: error
+  review:
+    needs: admit
+    if: ${{ needs.admit.result == 'success' }}
+    permissions:
+      contents: read
+      actions: read
       pull-requests: read
       statuses: write
-    uses: ryanduguid/release-policy/.github/workflows/pr-review.yml@6b204377f2c8fb51b2e3e0124e39cc3fc1e3fda2
+    uses: ryanduguid/release-policy/.github/workflows/pr-review.yml@9a6f092cc41fce4044040426bf93baed9bdfa1d8
     with:
-      mode: central_public_report_v1
-      pr-url: ${{ inputs.pr-url }}
+      mode: installed
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
