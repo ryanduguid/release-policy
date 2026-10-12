@@ -25,7 +25,7 @@ published=false
 cleanup_current_draft() {
   status="$?"
   trap - EXIT
-  if [ "$status" -ne 0 ] && [ -n "$release_id" ] && [ "$published" != true ]; then
+  if [[ "$status" -ne 0 ]] && [[ -n "$release_id" ]] && [[ "$published" != true ]]; then
     if gh api \
         -H "X-GitHub-Api-Version: 2026-03-10" \
         "repos/$GITHUB_REPOSITORY/releases/$release_id" \
@@ -60,8 +60,8 @@ create_draft() {
   create_tag_commit="$(git ls-remote \
     "https://github.com/$GITHUB_REPOSITORY.git" \
     "refs/tags/$tag^{}" | cut -f1)"
-  test -n "$create_tag_commit"
-  test "$create_tag_commit" = "$expected_commit"
+  [[ -n "$create_tag_commit" ]]
+  [[ "$create_tag_commit" = "$expected_commit" ]]
   gh api --method POST \
     -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$GITHUB_REPOSITORY/releases" \
@@ -81,7 +81,7 @@ create_draft() {
       break
     fi
     jq -e '.tag_name | startswith("untagged-")' /tmp/created-release.json >/dev/null
-    test "$attempt" -lt 5
+    [[ "$attempt" -lt 5 ]]
     sleep 5
     gh api -H "X-GitHub-Api-Version: 2026-03-10" \
       "repos/$GITHUB_REPOSITORY/releases/$release_id" > /tmp/created-release.json
@@ -100,7 +100,7 @@ upload_asset() {
   name="$(basename "$file")"
   [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]
   query="name=$name"
-  if [ -n "$label" ]; then
+  if [[ -n "$label" ]]; then
     query="$query&label=$label"
   fi
   gh api --method POST \
@@ -146,9 +146,9 @@ finalise_release() {
     fi
     sleep 5
   done
-  test "$draft_ready" = true
+  [[ "$draft_ready" = true ]]
   draft_assets="$(jq -br '.assets[].name' /tmp/draft-release.json | LC_ALL=C sort)"
-  test "$draft_assets" = "$expected_assets"
+  [[ "$draft_assets" = "$expected_assets" ]]
   jq -bj '.body' /tmp/draft-release.json > /tmp/draft-release-notes.md
   diff -u --strip-trailing-cr "$source_path/RELEASE_NOTES.md" /tmp/draft-release-notes.md
 
@@ -157,9 +157,9 @@ finalise_release() {
   final_tag_commit="$(git ls-remote \
     "https://github.com/$GITHUB_REPOSITORY.git" \
     "refs/tags/$tag^{}" | cut -f1)"
-  test -n "$final_tag_commit"
-  test "$final_tag_commit" = "$expected_commit"
-  test "$GITHUB_SHA" = "$expected_commit"
+  [[ -n "$final_tag_commit" ]]
+  [[ "$final_tag_commit" = "$expected_commit" ]]
+  [[ "$GITHUB_SHA" = "$expected_commit" ]]
   # shellcheck source=scripts/gates.sh
   . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
   gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
@@ -168,7 +168,7 @@ finalise_release() {
     -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
     --jq ".[] | select(.tag_name == \"$tag\") | .id")"
-  test "$release_ids" = "$release_id"
+  [[ "$release_ids" = "$release_id" ]]
 
   gh api --method PATCH \
     -H "X-GitHub-Api-Version: 2026-03-10" \
@@ -200,13 +200,13 @@ finalise_release() {
     fi
     sleep 5
   done
-  test "$published_ready" = true
-  test "$(git ls-remote \
+  [[ "$published_ready" = true ]]
+  [[ "$(git ls-remote \
     "https://github.com/$GITHUB_REPOSITORY.git" \
-    "refs/tags/$tag^{}" | cut -f1)" = "$expected_commit"
+    "refs/tags/$tag^{}" | cut -f1)" = "$expected_commit" ]]
   published_assets="$(jq -br '.assets[].name' \
     /tmp/published-release.json | LC_ALL=C sort)"
-  test "$published_assets" = "$expected_assets"
+  [[ "$published_assets" = "$expected_assets" ]]
   jq -bj '.body' /tmp/published-release.json > /tmp/published-release-notes.md
   diff -u --strip-trailing-cr "$source_path/RELEASE_NOTES.md" /tmp/published-release-notes.md
 
@@ -221,7 +221,7 @@ finalise_release() {
     fi
     sleep 5
   done
-  test "$release_verified" = true
+  [[ "$release_verified" = true ]]
   for file in "${assets[@]}"; do
     asset_verified=false
     for _ in 1 2 3 4 5; do
@@ -231,7 +231,7 @@ finalise_release() {
       fi
       sleep 5
     done
-    test "$asset_verified" = true
+    [[ "$asset_verified" = true ]]
   done
   trap - EXIT
 }

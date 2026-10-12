@@ -2,7 +2,7 @@
 # Publish one already-gated Python candidate without executing consumer code.
 set -euo pipefail
 
-if [ "$#" -ne 5 ]; then
+if [[ "$#" -ne 5 ]]; then
   echo "usage: publish_python.sh TAG EXPECTED_COMMIT STEM VERSION SOURCE_PATH" >&2
   exit 64
 fi

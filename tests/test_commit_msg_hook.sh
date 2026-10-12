@@ -35,7 +35,7 @@ run() {
 	else
 		verdict=block
 	fi
-	if [ "$verdict" = "$want" ]; then
+	if [[ "$verdict" = "$want" ]]; then
 		pass=$((pass + 1))
 		printf 'ok   %-6s %s\n' "$want" "$label"
 	else
@@ -230,4 +230,4 @@ git config --unset core.commentChar
 
 echo
 echo "commit-msg hook: $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+[[ "$fail" -eq 0 ]]
