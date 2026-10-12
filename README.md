@@ -5,8 +5,8 @@
 [![CodeQL](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml/badge.svg)](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml)
 [![Snyk](https://github.com/ryanduguid/release-policy/actions/workflows/snyk.yml/badge.svg?branch=main)](https://github.com/ryanduguid/release-policy/actions/workflows/snyk.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ryanduguid/release-policy/badge)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/release-policy)
-[![release](https://img.shields.io/github/v/release/ryanduguid/release-policy?color=5C2D91&labelColor=04001F)](https://github.com/ryanduguid/release-policy/releases/latest)
-[![licence: MIT](https://img.shields.io/badge/licence-MIT-5C2D91.svg?labelColor=04001F)](LICENSE)
+[![release](https://img.shields.io/github/v/release/ryanduguid/release-policy?color=66023C&labelColor=000000)](https://github.com/ryanduguid/release-policy/releases/latest)
+[![licence: MIT](https://img.shields.io/badge/licence-MIT-66023C.svg?labelColor=000000)](LICENSE)
 [![Codacy code quality](https://app.codacy.com/project/badge/Grade/49440ac0ee144a12b5fc1380425e9773?branch=main)](https://app.codacy.com/gh/ryanduguid/release-policy/dashboard)
 [![SonarCloud](https://img.shields.io/sonar/quality_gate/ryanduguid_release-policy?server=https%3A%2F%2Fsonarcloud.io&label=SonarCloud&labelColor=000000)](https://sonarcloud.io/summary/new_code?id=ryanduguid_release-policy)
 
