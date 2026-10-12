@@ -8,7 +8,7 @@
 [![Codacy code quality](https://img.shields.io/codacy/grade/49440ac0ee144a12b5fc1380425e9773?label=Codacy&labelColor=000000&style=flat-square)](https://app.codacy.com/gh/ryanduguid/release-policy/dashboard)<br>
 [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/ryanduguid/release-policy?label=Scorecard&labelColor=000000&style=flat-square)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/release-policy)<br>
 [![release](https://img.shields.io/github/v/release/ryanduguid/release-policy?color=66023C&labelColor=000000&style=flat-square)](https://github.com/ryanduguid/release-policy/releases/latest)
-[![licence: MIT](https://img.shields.io/badge/licence-MIT-66023C?labelColor=000000&style=flat-square)](LICENSE)
+[![licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-66023C?labelColor=000000&style=flat-square)](LICENSE)
 
 Policy checks establish release evidence, not accounting correctness.
 
