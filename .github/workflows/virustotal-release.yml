@@ -71,7 +71,7 @@ jobs:
             # The public API allows four requests a minute.
             [ "$first" = 1 ] || sleep 16
             first=0
-            if ! curl --http1.1 --proto '=https' --fail-with-body -sS --config "$RUNNER_TEMP/vt.curl" \
+            if ! curl --proto '=https' --fail-with-body -sS --config "$RUNNER_TEMP/vt.curl" \
               -F "file=@$f" -o "$RUNNER_TEMP/vt.json" https://www.virustotal.com/api/v3/files; then
               echo "VirusTotal refused $f:" >&2
               head -c 500 "$RUNNER_TEMP/vt.json" >&2
