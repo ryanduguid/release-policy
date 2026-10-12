@@ -33,7 +33,7 @@ make_repo() {
 
 finish() {
   echo "----"
-  if [ "$FAILURES" -eq 0 ]; then echo "all gate tests passed"; else echo "$FAILURES gate test(s) failed"; exit 1; fi
+  if [[ "$FAILURES" -eq 0 ]]; then echo "all gate tests passed"; else echo "$FAILURES gate test(s) failed"; exit 1; fi
 }
 
 # shellcheck source=scripts/gates.sh

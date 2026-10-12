@@ -32,7 +32,7 @@ write_release_input_outputs() {
     validate_release_inputs "$supplied_source" "$supplied_prefix"
   )
   source_root="$checkout_directory"
-  if [ "$source_directory" != "." ]; then
+  if [[ "$source_directory" != "." ]]; then
     source_root="$source_root/$source_directory"
   fi
   source_path="$GITHUB_WORKSPACE/$source_root"
@@ -56,8 +56,8 @@ derive_release_tag() {
 gate_component_identity() {
   local source_directory="$1" tag_prefix="$2" release_identity="$3" identity_label="$4"
   local directory_identity
-  if [ "$source_directory" = "." ]; then
-    if [ -n "$tag_prefix" ]; then
+  if [[ "$source_directory" = "." ]]; then
+    if [[ -n "$tag_prefix" ]]; then
       echo "gate_component_identity: root releases require an empty tag-prefix" >&2
       return 1
     fi
@@ -65,15 +65,15 @@ gate_component_identity() {
   fi
 
   directory_identity="${source_directory##*/}"
-  if [ -z "$tag_prefix" ]; then
+  if [[ -z "$tag_prefix" ]]; then
     echo "gate_component_identity: nested releases require a tag-prefix" >&2
     return 1
   fi
-  if [ "$directory_identity" != "$tag_prefix" ]; then
+  if [[ "$directory_identity" != "$tag_prefix" ]]; then
     echo "gate_component_identity: directory identity '$directory_identity' != tag-prefix '$tag_prefix'" >&2
     return 1
   fi
-  if [ "$release_identity" != "$tag_prefix" ]; then
+  if [[ "$release_identity" != "$tag_prefix" ]]; then
     echo "gate_component_identity: $identity_label '$release_identity' != tag-prefix '$tag_prefix'" >&2
     return 1
   fi
@@ -81,7 +81,7 @@ gate_component_identity() {
 
 gate_annotated_tag() {
   local tag="$1"
-  if [ "$(git cat-file -t "refs/tags/$tag" 2>/dev/null)" != "tag" ]; then
+  if [[ "$(git cat-file -t "refs/tags/$tag" 2>/dev/null)" != "tag" ]]; then
     echo "gate_annotated_tag: '$tag' is not an annotated tag object" >&2
     return 1
   fi
@@ -90,7 +90,7 @@ gate_annotated_tag() {
 gate_tag_commit_matches() {
   local tag="$1" expected="$2" actual
   actual="$(git rev-parse "refs/tags/$tag^{commit}")"
-  if [ "$actual" != "$expected" ]; then
+  if [[ "$actual" != "$expected" ]]; then
     echo "gate_tag_commit_matches: tag commit $actual != expected $expected" >&2
     return 1
   fi
@@ -99,19 +99,19 @@ gate_tag_commit_matches() {
 gate_notes_header() {
   local version_tag="$1" source_directory="${2:-.}" first notes
   notes="$source_directory/RELEASE_NOTES.md"
-  if [ ! -f "$notes" ]; then
+  if [[ ! -f "$notes" ]]; then
     echo "gate_notes_header: RELEASE_NOTES.md missing" >&2
     return 1
   fi
   first="$(sed -n '1p' "$notes")"
-  if [ "$first" != "# $version_tag" ]; then
+  if [[ "$first" != "# $version_tag" ]]; then
     echo "gate_notes_header: first line '$first' != '# $version_tag'" >&2
     return 1
   fi
 }
 
 gate_clean_tree() {
-  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
     echo "gate_clean_tree: working tree has tracked modifications" >&2
     return 1
   fi
@@ -121,7 +121,7 @@ gate_main_matches() {
   local expected="$1" repo="$2" main_sha
   main_sha="$("$GH" api -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$repo/git/ref/heads/main" --jq '.object.sha')"
-  if [ "$main_sha" != "$expected" ]; then
+  if [[ "$main_sha" != "$expected" ]]; then
     echo "gate_main_matches: origin main $main_sha != $expected" >&2
     return 1
   fi
@@ -135,7 +135,7 @@ gate_no_existing_release() {
   ids="$("$GH" api --paginate -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$repo/releases?per_page=100" \
     --jq ".[] | select(.tag_name == \"$tag\") | .id")"
-  if [ -n "$ids" ]; then
+  if [[ -n "$ids" ]]; then
     echo "gate_no_existing_release: a release for $tag already exists; refusing to replace it" >&2
     return 1
   fi
@@ -228,11 +228,11 @@ run_release_gates() {
     "$source_directory" "$tag_prefix" "$distribution_identity" "distribution identity"; then
     return 1
   fi
-  if [ "$tag_version" != "$version" ]; then
+  if [[ "$tag_version" != "$version" ]]; then
     echo "run_release_gates: tag version $tag_version != $version from project metadata" >&2
     return 1
   fi
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     {
       echo "tag=$full_tag"
       echo "version-tag=$version_tag"
@@ -270,11 +270,11 @@ run_archive_release_gates() {
     "$source_directory" "$tag_prefix" "$stem" "artifact-stem"; then
     return 1
   fi
-  if [ "$tag_version" != "$version" ]; then
+  if [[ "$tag_version" != "$version" ]]; then
     echo "run_archive_release_gates: tag version $tag_version != $version from $version_file" >&2
     return 1
   fi
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     {
       echo "tag=$full_tag"
       echo "version-tag=$version_tag"

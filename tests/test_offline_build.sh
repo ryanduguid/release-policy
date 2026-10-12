@@ -23,8 +23,8 @@ build_offline() {
     UV_OFFLINE=1 PIP_NO_INDEX=1 uv run --no-sync \
       python -m build --no-isolation --outdir "$work/$stem" >/dev/null
   )
-  test -f "$work/$stem/$stem-0.1.0-py3-none-any.whl"
-  test -f "$work/$stem/$stem-0.1.0.tar.gz"
+  [[ -f "$work/$stem/$stem-0.1.0-py3-none-any.whl" ]]
+  [[ -f "$work/$stem/$stem-0.1.0.tar.gz" ]]
 }
 
 build_offline demo-pkg demo_pkg
