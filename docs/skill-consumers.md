@@ -38,7 +38,7 @@ Use the separate release adapter for annotated version tags:
           skills-verification-mode: subcontractor-accounting-v1
           required-checks: |
             .github/workflows/verify.yml: lint
-            .github/workflows/verify.yml: verify (3.12)
+            .github/workflows/verify.yml: verify (3.14)
 
 Replace `<full-40-char-commit-sha>` with a reviewed literal 40-character
 commit before committing either consumer workflow.

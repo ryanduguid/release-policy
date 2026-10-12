@@ -5,9 +5,9 @@
 [tool.ruff]
 line-length = 100
 src = ["scripts", "tests"]
-# No [project] table to infer from, and the scripts target Python 3.11 and
+# No [project] table to infer from, and the scripts target Python 3.14 and
 # later, so state it: isort must treat tomllib as standard library.
-target-version = "py311"
+target-version = "py314"
 
 [tool.ruff.lint]
 # Ruff's default set plus import sorting: pycodestyle errors that are not
@@ -15,9 +15,8 @@ target-version = "py311"
 select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.mypy]
-# scripts/python_release.py reads pyproject metadata with tomllib, which
-# arrived in Python 3.11, so 3.11 is the floor the policy scripts run on.
-python_version = "3.11"
+# The policy scripts require Python 3.14 or later.
+python_version = "3.14"
 # The scripts import one another as top-level modules from their own
 # directory, and the tests import them as `scripts.<name>`; checking the
 # scripts alone keeps one module name per file.

@@ -113,7 +113,7 @@ def prepare_prompts(snapshot: dict[str, Any], groups: list[list[dict[str, Any]]]
     user_template += "Response (must be one JSON object matching the supplied schema, and nothing else):"
 
     class PromptCapture:
-        def get_output_token_reserve(self, model: str) -> int:
+        def get_output_token_reserve(self, model: str, default_output_tokens: int) -> int:
             return policy["output_tokens"]
 
         async def chat_completion(self, *, model: str, temperature: float,
@@ -127,7 +127,7 @@ def prepare_prompts(snapshot: dict[str, Any], groups: list[list[dict[str, Any]]]
             # This adapter provides the frozen inputs its prediction method needs.
             self.git_provider = SimpleNamespace(pr=True)
             self.ai_handler = PromptCapture()
-            self.vars = {"title": f"PR #{snapshot['pr']}", "branch": snapshot["head"],
+            self.vars = {"previous_findings": "", "title": f"PR #{snapshot['pr']}", "branch": snapshot["head"],
                          "date": snapshot["date"],
                          "description": "", "commit_messages_str": "", "language": "",
                          "diff": "", "num_pr_files": len(snapshot["files"]), "num_max_findings": 12,

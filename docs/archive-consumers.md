@@ -13,7 +13,7 @@ Source-only callers use the separate family workflow:
         with:
           artifact-stem: accounting-excel-toolkit
           required-checks: |
-            .github/workflows/ci.yml: test (3.12)
+            .github/workflows/ci.yml: test (3.14)
 
 The root defaults above also apply to source archives. A nested source-only
 component uses:
@@ -31,7 +31,7 @@ component uses:
           source-directory: adapters/accounting-excel-toolkit
           tag-prefix: accounting-excel-toolkit
           required-checks: |
-            .github/workflows/standard-library-components.yml: verify (adapters/accounting-excel-toolkit, 3.12)
+            .github/workflows/standard-library-components.yml: verify (adapters/accounting-excel-toolkit, 3.14)
 
 `required-checks` has the same meaning as for the
 [packaged-Python workflow](python-consumers.md): the named consumer checks must
