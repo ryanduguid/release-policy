@@ -3,6 +3,7 @@
 [![tests](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml)
 [![Codecov](https://codecov.io/gh/ryanduguid/release-policy/graph/badge.svg)](https://codecov.io/gh/ryanduguid/release-policy)
 [![CodeQL](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml/badge.svg)](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml)
+[![Snyk](https://github.com/ryanduguid/release-policy/actions/workflows/snyk.yml/badge.svg?branch=main)](https://github.com/ryanduguid/release-policy/actions/workflows/snyk.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ryanduguid/release-policy/badge)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/release-policy)
 [![release](https://img.shields.io/github/v/release/ryanduguid/release-policy?color=66023C&labelColor=000000)](https://github.com/ryanduguid/release-policy/releases/latest)
 [![licence: MIT](https://img.shields.io/badge/licence-MIT-66023C.svg?labelColor=000000)](LICENSE)
