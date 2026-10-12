@@ -358,7 +358,7 @@ expect_fail "archive release rejects an artifact stem and prefix mismatch" \
 unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
 
 # Windows CI runs each publication family on its own runner and sets this.
-if [ "${GATES_SKIP_PUBLICATION:-0}" != 1 ]; then
+if [[ "${GATES_SKIP_PUBLICATION:-0}" != 1 ]]; then
   run_case "archive publication preserves draft ownership" bash "$HERE/test_publish_releases.sh"
 
   run_case "Python publication preserves release verification" bash "$HERE/test_publish_releases.sh" python
