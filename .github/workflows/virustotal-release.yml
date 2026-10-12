@@ -58,6 +58,11 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
+          # A malformed key yields an HTTP/2 stream reset or a bare 400, so check its shape first.
+          if [[ ! $VT_API_KEY =~ ^[0-9a-f]{64}$ ]]; then
+            echo "VT_API_KEY is not a 64-character lower-case hexadecimal VirusTotal key (length ${#VT_API_KEY})" >&2
+            exit 1
+          fi
           # Keep the key off curl's command line.
           printf 'header = "x-apikey: %s"\n' "$VT_API_KEY" > "$RUNNER_TEMP/vt.curl"
           trap 'rm -f "$RUNNER_TEMP/vt.curl"' EXIT
@@ -66,10 +71,13 @@ jobs:
             # The public API allows four requests a minute.
             [ "$first" = 1 ] || sleep 16
             first=0
-            # Over HTTP/2 the upload stream was reset (curl exit 92, PROTOCOL_ERROR) on ubuntu-latest.
-            curl --http1.1 --proto '=https' --fail-with-body -sS --config "$RUNNER_TEMP/vt.curl" \
-              -F "file=@$f" https://www.virustotal.com/api/v3/files \
-              | jq -e '.data.id' >/dev/null
+            if ! curl --http1.1 --proto '=https' --fail-with-body -sS --config "$RUNNER_TEMP/vt.curl" \
+              -F "file=@$f" -o "$RUNNER_TEMP/vt.json" https://www.virustotal.com/api/v3/files; then
+              echo "VirusTotal refused $f:" >&2
+              head -c 500 "$RUNNER_TEMP/vt.json" >&2
+              exit 1
+            fi
+            jq -e '.data.id' "$RUNNER_TEMP/vt.json" >/dev/null
           done
 
   annotate:
