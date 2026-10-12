@@ -23,6 +23,17 @@
 - Provenance attestation on every release asset and an SBOM attestation on the
   wheel, verified against source commit, tag ref, signer workflow and policy
   commit before release creation.
+- Both families publish the signed provenance bundle as one more release asset,
+  `<stem>-<version>.intoto.jsonl`: one Sigstore bundle on one JSON line, which
+  OpenSSF Scorecard's Signed-Releases check reads as release provenance. Every
+  provenance subject is verified against the bundle before release creation.
+  `SHA256SUMS` and `release-manifest.json` do not list it, because the
+  attestation covers those files and is created after them. To verify a
+  downloaded asset against the bundle instead of GitHub's attestation API:
+
+      gh attestation verify <file> --bundle <stem>-<version>.intoto.jsonl \
+        --repo <owner>/<repo> --signer-repo ryanduguid/release-policy
+
 - Draft creation and asset upload are bound to the returned numeric release ID.
   A pre-publication failure deletes only that exact current-run draft; a
   published release is never rolled back by mutation. Immutable state,
