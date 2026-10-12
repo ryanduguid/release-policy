@@ -1,0 +1,96 @@
+name: Reusable VirusTotal release scan
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Published release tag whose assets are uploaded to VirusTotal.
+        required: true
+        type: string
+    secrets:
+      vt-api-key:
+        description: VirusTotal API key. Only the upload step receives it.
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: upload release assets to VirusTotal
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # Download the published release assets.
+    steps:
+      - name: Download the release assets and check their digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > release.json
+          jq -e '.draft == false and (.assets | length) > 0' release.json >/dev/null \
+            || { echo "$TAG is not a published release with assets" >&2; exit 1; }
+          jq -r '.assets[] | "\(.digest // "" | ltrimstr("sha256:"))  assets/\(.name)"' \
+            release.json > digests.txt
+          # Asset names reach curl -F and Markdown links, so admit only plain file names.
+          if grep -Evxq '[0-9a-f]{64}  assets/[A-Za-z0-9._+-]+' digests.txt; then
+            echo "A release asset has no SHA-256 digest or an unexpected name" >&2
+            exit 1
+          fi
+          mkdir assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          sha256sum --check --strict digests.txt
+          test "$(find assets -type f | wc -l)" -eq "$(wc -l < digests.txt)"
+          # shortcut: /files takes uploads up to 32 MB; larger assets would need /files/upload_url.
+          if [ -n "$(find assets -type f -size +32M)" ]; then
+            echo "A release asset is over 32 MB" >&2
+            exit 1
+          fi
+
+      - name: Upload each asset to VirusTotal
+        env:
+          VT_API_KEY: ${{ secrets.vt-api-key }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          # Keep the key off curl's command line.
+          printf 'header = "x-apikey: %s"\n' "$VT_API_KEY" > "$RUNNER_TEMP/vt.curl"
+          trap 'rm -f "$RUNNER_TEMP/vt.curl"' EXIT
+          first=1
+          for f in assets/*; do
+            # The public API allows four requests a minute.
+            [ "$first" = 1 ] || sleep 16
+            first=0
+            curl --proto '=https' --fail-with-body -sS --config "$RUNNER_TEMP/vt.curl" \
+              -F "file=@$f" https://www.virustotal.com/api/v3/files \
+              | jq -e '.data.id' >/dev/null
+          done
+
+  annotate:
+    name: link the VirusTotal reports in the release notes
+    needs: scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # Edit the release notes; immutable releases keep assets and tag locked.
+    steps:
+      - name: Replace the VirusTotal section of the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > release.json
+          {
+            jq -r '.body // "" | sub("\\s*<!-- virustotal:start -->[\\s\\S]*<!-- virustotal:end -->"; "") | sub("\\s+$"; "")' release.json
+            printf '\n<!-- virustotal:start -->\n## VirusTotal\n\n'
+            jq -r '.assets[] | "- [\(.name)](https://www.virustotal.com/gui/file/\(.digest | ltrimstr("sha256:")))"' release.json
+            printf '<!-- virustotal:end -->\n'
+          } > notes.md
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$(jq -r .id release.json)" \
+            -F body=@notes.md >/dev/null
