@@ -248,6 +248,32 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
             publish,
         )
 
+    def test_provenance_bundle_is_verified_and_published_outside_the_checksums(self) -> None:
+        publish = job_block(self.workflow, "publish")
+        attest = publish.index("- name: Attest exact release asset provenance")
+        write = publish.index("- name: Write the provenance bundle as a release asset")
+        verify = publish.index("- name: Verify signer, source, ref and SBOM attestations")
+        release = publish.index("- name: Create, inspect and publish the immutable release")
+        self.assertLess(attest, write)
+        self.assertLess(write, verify)
+        self.assertLess(verify, release)
+        self.assertIn("id: provenance", publish[attest:write])
+        bundle_step = publish[write:verify]
+        self.assertIn("BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}", bundle_step)
+        self.assertIn(
+            'bundle="candidate/${{ needs.build.outputs.stem }}-'
+            '${{ needs.build.outputs.version }}.intoto.jsonl"',
+            bundle_step,
+        )
+        self.assertIn("jq -se 'length == 1'", bundle_step)
+        self.assertIn('--bundle "$base.intoto.jsonl"', publish[verify:release])
+        self.assertIn('provenance="candidate/$base.intoto.jsonl"', self.publication_script)
+        self.assertIn('"$checksums" "$provenance")', self.publication_script)
+        self.assertIn('upload_asset "$provenance" application/jsonl', self.publication_script)
+        # The candidate inventory, and so SHA256SUMS and the manifest, never list it.
+        build = job_block(self.workflow, "build")
+        self.assertNotIn("intoto", build)
+
     def test_draft_creation_and_cleanup_use_only_the_current_numeric_release_id(self) -> None:
         publication_script = self.publication_script
 
