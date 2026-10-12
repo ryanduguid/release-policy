@@ -1,14 +1,14 @@
 # release-policy: trace a release to its checked artefacts
 
-[![tests](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml)
-[![Codecov](https://codecov.io/gh/ryanduguid/release-policy/graph/badge.svg)](https://codecov.io/gh/ryanduguid/release-policy)
-[![CodeQL](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml/badge.svg)](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml)
-[![Snyk](https://github.com/ryanduguid/release-policy/actions/workflows/snyk.yml/badge.svg?branch=main)](https://github.com/ryanduguid/release-policy/actions/workflows/snyk.yml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ryanduguid/release-policy/badge)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/release-policy)
-[![release](https://img.shields.io/github/v/release/ryanduguid/release-policy?color=66023C&labelColor=000000)](https://github.com/ryanduguid/release-policy/releases/latest)
-[![licence: MIT](https://img.shields.io/badge/licence-MIT-66023C.svg?labelColor=000000)](LICENSE)
-[![Codacy code quality](https://app.codacy.com/project/badge/Grade/49440ac0ee144a12b5fc1380425e9773?branch=main)](https://app.codacy.com/gh/ryanduguid/release-policy/dashboard)
-[![SonarCloud](https://img.shields.io/sonar/quality_gate/ryanduguid_release-policy?server=https%3A%2F%2Fsonarcloud.io&label=SonarCloud&labelColor=000000)](https://sonarcloud.io/summary/new_code?id=ryanduguid_release-policy)
+[![tests](https://img.shields.io/github/actions/workflow/status/ryanduguid/release-policy/ci.yml?branch=main&label=tests&labelColor=000000&style=flat-square)](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml)
+[![Codecov](https://img.shields.io/codecov/c/github/ryanduguid/release-policy?label=coverage&labelColor=000000&style=flat-square)](https://codecov.io/gh/ryanduguid/release-policy)
+[![CodeQL](https://img.shields.io/github/actions/workflow/status/ryanduguid/release-policy/codeql.yml?branch=main&label=CodeQL&labelColor=000000&style=flat-square)](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml)
+[![Snyk](https://img.shields.io/github/actions/workflow/status/ryanduguid/release-policy/snyk.yml?branch=main&label=Snyk&labelColor=000000&style=flat-square)](https://github.com/ryanduguid/release-policy/actions/workflows/snyk.yml)
+[![SonarCloud](https://img.shields.io/sonar/quality_gate/ryanduguid_release-policy?server=https%3A%2F%2Fsonarcloud.io&label=SonarCloud&labelColor=000000&style=flat-square)](https://sonarcloud.io/summary/new_code?id=ryanduguid_release-policy)
+[![Codacy code quality](https://img.shields.io/codacy/grade/49440ac0ee144a12b5fc1380425e9773?label=Codacy&labelColor=000000&style=flat-square)](https://app.codacy.com/gh/ryanduguid/release-policy/dashboard)<br>
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/ryanduguid/release-policy?label=Scorecard&labelColor=000000&style=flat-square)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/release-policy)<br>
+[![release](https://img.shields.io/github/v/release/ryanduguid/release-policy?color=66023C&labelColor=000000&style=flat-square)](https://github.com/ryanduguid/release-policy/releases/latest)
+[![licence: MIT](https://img.shields.io/badge/licence-MIT-66023C?labelColor=000000&style=flat-square)](LICENSE)
 
 Policy checks establish release evidence, not accounting correctness.
 
