@@ -180,6 +180,18 @@ jobs:
           python -m coverage xml --include="scripts/*.py" -o coverage.xml
           diff-cover coverage.xml --compare-branch=origin/main --branch-coverage --fail-under=100
 
+      - name: Write whole-package coverage for Codecov
+        if: matrix.python == '3.15'
+        run: python -m coverage xml -o coverage-codecov.xml
+
+      - name: Keep the coverage report for the Codecov upload
+        if: matrix.python == '3.15'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-codecov
+          path: coverage-codecov.xml
+          retention-days: 1
+
       - name: Run determinism test
         run: bash tests/test_determinism.sh
 
@@ -232,6 +244,32 @@ jobs:
       - name: Run determinism test
         run: bash tests/test_determinism.sh
 
+  # The upload runs apart from the tests so the OIDC token is never available
+  # while test code runs. It is exempt from ci-gates: a Codecov outage must
+  # not block merges.
+  codecov:
+    name: upload coverage to Codecov
+    needs: checks
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # Authenticate the Codecov upload with OIDC; no stored token.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-codecov
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          files: coverage-codecov.xml
+          disable_search: true
+          fail_ci_if_error: true
+
   ci-gates:
     # The one context branch protection requires from this workflow. It fails
     # unless every job it needs succeeded, when a job in this file is missing
@@ -256,4 +294,4 @@ jobs:
       - name: Require every job to be listed, kept and successful
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: python3 .github/ci/check_gates.py .github/workflows/ci.yml ci-gates --exempt fuzzing
+        run: python3 .github/ci/check_gates.py .github/workflows/ci.yml ci-gates --exempt fuzzing --exempt codecov
