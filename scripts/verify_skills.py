@@ -45,7 +45,7 @@ def resolve_safe_relative(
     ):
         raise VerificationError(f"{label} must be a safe relative POSIX path")
     relative = PurePosixPath(supplied)
-    if relative.is_absolute():
+    if relative.is_absolute():  # pragma: no cover - a leading "/" leaves an empty part, refused above
         raise VerificationError(f"{label} must be a safe relative POSIX path")
     resolved_root = root.resolve(strict=True)
     cursor = resolved_root
@@ -58,7 +58,8 @@ def resolve_safe_relative(
         if stat.S_ISLNK(metadata.st_mode):
             raise VerificationError(f"{label} contains a symlink component: {supplied}")
     candidate = cursor.resolve(strict=True)
-    if candidate == resolved_root or resolved_root not in candidate.parents:
+    # Unreachable while the walk above refuses ".." and symlinks; kept as the final boundary check.
+    if candidate == resolved_root or resolved_root not in candidate.parents:  # pragma: no cover
         raise VerificationError(f"{label} resolves outside the consumer checkout")
     return relative, candidate
 
