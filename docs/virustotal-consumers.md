@@ -51,7 +51,8 @@ by hand, trigger on `release: types: [published]` and pass
 `github.event.release.tag_name` as the tag. Use `workflow_dispatch` to scan a
 release published before the caller existed.
 
-Asset names must be plain file names (letters, digits, `.`, `_`, `+` and `-`),
+Asset names must be plain file names (letters, digits, `.`, `_`, `+` and `-`,
+not starting with `.`),
 and each asset must be 32 MB or smaller; larger assets need VirusTotal's
 upload URL endpoint, which the workflow does not use yet. Either condition
 fails the run before anything is uploaded or edited.

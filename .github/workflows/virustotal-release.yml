@@ -36,7 +36,8 @@ jobs:
           jq -r '.assets[] | "\(.digest // "" | ltrimstr("sha256:"))  assets/\(.name)"' \
             release.json > digests.txt
           # Asset names reach curl -F and Markdown links, so admit only plain file names.
-          if grep -Evxq '[0-9a-f]{64}  assets/[A-Za-z0-9._+-]+' digests.txt; then
+          # A leading dot is refused because the upload loop's glob skips dotfiles.
+          if grep -Evxq '[0-9a-f]{64}  assets/[A-Za-z0-9_+-][A-Za-z0-9._+-]*' digests.txt; then
             echo "A release asset has no SHA-256 digest or an unexpected name" >&2
             exit 1
           fi
