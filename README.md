@@ -52,6 +52,7 @@ a full policy commit.
 - [Attribution checks](docs/attribution-consumers.md)
 - [The egress check](docs/egress-check.md)
 - [Independent PR reviews with your own API key](docs/pr-review.md)
+- [VirusTotal release scans](docs/virustotal-consumers.md)
 - [Prerequisites](docs/consumer-prerequisites.md)
 - [Re-pinning consumers](docs/re-pinning.md)
 - [Guarantees and canary evidence](docs/guarantees-and-evidence.md)
