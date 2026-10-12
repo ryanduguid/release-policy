@@ -1,0 +1,4 @@
+[report]
+# A script's entry guard only calls main(), which the tests call directly.
+exclude_also =
+    if __name__ == .__main__.:
