@@ -66,7 +66,8 @@ jobs:
             # The public API allows four requests a minute.
             [ "$first" = 1 ] || sleep 16
             first=0
-            curl --proto '=https' --fail-with-body -sS --config "$RUNNER_TEMP/vt.curl" \
+            # Over HTTP/2 the upload stream was reset (curl exit 92, PROTOCOL_ERROR) on ubuntu-latest.
+            curl --http1.1 --proto '=https' --fail-with-body -sS --config "$RUNNER_TEMP/vt.curl" \
               -F "file=@$f" https://www.virustotal.com/api/v3/files \
               | jq -e '.data.id' >/dev/null
           done
