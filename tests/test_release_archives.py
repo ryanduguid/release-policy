@@ -945,6 +945,43 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         )
         self.assertNotIn("github.repository_owner", core)
 
+    def test_provenance_bundle_is_verified_and_published_outside_the_checksums(
+        self,
+    ) -> None:
+        core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
+            encoding="utf-8"
+        )
+        publication_script = publication_shell_code("publish_archives.sh")
+        inventory = self.named_step(core, "Write and verify the exact release asset inventory")
+        provenance = self.named_step(core, "Attest release asset provenance")
+        bundle_step = self.named_step(core, "Write the provenance bundle as a release asset")
+        verify = self.named_step(
+            core, "Verify provenance and SBOM attestations before publication"
+        )
+
+        self.assertIn("id: provenance", provenance)
+        self.assertLess(core.index(provenance), core.index(bundle_step))
+        self.assertLess(core.index(bundle_step), core.index(verify))
+        self.assertIn(
+            "working-directory: ${{ steps.inputs.outputs.source-path }}", bundle_step
+        )
+        self.assertIn(
+            "BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}", bundle_step
+        )
+        self.assertIn(
+            'bundle="dist/${{ steps.release.outputs.stem }}-'
+            '${{ steps.release.outputs.version }}.intoto.jsonl"',
+            bundle_step,
+        )
+        self.assertIn("jq -se 'length == 1'", bundle_step)
+        self.assertIn('--bundle "$base.intoto.jsonl"', verify)
+        self.assertNotIn("intoto", inventory)
+        self.assertIn('provenance="$dist/$base.intoto.jsonl"', publication_script)
+        self.assertIn('"$checksums" "$provenance")', publication_script)
+        self.assertIn(
+            'upload_asset "$provenance" application/jsonl', publication_script
+        )
+
     def test_publication_core_preserves_exact_asset_and_publication_gates(self) -> None:
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
             encoding="utf-8"
