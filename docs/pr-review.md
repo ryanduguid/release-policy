@@ -111,8 +111,9 @@ provides no verdict. A complete review containing findings is shown as such.
 
 The only permitted models are `z-ai/glm-5.3` and `xiaomi/mimo-v2.6-pro`.
 PR-Agent's review prompt, token budget and output type are reused from commit
-`1d01f24f455bb879c1d9c557ad7de3d72dcc7975` of
-[PR-Agent](https://github.com/The-PR-Agent/pr-agent), tagged v0.46.0.
+`3be92e293fc55b24a54aa303595e9eaa32519954` of
+[PR-Agent](https://github.com/The-PR-Agent/pr-agent), the first commit with
+PyYAML 6.0.3 wheels for Python 3.14.
 The dependency lock is installed with uv 0.12.10, without cache reads. The
 workflow omits project installation and imports PR-Agent from the trusted pinned
 checkout through `PYTHONPATH`. Its lock has no other local or editable package.
@@ -123,7 +124,7 @@ resolution or build isolation. The backend packages are then removed and the
 complete runtime lock is checked again before the model key is injected.
 Another missing wheel stops installation. These pinned dependencies remain
 executable third-party code in the later reviewer process. PR-Agent's package metadata
-at that tag says 0.45.0; the commit is the version boundary.
+at that commit says 0.47.0; the commit is the version boundary.
 The adapter preserves the native review rules and type definitions, and
 replaces its YAML example and user response prefix with JSON instructions
 before tokenisation. A
