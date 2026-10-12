@@ -210,8 +210,14 @@ jobs:
 
   windows:
     timeout-minutes: 15
-    name: shell tests (Windows)
+    name: shell tests (Windows, ${{ matrix.part }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # scripts/publish_common.sh writes fixed /tmp paths, so the two
+        # publication families cannot run concurrently on one runner.
+        part: [gates, archives, python]
     defaults:
       run:
         shell: bash
@@ -235,18 +241,30 @@ jobs:
           --requirement requirements-build.txt
 
       - name: Check repository baseline
+        if: matrix.part == 'gates'
         run: bash tests/test_repository_baseline.sh
 
-      - name: Run gate and publication tests
-        # test_gates.sh runs test_publish_releases.sh for both release families.
-        # Its byte-exact fixtures exercise CRLF regardless of checkout settings.
+      - name: Run gate tests
+        if: matrix.part == 'gates'
+        # The publication families run in the other matrix legs.
+        # test_gates.sh's byte-exact fixtures exercise CRLF regardless of checkout settings.
+        env:
+          GATES_SKIP_PUBLICATION: "1"
         run: bash tests/test_gates.sh
 
       - name: Run commit-msg hook tests
+        if: matrix.part == 'gates'
         run: bash tests/test_commit_msg_hook.sh
 
       - name: Run determinism test
+        if: matrix.part == 'gates'
         run: bash tests/test_determinism.sh
+
+      - name: Run ${{ matrix.part }} publication tests
+        if: matrix.part != 'gates'
+        env:
+          PART: ${{ matrix.part }}
+        run: bash tests/test_publish_releases.sh "$PART"
 
   # The upload runs apart from the tests so the OIDC token is never available
   # while test code runs. It is exempt from ci-gates: a Codecov outage must
