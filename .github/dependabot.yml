@@ -17,6 +17,14 @@ updates:
       codeql-action:
         patterns:
           - "github/codeql-action*"
+      third-party-actions:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "ryanduguid/*"
+        update-types:
+          - minor
+          - patch
     ignore:
       # This repository's own pins sit in digest-protected documents, so a bot
       # bump can only fail tests/test_repository_baseline.sh. Re-pin by hand with
