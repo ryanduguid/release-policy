@@ -3,11 +3,11 @@
     {
       "current_policy_sha": "a601f1d8b143f92b0517f709216993660d21f480",
       "evidence": {
-        "head_sha": "9d7ba2ab9b6f68c3170583bc0620e40bb962e6bd",
-        "policy_sha": "87767ec809dc7f77bcd45808219adaf67841ae7b",
-        "ref": "v0.2.1",
-        "run_id": 37223150857,
-        "started_at": "2026-10-04T18:07:11Z"
+        "head_sha": "84db0481a924f07d3f697f54a269917475613184",
+        "policy_sha": "a601f1d8b143f92b0517f709216993660d21f480",
+        "ref": "v0.3.0",
+        "run_id": 38476463432,
+        "started_at": "2026-10-13T22:14:52Z"
       },
       "family": "archive",
       "policy_workflow": ".github/workflows/release-archive.yml",
