@@ -54,6 +54,13 @@ core verifies actual authors and run associations through REST before source
 capture or spending. The bridge automatically accepts runs started by
 Dependabot. A person reopening a Dependabot PR must use a fresh manual dispatch.
 
+The trigger job runs only for first attempts whose original actor has
+GitHub.com account ID `49699333`. It skips owner-started PR events, including
+events on Dependabot-authored PRs, and all reruns. The direct owner route above
+remains available. Skipped jobs can report success, so the caller's upstream-actor
+filter remains necessary alongside the REST admission checks. This schedules
+the runner; it does not establish a paid review or measured savings.
+
 GitHub does not inherit Actions workflows from an account's `.github`
 repository. Install a pinned caller in every repository you own. For PRs in
 other people's public repositories, use the central report workflow below or
