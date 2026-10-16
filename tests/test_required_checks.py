@@ -37,7 +37,9 @@ def run(run_id: int, **overrides: object) -> dict[str, object]:
     return base
 
 
-def job(job_id: int, name: str, conclusion: str = "success", **overrides: object) -> dict[str, object]:
+def job(
+    job_id: int, name: str, conclusion: str = "success", **overrides: object
+) -> dict[str, object]:
     base: dict[str, object] = {
         "id": job_id,
         "name": name,
@@ -103,7 +105,11 @@ class ParseTests(unittest.TestCase):
         checks = required_checks.parse_required_checks(f"# comment\n\n{LIST}")
         self.assertEqual(
             [check.label for check in checks],
-            [f"{CI}: lint", f"{CI}: payday-super-checker / test (3.12)", f"{BOUNDARIES}: boundaries"],
+            [
+                f"{CI}: lint",
+                f"{CI}: payday-super-checker / test (3.12)",
+                f"{BOUNDARIES}: boundaries",
+            ],
         )
 
     def test_rejects_malformed_lines(self) -> None:
@@ -194,7 +200,9 @@ class TrustedRunTests(unittest.TestCase):
             run(1, repository={"full_name": None}),
         ):
             with self.subTest(absent=absent):
-                self.assertEqual(required_checks.trusted_runs(FakeGitHub([absent], {}), REPO, SHA), {})
+                self.assertEqual(
+                    required_checks.trusted_runs(FakeGitHub([absent], {}), REPO, SHA), {}
+                )
 
     def test_repository_names_compare_case_insensitively(self) -> None:
         github = FakeGitHub([run(1, repository={"full_name": "RyanDuguid/Example"})], {})
@@ -210,7 +218,12 @@ class TrustedRunTests(unittest.TestCase):
                 github = FakeGitHub(order, {})
                 self.assertEqual(
                     required_checks.trusted_runs(github, REPO, SHA),
-                    {CI: (required_checks.Run(9, "completed"), required_checks.Run(3, "completed"))},
+                    {
+                        CI: (
+                            required_checks.Run(9, "completed"),
+                            required_checks.Run(3, "completed"),
+                        )
+                    },
                 )
 
     def test_pagination_follows_full_pages_and_stops_on_a_short_one(self) -> None:
@@ -220,7 +233,7 @@ class TrustedRunTests(unittest.TestCase):
         self.assertEqual(len(found), 201)
         self.assertEqual(found[0], required_checks.Run(201, "completed"))
         self.assertEqual(
-            [request.rsplit("page=", 1)[1] for request in github.requests], ["1", "2", "3"]
+            [request.rsplit("page=", 1)[1] for request in github.requests], ["1", "2", "3"] * 2
         )
 
     def test_a_listing_that_shifts_mid_read_is_read_again(self) -> None:
@@ -255,6 +268,117 @@ class TrustedRunTests(unittest.TestCase):
         for payload in ({"workflow_runs": "x"}, [], {}):
             with self.subTest(payload=payload), self.assertRaises(RuntimeError):
                 required_checks.trusted_runs(lambda _endpoint: payload, REPO, SHA)
+
+
+class ListingStabilityTests(unittest.TestCase):
+    def test_balanced_movement_cannot_authorise_release_preflight(self) -> None:
+        for key in ("workflow_runs", "jobs"):
+            with self.subTest(key=key):
+                github = (
+                    FakeGitHub(
+                        [run(value) for value in range(200, 0, -1)],
+                        {
+                            value: [job(value, "lint", "failure" if value == 201 else "success")]
+                            for value in range(1, 202)
+                        },
+                    )
+                    if key == "workflow_runs"
+                    else FakeGitHub(
+                        [run(10)],
+                        {
+                            10: [
+                                job(value, "lint" if value == 150 else f"other-{value}")
+                                for value in range(200, 0, -1)
+                            ]
+                        },
+                    )
+                )
+                moved = False
+
+                def fetch(endpoint: str) -> object:
+                    nonlocal moved
+                    listing = (
+                        "/actions/runs?" in endpoint
+                        if key == "workflow_runs"
+                        else "/jobs?" in endpoint
+                    )
+                    if listing and endpoint.endswith("page=2") and not moved:
+                        if key == "workflow_runs":
+                            github.runs = [run(201)] + [
+                                record for record in github.runs if record["id"] != 150
+                            ]
+                        else:
+                            github.jobs[10] = [job(201, "lint", "failure")] + [
+                                record for record in github.jobs[10] if record["id"] != 150
+                            ]
+                        moved = True
+                    return github(endpoint)
+
+                verdict = required_checks.check(
+                    required_checks.parse_required_checks(f"{CI}: lint"),
+                    repository=REPO,
+                    commit=SHA,
+                    fetch_json=fetch,
+                )
+                self.assertFalse(verdict.ok)
+                self.assertIn("201", verdict.failed[0])
+
+    def test_balanced_movement_cannot_hide_a_failed_run_or_job(self) -> None:
+        for key in ("workflow_runs", "jobs"):
+            with self.subTest(key=key):
+                records = [
+                    run(value) if key == "workflow_runs" else job(value, f"job-{value}")
+                    for value in range(200, 0, -1)
+                ]
+                moved = False
+
+                def fetch(endpoint: str) -> object:
+                    nonlocal records, moved
+                    page = int(endpoint.rsplit("page=", 1)[1])
+                    if page == 2 and not moved:
+                        records = [
+                            run(201) if key == "workflow_runs" else job(201, "required", "failure")
+                        ] + [record for record in records if record["id"] != 150]
+                        moved = True
+                    return {key: records[(page - 1) * 100 : page * 100], "total_count": 200}
+
+                found = required_checks._paginate(fetch, "endpoint", key)
+                self.assertIn(201, [record["id"] for record in found])
+                self.assertNotIn(150, [record["id"] for record in found])
+
+    def test_both_listing_families_require_a_numeric_count(self) -> None:
+        for key in ("workflow_runs", "jobs"):
+            for count in (None, "1", True):
+                with self.subTest(key=key, count=count):
+                    payload = {key: [{"id": 1}], "total_count": count}
+                    with self.assertRaisesRegex(RuntimeError, "no numeric total_count"):
+                        required_checks._paginate(lambda endpoint: payload, "endpoint", key)
+            with self.subTest(key=key, count="absent"):
+                with self.assertRaisesRegex(RuntimeError, "no numeric total_count"):
+                    required_checks._paginate(lambda endpoint: {key: [{"id": 1}]}, "endpoint", key)
+
+    def test_changed_second_page_count_retries_and_boolean_ids_refuse(self) -> None:
+        valid = {"jobs": [{"id": 1}], "total_count": 1}
+        broken = {"jobs": [{"id": True}], "total_count": 1}
+        with self.assertRaisesRegex(RuntimeError, "no numeric id"):
+            required_checks._paginate(lambda endpoint: broken, "endpoint", "jobs")
+        fetch = mock.Mock(side_effect=[valid, {"jobs": [], "total_count": 1}, valid, valid])
+        self.assertEqual(required_checks._paginate(fetch, "endpoint", "jobs"), [{"id": 1}])
+
+    def test_fresh_state_is_used_and_perpetual_balanced_movement_refuses(self) -> None:
+        success = {"jobs": [job(1, "required")], "total_count": 1}
+        failed = {"jobs": [job(1, "required", "failure")], "total_count": 1}
+        self.assertEqual(
+            required_checks._paginate(mock.Mock(side_effect=[success, failed]), "endpoint", "jobs")[
+                0
+            ]["conclusion"],
+            "failure",
+        )
+        fetch = mock.Mock(
+            side_effect=[{"jobs": [{"id": value}], "total_count": 1} for value in range(6)]
+        )
+        with self.assertRaisesRegex(RuntimeError, "listing changed"):
+            required_checks._paginate(fetch, "endpoint", "jobs")
 
 
 class RunJobTests(unittest.TestCase):
@@ -339,7 +463,9 @@ class RunJobTests(unittest.TestCase):
 
 
 class EvaluateTests(unittest.TestCase):
-    def check(self, github: FakeGitHub, text: str = LIST, **options: object) -> required_checks.Verdict:
+    def check(
+        self, github: FakeGitHub, text: str = LIST, **options: object
+    ) -> required_checks.Verdict:
         return required_checks.check(
             required_checks.parse_required_checks(text),
             repository=REPO,
@@ -446,7 +572,9 @@ class EvaluateTests(unittest.TestCase):
         verdict = self.check(github, wait_seconds=0)
         self.assertEqual(verdict.failed, ())
         self.assertEqual(len(verdict.pending), 2)
-        self.assertIn("run 12 is in_progress and has not reported this check yet", verdict.pending[0])
+        self.assertIn(
+            "run 12 is in_progress and has not reported this check yet", verdict.pending[0]
+        )
 
     def test_a_pending_run_holds_the_check_even_though_another_run_passed(self) -> None:
         """Run 10 passed, so only the unfinished run 12 keeps the check waiting."""
@@ -549,7 +677,9 @@ class AmbiguousJobTests(unittest.TestCase):
 
     def test_a_collision_split_across_pages_is_detected(self) -> None:
         fillers = [job(200 + index, f"filler-{index}") for index in range(99)]
-        github = FakeGitHub([run(10)], {10: [job(101, "lint", "failure"), *fillers, job(102, "lint")]})
+        github = FakeGitHub(
+            [run(10)], {10: [job(101, "lint", "failure"), *fillers, job(102, "lint")]}
+        )
         verdict = self.check(github)
         self.assertFalse(verdict.ok)
         self.assertIn("2 distinct jobs named 'lint'", verdict.failed[0])
@@ -597,6 +727,30 @@ class GateTimeoutTests(unittest.TestCase):
     WORKFLOWS = Path(__file__).resolve().parents[1] / ".github" / "workflows"
     # The gate's own wait plus room for the runner, checkout and interpreter.
     SETUP_ALLOWANCE_SECONDS = 300
+
+    def test_a_failed_or_missing_check_returns_without_waiting_for_other_pending_checks(
+        self,
+    ) -> None:
+        for missing in (False, True):
+            with self.subTest(missing=missing):
+                github = complete_success()
+                github.jobs[10][0] = job(1, "lint", conclusion=None, status="queued")
+                if missing:
+                    github.runs = [run(10)]
+                else:
+                    github.jobs[11][0] = job(3, "boundaries", conclusion="failure")
+                sleep = mock.Mock(side_effect=AssertionError("Unexpected wait after refusal"))
+                verdict = required_checks.check(
+                    required_checks.parse_required_checks(LIST),
+                    repository=REPO,
+                    commit=SHA,
+                    fetch_json=github,
+                    wait_seconds=600,
+                    sleep=sleep,
+                )
+                self.assertTrue(verdict.failed)
+                self.assertTrue(verdict.pending)
+                sleep.assert_not_called()
 
     def gate_job(self, workflow: str) -> str:
         text = (self.WORKFLOWS / workflow).read_text(encoding="utf-8")
@@ -760,13 +914,16 @@ class ConsumerGuideTests(unittest.TestCase):
         without_input = complete[: complete.index("        with:")]
         self.assertNotIn("required-checks:", self.caller_inputs(without_input)[0][1])
 
-        neighbour = without_input + """
+        neighbour = (
+            without_input
+            + """
       other:
         uses: ryanduguid/release-policy/.github/workflows/release-archive.yml@0
         with:
           required-checks: |
             .github/workflows/ci.yml: lint
 """
+        )
         first, second = self.caller_inputs(neighbour)
         self.assertNotIn("required-checks:", first[1])
         self.assertIn("required-checks:", second[1])
@@ -846,7 +1003,9 @@ class MainTests(unittest.TestCase):
 
     def test_reads_the_list_from_stdin_by_default(self) -> None:
         with mock.patch.object(required_checks.sys, "stdin", io.StringIO(LIST)):
-            code, out, _ = self.main(["--repository", REPO, "--commit", SHA], text=None, fetch_json=complete_success())  # type: ignore[arg-type]
+            code, out, _ = self.main(
+                ["--repository", REPO, "--commit", SHA], text=None, fetch_json=complete_success()
+            )  # type: ignore[arg-type]
         self.assertEqual(code, 0)
         self.assertIn("required checks passed", out)
 

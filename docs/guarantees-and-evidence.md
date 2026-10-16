@@ -23,6 +23,17 @@
 - Provenance attestation on every release asset and an SBOM attestation on the
   wheel, verified against source commit, tag ref, signer workflow and policy
   commit before release creation.
+- Both families publish the signed provenance bundle as one more release asset,
+  `<stem>-<version>.intoto.jsonl`: one Sigstore bundle on one JSON line, which
+  OpenSSF Scorecard's Signed-Releases check reads as release provenance. Every
+  provenance subject is verified against the bundle before release creation.
+  `SHA256SUMS` and `release-manifest.json` do not list it, because the
+  attestation covers those files and is created after them. To verify a
+  downloaded asset against the bundle instead of GitHub's attestation API:
+
+      gh attestation verify <file> --bundle <stem>-<version>.intoto.jsonl \
+        --repo <owner>/<repo> --signer-repo ryanduguid/release-policy
+
 - Draft creation and asset upload are bound to the returned numeric release ID.
   A pre-publication failure deletes only that exact current-run draft; a
   published release is never rolled back by mutation. Immutable state,
@@ -65,6 +76,38 @@ push to its default branch, so a newer success is the ordinary state; the
 audit instead requires the newest success to be running the pin the consumer
 declares today. The recorded run stays the reviewed example either way, and is
 checked against GitHub the same way for every family.
+
+Each live audit also verifies the recorded release's signed SLSA provenance for
+the three release families. It reads the release by tag and requires it to be
+published and immutable, requires the tag to resolve to the recorded commit,
+downloads the release's `.tar.gz` asset and compares its SHA-256 with the digest
+GitHub reports, then runs `gh attestation verify` with the signer workflow and
+the recorded policy pin as `--signer-digest`, the tag as `--source-ref` and the
+commit as `--source-digest`. The verified certificate must name exactly the
+recorded run. The archive and skills releases are signed by
+`publish-archives.yml`, Python releases by `release-python.yml`. The same audit
+reads the published releases and requires the newest release in the family's
+tag namespace, by publication time, to be the recorded tag, because a release
+can be published without a successful run to show for it.
+
+From 1 October 2026 GitHub deletes workflow runs after the repository's
+retention period, at most 90 days for a public repository, so every recorded
+run eventually returns 404. A 404 within 90 days and a day of its recorded start
+is a missing run and fails. After that the run has expired, and the audit
+reports `INFO` instead of failing:
+
+- for a release family, when the signed provenance above verifies and the
+  newest published release in the family's tag namespace, by publication time,
+  is still the recorded tag. The run's start time and conclusion can no longer
+  be checked; the provenance establishes the signed release, not the run record.
+- for the verification family, when the newest success on `main` is a later run
+  whose own record confirms its ID, success, branch, workflow, later start time
+  and the current pin.
+
+A newer release still fails as `NEWER_RELEASE_REVIEW_REQUIRED` until a person
+records it, whether or not the old run has expired. Expiry alone never requires
+a manifest change. A present-day release listing cannot show a release that was
+published and later deleted.
 
 Archive and Python entries can opt into a component namespace with the optional
 `tag_prefix` field, a lower-case alphanumeric name separated by single hyphens.

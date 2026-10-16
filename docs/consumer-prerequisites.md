@@ -39,6 +39,10 @@ requires a separately reviewed authentication and attestation contract.
   it for the publication job's artefact inspection; archive and skill-pack
   callers must add it.
 
+Run the [release preflight](release-preflight.md) against the actual candidate and
+caller before seeking annotated-tag approval. It reuses the existing live check
+verifier and must pass before the irreversible tag is prepared.
+
 Source-archive callers additionally require:
 
 - a lower-case hyphenated `artifact-stem`

@@ -20,35 +20,39 @@ root = Path(sys.argv[1]).resolve()
 # workflow documents. Keeping action pins and permission maps inside the exact
 # workflow documents avoids a second, drift-prone representation here.
 CANONICAL_SHA256 = {
-    ".github/workflows/pr-review-central.yml": "6f0086664fbafebbba915133fdf631f6f3868738e8caeb6e2509f8eafd87b344",
-    ".github/workflows/pr-review-trigger.yml": "6f2da6fecf622d02643f0d97172abe24c1f009049a09da63fea2a34f87783542",
+    "docs/release-preflight.md": "cd8792460abe261325180c9db3f3e6e3d95f1b8cc294ebd990bc6693dcac570e",
+    "docs/attribution-policy-stage2.yml": "e8e9921e796bb308117778d8444b21e01f8d6b04a45bc37ad49a3a8f18b2fde2",
+    ".github/workflows/pr-review-central.yml": "3971be99df9010db6e9f9f6b9de8b06e86c5975270f684978e850d65ccca8a63",
+    ".github/workflows/pr-review-trigger.yml": "8688d961b089d11b1056489ba5d407b3adb6a56d875253a800eb543f1bbb8bfe",
     ".github/workflows/pr-review-consumer.yml": "4ea92f6b8a1439a43a91953fc14f078e463b2214c68f309efc17624e989ebf78",
     ".github/pr-review-build-wheels.txt": "e75343a5ed6ddcd4f3c9fdb52e8a635fd52c4509dca5f0f22d2b29b0d22c9a18",
-    "docs/pr-review.md": "8db82dad1e8be3879aeb42397f8cf7b3e4e231fe96cfe9bdedf2b3cf2df4c553",
+    "docs/pr-review.md": "321533313c118482f8ec387b89322480fab643c15d9d64c3fe3481b08d56a455",
     ".github/pr-review-policy.json": "44036e011119babc6d6bea0e5ac9a98b05770f73cc8bc8a9d42844c7da810bba",
-    ".github/workflows/pr-review.yml": "06ba109cad8328cabed418d1e3e0cedc7b279b623c2f8ff6558c09e9ddaeeede",
-    "docs/attribution-consumers.md": "78f8fbc8be4cc07d0c407a5c4fe2eea746d528194dff457ecdcbde80d6c2ade9",
+    ".github/workflows/pr-review.yml": "d161d02a0596fb8fbe83b5661f4713f77dc03f8f7f2b3eb423153a9494391700",
+    "docs/attribution-consumers.md": "cd58487fb917a082c4b0b73139b35824f6be4aa0cd88a0d13ed002fb050af435",
     ".github/ci/check_gates.py": "eda4b878cde2c655247ef3b4bf388cf72d875506316d4d2c882c76a0bb85ecd2",
-    ".github/actions/no-ai-attribution/action.yml": "60c2e78c85bbe0320dc1d6a2e0218590928f52d1cd496cb8c52ea569a4e8a2e9",
+    ".github/actions/no-ai-attribution/action.yml": "7c3febb2fd89f92ead53571835dae1d1d20b2ce49eb127298993a1495b64e47f",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
-    ".github/dependabot.yml": "b14ed06d42dad0e12591c23b8be0833da01a93e3eb5acf6c4ba882b63079cf9a",
-    ".github/workflows/ci.yml": "dfa530efb3832fbb4c26e7fda07adaccbd66d903122e169e3500aba2fae7d4ec",
-    ".github/workflows/codeql.yml": "74269f88ca9a8103a89351cdbbe61c025c1a9742c574a3cdef4c411a10cd8ba0",
+    ".github/dependabot.yml": "91bb7d24996aecbe0bd050e6d1af384bc5d29ca1e9c2ef7b76dc827bdfa6e719",
+    ".github/workflows/ci.yml": "9ea4c84be1b4ddf507dae79afc49d975ac6e4606d22fbca7746529d8f5d875bd",
+    ".github/workflows/codeql.yml": "da7388d22273f9851f188f137dc7321b20e4db02dfcd6df4cb05b29492098d69",
     ".github/workflows/scorecard.yml": "32586611b864795d9ebf5f127005703f07214869d97a6e132c7932834e5f2626",
+    ".github/workflows/snyk.yml": "64a0ec070bb17ad68409915d6ac3612e55c06ee4b7e5b4434eb7bd3a3f9a533b",
     ".github/workflows/no-ai-attribution.yml": "2c517d6f7eda8667c8a2eba186ef15d9e27b4c91d4617a39083b0a31f26f2834",
-    ".github/workflows/attribution-policy.yml": "c956c865c80e77d87d4f86eadee8dca6c95991ae2452db96599e6a4b402b20b1",
-    ".github/workflows/publish-archives.yml": "f85b24e289d1516bd9572b4516edc67b7aa5ef84a12c0db7cb724f234dfe2ce8",
+    ".github/workflows/attribution-policy.yml": "55eb47f6abbd0c08297bca7edf1c751193f537906092c3f4f4be0d07a1c5b3b9",
+    ".github/workflows/publish-archives.yml": "03e6a103e8d77c264c1ace50eb324e4e4244c0b4afbc6830dfd7788fff02ac26",
     ".github/workflows/release-archive.yml": "e293a419e3949931d56b15b2604002db2990ae37d29dfdb30af531ebf8256715",
-    ".github/workflows/release-python.yml": "a884408be5d8a279336a8bf7d0c86db670561839822e7e8dbf39420041499be7",
+    ".github/workflows/release-python.yml": "e28db556237ee18911054554cf40fe275e3d0db10766ef84c6a163124ae76485",
     ".github/workflows/release-skills.yml": "ba024dff4b9587833da59fae4e32b2df809ffea1198942461cf959978a294de0",
     ".github/workflows/verify-skills.yml": "113803d80bc8ab0d7bbb990cdbf10522865929a74a76aff33b8f5dd60d8e4bf0",
-    "README.md": "d73f9b28c088561693dab91874fe3bed42309fa885a0b539cf86a56dc6c1cdfb",
-    "docs/python-consumers.md": "2c80ac89e6d98c9c077865592883f96eaed72f9b27fd40c7c055ce27c4e33166",
-    "docs/pypi-publishing.md": "419a92d216cde938ab0f0711a3d1fca56842396ca973058a4ca3796a6068b694",
-    "docs/archive-consumers.md": "0e71c471994818790e54074c0c483053afcc9ffbccfac764c0e15e91ea17bfc7",
-    "docs/skill-consumers.md": "1bd40fdd13f6feafa077f83ed019ba8296a64eb698d9a18ca42a5d3651760146",
-    "docs/consumer-prerequisites.md": "369aa3c0fb8cd7a3f5f2cbceae5c3a85d2f08d673cada9a4ed3b745d1559b9de",
-    "docs/guarantees-and-evidence.md": "55591352b70163ddf1af06eac5712c24cd5b15a02941a37188b3284fc4ec6038",
+    ".github/workflows/virustotal-release.yml": "aff55c0d52905d575e9ec745582de013530bcae5e75a0df0a6d89c60657abaf0",
+    "README.md": "6bd4a7f27470b2717e7eba58e8bec6b135880290b80f9d96c466edba0aa859a1",
+    "docs/python-consumers.md": "f4a026b263cd7fdc706546249f812da336ca2b89db0ba7abbf3aca60546add9c",
+    "docs/pypi-publishing.md": "04ee182c2d6eb50c5e0e55629a78a9e280234632f8ba1218372b14a8dbe26447",
+    "docs/archive-consumers.md": "6f455e3fa4eaf4ecc8cf773e58da2a81d2eb715b1e364496dab6628a0d11e4b5",
+    "docs/skill-consumers.md": "db6d8ae9d72582cf472d60afa2cc7d5313740d2a52f06ef9f21d749c2d701456",
+    "docs/consumer-prerequisites.md": "4e0070c583a7ad88e52b9bf5810526d314c51ab24a2b2e5df2df6056becff97c",
+    "docs/guarantees-and-evidence.md": "1a5d1332e889ee3a4946a16aae4cb4b66b8314a47bb6ef9242f1cecb18266fe1",
     "docs/egress-check.md": "2d8f86aad40c65edec23d370cbfb39864cf5a101d24839055c7b2718592f5994",
     "docs/re-pinning.md": "eb1b361cf717bcbabd383e0cf5592998fe5b045ae90982b0c6dd84eda626fe0f",
     "SECURITY.md": "9f9cea868cdb60a00c98ebaa892125d83a94fba1589d55227cd239c6af7804f9",
@@ -115,6 +119,9 @@ def mutate(canonical: dict[str, bytes], name: str) -> dict[str, bytes]:
         documents[".github/workflows/extra.yml"] = (
             b"name: Extra\non: push\njobs:\n  extra:\n    runs-on: ubuntu-latest\n"
         )
+    elif name in {"stage-two-draft", "release-preflight"}:
+        path = "docs/attribution-policy-stage2.yml" if name == "stage-two-draft" else "docs/release-preflight.md"
+        documents[path] = bytes([documents[path][0] ^ 1]) + documents[path][1:]
     else:
         raise AssertionError(f"unknown mutation: {name}")
     return documents
@@ -145,6 +152,8 @@ if validate(canonical_crlf):
 adverse = (
     "dependabot-anchor",
     "workflow-extra-file",
+    "stage-two-draft",
+    "release-preflight",
 )
 for name in adverse:
     if not validate(mutate(canonical_lf, name)):

@@ -133,6 +133,8 @@ def _read_pages(
         payload = fetch_json(f"{endpoint}{joiner}per_page={_PAGE_SIZE}&page={page}")
         if not isinstance(payload, dict) or not isinstance(payload.get(key), list):
             raise RuntimeError(f"GitHub returned no {key!r} list for {endpoint}")
+        if type(payload.get("total_count")) is not int:
+            raise RuntimeError(f"GitHub returned no numeric total_count for {endpoint}")
         if page == 1:
             total = payload.get("total_count")
         elif payload.get("total_count") != total:
@@ -141,7 +143,7 @@ def _read_pages(
             # Dropping an entry we cannot read would make the listing look
             # complete while hiding whatever that entry said, and what it said
             # might be that a mandatory check failed.
-            if not isinstance(entry, dict) or not isinstance(entry.get("id"), int):
+            if not isinstance(entry, dict) or type(entry.get("id")) is not int:
                 raise RuntimeError(
                     f"{endpoint}: GitHub returned an entry with no numeric id; "
                     "refusing to judge a listing that cannot be read in full"
@@ -154,7 +156,7 @@ def _read_pages(
     if len(set(seen)) != len(seen):
         # A page repeated an entry, so an entry shifted out of view unseen.
         return None
-    if isinstance(total, int) and total != len(seen):
+    if total != len(seen):
         return None
     return items
 
@@ -164,16 +166,17 @@ def _paginate(
 ) -> list[dict[str, object]]:
     """Read every page, refusing a listing that changed while it was read.
 
-    Offset pagination is not a snapshot. A run started, re-run or removed while
-    the pages are being read shifts the rest, so one page can repeat an entry
-    and another can skip one. A skipped entry is what matters here, because it
-    could be the run whose check failed. Read again when the listing moves, and
-    fail closed rather than judge an incomplete set.
+    Count and uniqueness can survive a balanced insertion and removal. Require
+    two complete reads with identical ordered IDs, using the second read's state.
+    Fail closed when the listing does not stabilise within the bounded attempts.
     """
     for _ in range(_LISTING_ATTEMPTS):
-        items = _read_pages(fetch_json, endpoint, key)
-        if items is not None:
-            return items
+        first = _read_pages(fetch_json, endpoint, key)
+        if first is None:
+            continue
+        second = _read_pages(fetch_json, endpoint, key)
+        if second is not None and [item["id"] for item in first] == [item["id"] for item in second]:
+            return second
     raise RuntimeError(
         f"{endpoint}: the listing changed while it was read, {_LISTING_ATTEMPTS} times over"
     )
@@ -221,7 +224,9 @@ def trusted_runs(
     its run id and adds an attempt, so no field here identifies the latest
     execution.
     """
-    runs = _paginate(fetch_json, f"repos/{repository}/actions/runs?head_sha={commit}", "workflow_runs")
+    runs = _paginate(
+        fetch_json, f"repos/{repository}/actions/runs?head_sha={commit}", "workflow_runs"
+    )
     wanted = repository.casefold()
     by_workflow: dict[str, list[Run]] = {}
     for run in runs:
@@ -388,7 +393,7 @@ def check(
         verdict = evaluate(
             required, runs, lambda run_id: run_jobs(fetch_json, repository, run_id, commit)
         )
-        if not verdict.pending or clock() >= deadline:
+        if verdict.failed or not verdict.pending or clock() >= deadline:
             return verdict
         sleep(min(poll_seconds, max(deadline - clock(), 0)))
 

@@ -8,8 +8,8 @@ trap 'rm -rf "$FIXTURE"' EXIT
 export FIXTURE
 family="${1:-archives}"
 case "$family" in
-  archives) asset_names=(example-1.2.3.zip example-1.2.3.tar.gz example-1.2.3.spdx.json SHA256SUMS) ;;
-  python) asset_names=(example-1.2.3-py3-none-any.whl example-1.2.3.tar.gz example-1.2.3.spdx.json release-manifest.json SHA256SUMS) ;;
+  archives) asset_names=(example-1.2.3.zip example-1.2.3.tar.gz example-1.2.3.spdx.json SHA256SUMS example-1.2.3.intoto.jsonl) ;;
+  python) asset_names=(example-1.2.3-py3-none-any.whl example-1.2.3.tar.gz example-1.2.3.spdx.json release-manifest.json SHA256SUMS example-1.2.3.intoto.jsonl) ;;
   *) exit 64 ;;
 esac
 mkdir -p "$FIXTURE/consumer/dist" "$FIXTURE/workspace"
@@ -85,6 +85,7 @@ gh() {
         example-1.2.3.spdx.json) expected_media=application/spdx+json ;;
         release-manifest.json) expected_media=application/json ;;
         SHA256SUMS) expected_media=text/plain ;;
+        example-1.2.3.intoto.jsonl) expected_media=application/jsonl ;;
         *) return 1 ;;
       esac
       [[ "$input" = "$FIXTURE/consumer/dist/$name" || "$input" = "candidate/$name" ]] || return 1

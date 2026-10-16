@@ -32,7 +32,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install the pinned fuzzer
         run: >-
@@ -54,17 +54,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # scripts/python_release.py reads pyproject metadata with tomllib,
-        # which arrived in Python 3.11, so 3.11 is the floor under test.
-        python: ["3.11", "3.12", "3.13", "3.14"]
+        # Test the Python 3.14 minimum and current stable Python 3.15.
+        python: ["3.14", "3.15"]
         # Temporary leg on the image ubuntu-latest becomes between 19 October
-        # and 19 November 2026 (actions/runner-images#14748). "3.12.x" makes it
+        # and 19 November 2026 (actions/runner-images#14748). "3.14.x" makes it
         # a new combination, so the required check names above stay unchanged.
         # Remove it once ubuntu-latest is 26.04.
         include:
-          - python: "3.12.x"
+          - python: "3.14.x"
             runner: ubuntu-26.04
     env:
+      # Follow the CI maintenance interpreter rather than the exact local pin.
+      UV_PYTHON: ${{ matrix.python == '3.15' && '3.15' || '3.14' }}
       ACTIONLINT_VERSION: "1.7.12"
       ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
       SHELLCHECK_VERSION: "0.11.0"
@@ -79,27 +80,27 @@ jobs:
           persist-credentials: false
 
       # shellcheck and actionlint do not depend on the Python under test, so
-      # they download and run once, on the 3.12 leg, like the live canary audit.
+      # they download and run once, on the 3.14 leg, like the live canary audit.
       - name: Download and verify shellcheck
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         shell: bash
         run: |
           set -euo pipefail
-          curl -sSLO "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl --proto '=https' --proto-redir '=https' -sSLO "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
           echo "${SHELLCHECK_SHA256}  shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" | sha256sum --check
           tar -xJf "shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
 
       - name: Shellcheck the scripts and tests
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         run: |
           "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" -x scripts/*.sh tests/*.sh
 
       - name: Download and verify actionlint
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         shell: bash
         run: |
           set -euo pipefail
-          curl -sSLO "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl --proto '=https' --proto-redir '=https' -sSLO "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
           echo "${ACTIONLINT_SHA256}  actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" | sha256sum --check
           tar -xzf "actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" actionlint
 
@@ -108,7 +109,7 @@ jobs:
       # add it. Until that ships, ignore this one known false positive; remove the
       # -ignore flag once #707 lands in a release.
       - name: Actionlint the workflows
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         run: |
           ./actionlint \
             -shellcheck "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" \
@@ -127,28 +128,28 @@ jobs:
           --requirement requirements-ci.txt
 
       - name: Ruff the policy scripts and tests
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         run: python -m ruff check .
 
       - name: Type-check the policy scripts
         run: python -m mypy
 
       - name: Validate the release-family canary manifest
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         run: python scripts/check_canaries.py
 
       - name: Audit live canary pins and successful-run evidence
-        if: github.event_name == 'schedule' && matrix.python == '3.12'
+        if: github.event_name == 'schedule' && matrix.python == '3.14'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/check_canaries.py --live --require-current-evidence
 
       - name: Check repository baseline
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         run: bash tests/test_repository_baseline.sh
 
       - name: Check the published prose for egress findings
-        if: matrix.python == '3.12'
+        if: matrix.python == '3.14'
         # Layers B and C only: the layer A terms file is private and never
         # reaches CI, which is the point of keeping it out of the repository.
         # --allow-structural because SECURITY.md names a dotenv file in prose,
@@ -179,6 +180,22 @@ jobs:
           python -m coverage xml --include="scripts/*.py" -o coverage.xml
           diff-cover coverage.xml --compare-branch=origin/main --branch-coverage --fail-under=100
 
+      - name: Require complete coverage of the policy scripts
+        if: matrix.python == '3.15'
+        run: python -m coverage report --fail-under=100
+
+      - name: Write whole-package coverage for Codecov
+        if: matrix.python == '3.15'
+        run: python -m coverage xml -o coverage-codecov.xml
+
+      - name: Keep the coverage report for the Codecov upload
+        if: matrix.python == '3.15'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-codecov
+          path: coverage-codecov.xml
+          retention-days: 1
+
       - name: Run determinism test
         run: bash tests/test_determinism.sh
 
@@ -193,8 +210,14 @@ jobs:
 
   windows:
     timeout-minutes: 15
-    name: shell tests (Windows)
+    name: shell tests (Windows, ${{ matrix.part }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # scripts/publish_common.sh writes fixed /tmp paths, so the two
+        # publication families cannot run concurrently on one runner.
+        part: [gates, archives, python]
     defaults:
       run:
         shell: bash
@@ -210,7 +233,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
 
       - name: Install the pinned build tool
         run: >-
@@ -218,18 +241,56 @@ jobs:
           --requirement requirements-build.txt
 
       - name: Check repository baseline
+        if: matrix.part == 'gates'
         run: bash tests/test_repository_baseline.sh
 
-      - name: Run gate and publication tests
-        # test_gates.sh runs test_publish_releases.sh for both release families.
-        # Its byte-exact fixtures exercise CRLF regardless of checkout settings.
+      - name: Run gate tests
+        if: matrix.part == 'gates'
+        # The publication families run in the other matrix legs.
+        # test_gates.sh's byte-exact fixtures exercise CRLF regardless of checkout settings.
+        env:
+          GATES_SKIP_PUBLICATION: "1"
         run: bash tests/test_gates.sh
 
       - name: Run commit-msg hook tests
+        if: matrix.part == 'gates'
         run: bash tests/test_commit_msg_hook.sh
 
       - name: Run determinism test
+        if: matrix.part == 'gates'
         run: bash tests/test_determinism.sh
+
+      - name: Run ${{ matrix.part }} publication tests
+        if: matrix.part != 'gates'
+        env:
+          PART: ${{ matrix.part }}
+        run: bash tests/test_publish_releases.sh "$PART"
+
+  # The upload runs apart from the tests so the OIDC token is never available
+  # while test code runs. It is exempt from ci-gates: a Codecov outage must
+  # not block merges.
+  codecov:
+    name: upload coverage to Codecov
+    needs: checks
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # Authenticate the Codecov upload with OIDC; no stored token.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-codecov
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          files: coverage-codecov.xml
+          disable_search: true
+          fail_ci_if_error: true
 
   ci-gates:
     # The one context branch protection requires from this workflow. It fails
@@ -243,6 +304,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -252,4 +316,4 @@ jobs:
       - name: Require every job to be listed, kept and successful
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: python3 .github/ci/check_gates.py .github/workflows/ci.yml ci-gates --exempt fuzzing
+        run: python3 .github/ci/check_gates.py .github/workflows/ci.yml ci-gates --exempt fuzzing --exempt codecov

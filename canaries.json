@@ -1,13 +1,13 @@
 {
   "families": [
     {
-      "current_policy_sha": "87767ec809dc7f77bcd45808219adaf67841ae7b",
+      "current_policy_sha": "a601f1d8b143f92b0517f709216993660d21f480",
       "evidence": {
-        "head_sha": "9d7ba2ab9b6f68c3170583bc0620e40bb962e6bd",
-        "policy_sha": "87767ec809dc7f77bcd45808219adaf67841ae7b",
-        "ref": "v0.2.1",
-        "run_id": 37223150857,
-        "started_at": "2026-10-04T18:07:11Z"
+        "head_sha": "84db0481a924f07d3f697f54a269917475613184",
+        "policy_sha": "a601f1d8b143f92b0517f709216993660d21f480",
+        "ref": "v0.3.0",
+        "run_id": 38476463432,
+        "started_at": "2026-10-13T22:14:52Z"
       },
       "family": "archive",
       "policy_workflow": ".github/workflows/release-archive.yml",
@@ -15,13 +15,13 @@
       "workflow_path": ".github/workflows/release.yml"
     },
     {
-      "current_policy_sha": "ec6b0ee76446f11aefb7fa0c203f2e01b4c9a711",
+      "current_policy_sha": "a601f1d8b143f92b0517f709216993660d21f480",
       "evidence": {
-        "head_sha": "4dad67630f760745055deeee7bf3973f2f066394",
-        "policy_sha": "ec6b0ee76446f11aefb7fa0c203f2e01b4c9a711",
-        "ref": "review-ready-gate/v0.2.0",
-        "run_id": 37221476851,
-        "started_at": "2026-10-04T17:41:34Z"
+        "head_sha": "1af8a855578afaec97bd2e56836a8aa8fb15e729",
+        "policy_sha": "a601f1d8b143f92b0517f709216993660d21f480",
+        "ref": "review-ready-gate/v0.3.0",
+        "run_id": 38488518422,
+        "started_at": "2026-10-14T00:09:26Z"
       },
       "family": "python",
       "policy_workflow": ".github/workflows/release-python.yml",
@@ -30,13 +30,13 @@
       "workflow_path": ".github/workflows/release-review-ready-gate.yml"
     },
     {
-      "current_policy_sha": "87767ec809dc7f77bcd45808219adaf67841ae7b",
+      "current_policy_sha": "a601f1d8b143f92b0517f709216993660d21f480",
       "evidence": {
-        "head_sha": "2e16e47016c6451c0fe8fc8af8a47cf7e7fc3034",
-        "policy_sha": "87767ec809dc7f77bcd45808219adaf67841ae7b",
-        "ref": "v0.3.1",
-        "run_id": 37189530651,
-        "started_at": "2026-10-04T08:37:35Z"
+        "head_sha": "75b86c77ebc8c926f1f98e5b6389acefee675cd8",
+        "policy_sha": "a601f1d8b143f92b0517f709216993660d21f480",
+        "ref": "v0.4.0",
+        "run_id": 38487755260,
+        "started_at": "2026-10-14T00:01:39Z"
       },
       "family": "skills",
       "policy_workflow": ".github/workflows/release-skills.yml",
@@ -44,7 +44,7 @@
       "workflow_path": ".github/workflows/release.yml"
     },
     {
-      "current_policy_sha": "87767ec809dc7f77bcd45808219adaf67841ae7b",
+      "current_policy_sha": "a601f1d8b143f92b0517f709216993660d21f480",
       "evidence": {
         "head_sha": "87813095c184be57bedaeaf7d9d82a8518fa60f8",
         "policy_sha": "171aa487dbc0a8f437ed84407f0d506f814548c1",

@@ -2,7 +2,7 @@
 # Publish one already-gated Python candidate without executing consumer code.
 set -euo pipefail
 
-if [ "$#" -ne 5 ]; then
+if [[ "$#" -ne 5 ]]; then
   echo "usage: publish_python.sh TAG EXPECTED_COMMIT STEM VERSION SOURCE_PATH" >&2
   exit 64
 fi
@@ -16,7 +16,10 @@ sdist="candidate/$base.tar.gz"
 sbom="candidate/$base.spdx.json"
 manifest="candidate/release-manifest.json"
 checksums="candidate/SHA256SUMS"
-assets=("$wheel" "$sdist" "$sbom" "$manifest" "$checksums")
+# The signed provenance bundle the workflow wrote after attestation. The
+# manifest and SHA256SUMS cannot list it: the attestation covers them.
+provenance="candidate/$base.intoto.jsonl"
+assets=("$wheel" "$sdist" "$sbom" "$manifest" "$checksums" "$provenance")
 
 # shellcheck source=scripts/publish_common.sh
 . "$(dirname "$0")/publish_common.sh"
@@ -28,4 +31,5 @@ upload_asset "$sdist" application/gzip
 upload_asset "$sbom" application/spdx+json
 upload_asset "$manifest" application/json
 upload_asset "$checksums" text/plain
+upload_asset "$provenance" application/jsonl
 finalise_release

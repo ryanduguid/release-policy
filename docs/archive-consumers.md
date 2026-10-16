@@ -13,7 +13,7 @@ Source-only callers use the separate family workflow:
         with:
           artifact-stem: accounting-excel-toolkit
           required-checks: |
-            .github/workflows/ci.yml: test (3.12)
+            .github/workflows/ci.yml: test (3.14)
 
 The root defaults above also apply to source archives. A nested source-only
 component uses:
@@ -31,7 +31,7 @@ component uses:
           source-directory: adapters/accounting-excel-toolkit
           tag-prefix: accounting-excel-toolkit
           required-checks: |
-            .github/workflows/standard-library-components.yml: verify (adapters/accounting-excel-toolkit, 3.12)
+            .github/workflows/standard-library-components.yml: verify (adapters/accounting-excel-toolkit, 3.14)
 
 `required-checks` has the same meaning as for the
 [packaged-Python workflow](python-consumers.md): the named consumer checks must
@@ -47,7 +47,10 @@ The version file is always the tracked `VERSION` file. The workflow accepts
 no arbitrary test command, build command or asset glob. It runs the fixed
 unittest contract, builds deterministic ZIP and tar.gz source archives from
 the tagged commit, generates an SPDX SBOM, and publishes exactly those 3
-files plus `SHA256SUMS` after inspecting the exact draft returned by GitHub.
+files plus `SHA256SUMS` and the signed provenance bundle
+`<stem>-<version>.intoto.jsonl` after inspecting the exact draft returned by
+GitHub. `SHA256SUMS` does not list the bundle, because the attestation covers
+`SHA256SUMS` and is created after it.
 
 ## Test dependency hashes
 

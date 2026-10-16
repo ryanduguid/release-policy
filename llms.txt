@@ -1,0 +1,31 @@
+# release-policy
+
+> Reusable GitHub Actions workflows for releases, provenance attestations and Python
+> package checks, shared by Ryan Duguid's repositories. Consumers pin a full policy
+> commit. Policy checks establish release evidence, not accounting correctness.
+
+This repository has no package installation command. `v0.1.0` is a notes-only
+historical source marker, not a distributable module release.
+
+## Start
+
+- [README](https://github.com/ryanduguid/release-policy#readme): the recorded consumer canary, release status and consumer guides.
+- [Guarantees and canary evidence](https://github.com/ryanduguid/release-policy/blob/main/docs/guarantees-and-evidence.md): what the policy does and does not establish.
+- [canaries.json](https://github.com/ryanduguid/release-policy/blob/main/canaries.json): each consumer's source commit, policy SHA and run identity.
+
+## Consumer guides
+
+- [Packaged Python](https://github.com/ryanduguid/release-policy/blob/main/docs/python-consumers.md)
+- [PyPI hand-off and one-time setup](https://github.com/ryanduguid/release-policy/blob/main/docs/pypi-publishing.md)
+- [Source archives](https://github.com/ryanduguid/release-policy/blob/main/docs/archive-consumers.md)
+- [Skill verification and releases](https://github.com/ryanduguid/release-policy/blob/main/docs/skill-consumers.md)
+- [Attribution checks](https://github.com/ryanduguid/release-policy/blob/main/docs/attribution-consumers.md)
+- [The egress check](https://github.com/ryanduguid/release-policy/blob/main/docs/egress-check.md)
+- [Independent PR reviews with your own API key](https://github.com/ryanduguid/release-policy/blob/main/docs/pr-review.md)
+- [Prerequisites](https://github.com/ryanduguid/release-policy/blob/main/docs/consumer-prerequisites.md)
+- [Re-pinning consumers](https://github.com/ryanduguid/release-policy/blob/main/docs/re-pinning.md)
+- [Shared-policy decision](https://github.com/ryanduguid/release-policy/blob/main/docs/adr/0001-shared-release-policy.md)
+
+## Related
+
+- [Evidence and assurance](https://duguid.com.au/evidence/#security-tests-and-release-evidence): how the author's tools use this policy.

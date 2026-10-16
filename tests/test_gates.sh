@@ -8,12 +8,16 @@ command -v python3 >/dev/null 2>&1 || export PYTHON=python
 
 run_case() {
   local name="$1"; shift
+  local started=$SECONDS
   if "$@" >/dev/null 2>&1; then echo "ok   $name"; else echo "FAIL $name"; FAILURES=$((FAILURES+1)); fi
+  printf 'elapsed %ss: %s\n' "$((SECONDS-started))" "$name"
 }
 
 expect_fail() {
   local name="$1"; shift
+  local started=$SECONDS
   if "$@" >/dev/null 2>&1; then echo "FAIL $name (expected failure)"; FAILURES=$((FAILURES+1)); else echo "ok   $name"; fi
+  printf 'elapsed %ss: %s\n' "$((SECONDS-started))" "$name"
 }
 
 make_repo() {
@@ -29,7 +33,7 @@ make_repo() {
 
 finish() {
   echo "----"
-  if [ "$FAILURES" -eq 0 ]; then echo "all gate tests passed"; else echo "$FAILURES gate test(s) failed"; exit 1; fi
+  if [[ "$FAILURES" -eq 0 ]]; then echo "all gate tests passed"; else echo "$FAILURES gate test(s) failed"; exit 1; fi
 }
 
 # shellcheck source=scripts/gates.sh
@@ -353,8 +357,11 @@ expect_fail "archive release rejects an artifact stem and prefix mismatch" \
     "packages/target-prefix" "target-prefix"
 unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
 
-run_case "archive publication preserves draft ownership" bash "$HERE/test_publish_releases.sh"
+# Windows CI runs each publication family on its own runner and sets this.
+if [[ "${GATES_SKIP_PUBLICATION:-0}" != 1 ]]; then
+  run_case "archive publication preserves draft ownership" bash "$HERE/test_publish_releases.sh"
 
-run_case "Python publication preserves release verification" bash "$HERE/test_publish_releases.sh" python
+  run_case "Python publication preserves release verification" bash "$HERE/test_publish_releases.sh" python
+fi
 
 finish
