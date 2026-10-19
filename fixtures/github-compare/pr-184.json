@@ -1,0 +1,220 @@
+{
+  "_source": {
+    "endpoint": "repos/ryanduguid/release-policy/compare/852ee76ac538de9e94cfb9bc0a8118d63900efd2...db555fb",
+    "api_version": "2026-03-10",
+    "captured": "2026-10-20",
+    "note": "Real response from api.github.com, reduced to the fields gate_main_contains reads; file records keep their original keys."
+  },
+  "status": "ahead",
+  "ahead_by": 1,
+  "behind_by": 0,
+  "total_commits": 1,
+  "base_commit": {
+    "sha": "852ee76ac538de9e94cfb9bc0a8118d63900efd2"
+  },
+  "merge_base_commit": {
+    "sha": "852ee76ac538de9e94cfb9bc0a8118d63900efd2"
+  },
+  "files": [
+    {
+      "filename": ".github/dependabot.yml",
+      "status": "modified"
+    },
+    {
+      "filename": ".github/workflows/ci.yml",
+      "status": "modified"
+    },
+    {
+      "filename": ".github/workflows/codeql.yml",
+      "status": "modified"
+    },
+    {
+      "filename": ".gitignore",
+      "status": "modified"
+    },
+    {
+      "filename": ".pre-commit-config.yaml",
+      "status": "modified"
+    },
+    {
+      "filename": "AGENTS.md",
+      "status": "modified"
+    },
+    {
+      "filename": "CONTRIBUTING.md",
+      "status": "modified"
+    },
+    {
+      "filename": "Cargo.lock",
+      "status": "added"
+    },
+    {
+      "filename": "Cargo.toml",
+      "status": "added"
+    },
+    {
+      "filename": "NOTICE",
+      "status": "modified"
+    },
+    {
+      "filename": "docs/rust-cli.md",
+      "status": "added"
+    },
+    {
+      "filename": "fuzz/Cargo.lock",
+      "status": "added"
+    },
+    {
+      "filename": "fuzz/Cargo.toml",
+      "status": "added"
+    },
+    {
+      "filename": "fuzz/fuzz_targets/policy_parsers.rs",
+      "status": "added"
+    },
+    {
+      "filename": "rust-toolchain.toml",
+      "status": "added"
+    },
+    {
+      "filename": "src/archives.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/attribution.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/check_canaries.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/check_reviews.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/cli_checks.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/common.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/egress.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/fuzz.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/git_revision.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/lib.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/main.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/pin_families.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/py.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/pyjson.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/pyunicode.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/release.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/required_checks.rs",
+      "status": "added"
+    },
+    {
+      "filename": "src/verify_skills.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/attribution_status.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/check_canaries.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/check_egress.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/check_reviews.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/data/python_goldens.json",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/entry_points.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/fake_gh.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/fuzz_harness.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/git_revision.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/goldens.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/pin_families.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/python_release.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/release_archives.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/required_checks.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/support/mod.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/rust/verify_skills.rs",
+      "status": "added"
+    },
+    {
+      "filename": "tests/test_repository_baseline.sh",
+      "status": "modified"
+    }
+  ]
+}

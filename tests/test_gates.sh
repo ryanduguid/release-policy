@@ -137,19 +137,156 @@ make_repo
 stub_dir="$(mktemp -d)"
 cat > "$stub_dir/gh" <<'STUB'
 #!/usr/bin/env bash
-# Stub: emits canned responses driven by env vars.
+# Stub: emits canned responses driven by env vars. The main ref goes through
+# the caller's --jq filter, as gh would apply it, so its parsing is tested.
+filter=""
+for ((i=1; i<=$#; i++)); do
+  if [[ "${!i}" = --jq ]]; then j=$((i+1)); filter="${!j}"; fi
+done
 case "$*" in
-  *git/ref/heads/main*) printf '%s\n' "${STUB_MAIN_SHA:?}" ;;
+  *git/ref/heads/main*)
+    ref="${STUB_MAIN_REF:-}"
+    [[ -n "$ref" ]] || ref="$(jq -cn --arg sha "${STUB_MAIN_SHA:?}" \
+      '{ref: "refs/heads/main", object: {type: "commit", sha: $sha}}')"
+    printf '%s\n' "$ref" | jq -r "$filter"
+    [[ -z "${STUB_MAIN_FAIL:-}" ]] || exit 1 ;;
+  *"repos/ryanduguid/example/compare/${STUB_COMPARE_RANGE:-none}")
+    printf '%s\n' "${STUB_COMPARE:?}"
+    [[ -z "${STUB_COMPARE_FAIL:-}" ]] || exit 1 ;;
   *releases*)           printf '%s'   "${STUB_RELEASE_IDS:-}" ;;
   *) echo "stub gh: unexpected args: $*" >&2; exit 64 ;;
 esac
 STUB
 chmod +x "$stub_dir/gh"
 export GH="$stub_dir/gh"
+export GITHUB_WORKFLOW_REF="ryanduguid/example/.github/workflows/release.yml@refs/tags/v1.2.3"
 
-export STUB_MAIN_SHA="abc123"
-run_case  "main matches"                  gate_main_matches "abc123" "ryanduguid/example"
-expect_fail "main mismatch"               gate_main_matches "def456" "ryanduguid/example"
+head_commit="$(printf 'a%.0s' {1..40})"
+old_commit="$(printf 'b%.0s' {1..40})"
+other_commit="$(printf 'c%.0s' {1..40})"
+
+# compare_response STATUS MERGE_BASE FILE... writes a compare response for
+# old_commit...head_commit (COMPARE_BASE overrides the base); each FILE is
+# "name" or "old=>new" for a rename.
+compare_response() {
+  local status="$1" merge_base="$2"; shift 2
+  STUB_COMPARE="$(printf '%s\n' "$@" | jq -Rn \
+    --arg status "$status" --arg merge_base "$merge_base" --arg base "${COMPARE_BASE:-$old_commit}" '
+      {status: $status, base_commit: {sha: $base}, merge_base_commit: {sha: $merge_base},
+       files: [inputs | select(. != "") | split("=>")
+               | if length == 2
+                 then {filename: .[1], previous_filename: .[0], status: "renamed"}
+                 else {filename: .[0], status: "modified"} end]}')"
+  export STUB_COMPARE
+}
+contains() { gate_main_contains "$old_commit" "ryanduguid/example" "${1-packages/example-tool}"; }
+
+export STUB_MAIN_SHA="$head_commit" STUB_COMPARE_RANGE="$old_commit...$head_commit"
+run_case  "main matches"                  gate_main_matches "$head_commit" "ryanduguid/example"
+expect_fail "main mismatch"               gate_main_matches "$old_commit" "ryanduguid/example"
+STUB_MAIN_FAIL=1 expect_fail "a failed main read fails even when it printed the head" \
+  gate_main_matches "$head_commit" "ryanduguid/example"
+run_case "main head is contained" \
+  gate_main_contains "$head_commit" "ryanduguid/example" "."
+compare_response ahead "$old_commit" "packages/other-tool/source.py" "README.md" \
+  ".github/workflows/ci.yml"
+run_case "ancestor with only other paths changed passes" contains
+expect_fail "the first gate still refuses that ancestor" \
+  gate_main_matches "$old_commit" "ryanduguid/example"
+STUB_MAIN_FAIL=1 expect_fail "a failed main read fails the later gate" contains
+STUB_COMPARE_FAIL=1 expect_fail "a failed comparison fails even when it printed a pass" contains
+for ref in '{"ref":"refs/heads/main","object":{"type":"commit","sha":"aaaa"}}' \
+  '{"ref":"refs/heads/other","object":{"type":"commit","sha":"'"$head_commit"'"}}' \
+  '{"ref":"refs/heads/main","object":{"type":"tag","sha":"'"$head_commit"'"}}' \
+  '{"ref":"refs/heads/main"}'; do
+  STUB_MAIN_REF="$ref" expect_fail "an unusable main ref fails: $ref" contains
+done
+GITHUB_WORKFLOW_REF="" expect_fail "a missing caller workflow ref fails" contains
+GITHUB_WORKFLOW_REF="someone/else/.github/workflows/release.yml@refs/tags/v1.2.3" \
+  expect_fail "a caller workflow in another repository fails" contains
+GITHUB_WORKFLOW_REF="ryanduguid/example/../release.yml@refs/tags/v1.2.3" \
+  expect_fail "a caller outside .github/workflows fails" contains
+GITHUB_WORKFLOW_REF=".github/workflows/release.yml" \
+  expect_fail "a caller ref without repository and ref fails" contains
+GITHUB_WORKFLOW_REF="ryanduguid/example/.github/workflows/release python.yml@refs/tags/v1.2.3" \
+  run_case "a caller filename with a space is accepted" contains
+# Inputs are checked even when the release commit is main's head.
+GITHUB_WORKFLOW_REF="" expect_fail "a missing caller workflow ref fails at main's head" \
+  gate_main_contains "$head_commit" "ryanduguid/example" "."
+expect_fail "an empty source directory fails at main's head" \
+  gate_main_contains "$head_commit" "ryanduguid/example" ""
+STUB_COMPARE_RANGE="bbbbbbb...$head_commit" \
+  STUB_COMPARE="$(jq -c '.base_commit.sha = "bbbbbbb" | .merge_base_commit.sha = "bbbbbbb"' <<<"$STUB_COMPARE")" \
+  expect_fail "an abbreviated release commit fails" \
+  gate_main_contains "bbbbbbb" "ryanduguid/example" "packages/example-tool"
+compare_response ahead "$old_commit" "packages/example-tool-two/source.py"
+run_case "a sibling sharing the directory name prefix is another component" contains
+expect_fail "an empty source directory fails closed" contains ""
+expect_fail "a missing source directory fails closed" \
+  gate_main_contains "$old_commit" "ryanduguid/example"
+compare_response ahead "$old_commit" "packages/example-tool/source.py"
+expect_fail "ancestor with the component changed since fails" contains
+compare_response ahead "$old_commit" ".github/workflows/release.yml"
+expect_fail "a change to the caller workflow fails" contains
+compare_response ahead "$old_commit" ".github/workflows/release.yml=>.github/workflows/old.yml"
+expect_fail "a rename of the caller workflow fails" contains
+compare_response ahead "$old_commit" "packages/example-tool/old.py=>packages/moved/old.py"
+expect_fail "a rename out of the component counts as a change" contains
+compare_response ahead "$old_commit" "packages/moved/new.py=>packages/example-tool/new.py"
+expect_fail "a rename into the component counts as a change" contains
+compare_response ahead "$old_commit" "packages/example-tool"
+expect_fail "a file at the component path counts as a change" contains
+compare_response ahead "$old_commit" "packages/other-tool/source.py"
+expect_fail "a root release fails on any change since its commit" contains "."
+compare_response ahead "$old_commit"
+run_case "a root release passes when the trees match" contains "."
+compare_response diverged "$other_commit" "packages/other-tool/source.py"
+expect_fail "a commit that is not an ancestor of main fails" contains
+compare_response behind "$old_commit"
+expect_fail "a commit ahead of main fails" contains
+compare_response ahead "$other_commit" "packages/other-tool/source.py"
+expect_fail "an ahead status with another merge base fails" contains
+compare_response ahead "$old_commit" "packages/other-tool/source.py"
+STUB_COMPARE="$(jq -c --arg sha "$other_commit" '.base_commit.sha = $sha' <<<"$STUB_COMPARE")" \
+  expect_fail "a comparison of another base commit fails" contains
+for record in '{"filename":""}' '{"filename":null}' '"README.md"' \
+  '{"filename":"README.md","status":"renamed"}' \
+  '{"filename":"README.md","status":"renamed","previous_filename":false}' \
+  '{"filename":"README.md","previous_filename":""}' \
+  '{"filename":"README.md"}' '{"filename":"README.md","status":null}' \
+  '{"filename":"README.md","status":1}' '{"filename":"README.md","status":"moved"}'; do
+  STUB_COMPARE="$(jq -c --argjson record "$record" '.files += [$record]' <<<"$STUB_COMPARE")" \
+    expect_fail "a malformed file record fails: $record" contains
+done
+mapfile -t many_files < <(seq -f "packages/other-tool/f%g.py" 1 300)
+compare_response ahead "$old_commit" "${many_files[@]}"
+expect_fail "a possibly truncated file list fails closed" contains
+compare_response ahead "$old_commit" "${many_files[@]:1}"
+run_case "299 unrelated changed files pass" contains
+STUB_COMPARE="$(jq -c 'del(.files)' <<<"$STUB_COMPARE")" \
+  expect_fail "a response without a file list fails closed" contains
+STUB_COMPARE="$(jq -c '.files = {"a": {"filename": "README.md", "status": "modified"}}' <<<"$STUB_COMPARE")" \
+  expect_fail "a file list that is not an array fails closed" contains
+
+# Real compare responses captured from api.github.com (see each _source).
+# real_compare FIXTURE HEAD serves FIXTURE for base...HEAD with main at HEAD.
+real_compare() {
+  STUB_COMPARE="$(cat "$HERE/../fixtures/github-compare/$1")"
+  real_base="$(jq -r .base_commit.sha <<<"$STUB_COMPARE")"
+  export STUB_COMPARE STUB_MAIN_SHA="$2" STUB_COMPARE_RANGE="$real_base...$2"
+}
+real_compare pr-184.json db555fbbeb74b3f41fc5b535d70527cbcd09f758
+run_case "a real comparison passes a component it left untouched" \
+  gate_main_contains "$real_base" "ryanduguid/example" "scripts"
+expect_fail "a real comparison fails a component it changed" \
+  gate_main_contains "$real_base" "ryanduguid/example" "src"
+GITHUB_WORKFLOW_REF="ryanduguid/example/.github/workflows/ci.yml@refs/tags/v1.2.3" \
+  expect_fail "a real comparison fails a caller workflow it changed" \
+  gate_main_contains "$real_base" "ryanduguid/example" "scripts"
+real_compare rename.json 171aa487dbc0a8f437ed84407f0d506f814548c1
+run_case "a real rename record is readable and passes an untouched component" \
+  gate_main_contains "$real_base" "ryanduguid/example" "src"
+unset STUB_COMPARE STUB_COMPARE_RANGE real_base
 
 export STUB_RELEASE_IDS=""
 run_case  "no existing release"           gate_no_existing_release "v1.2.3" "ryanduguid/example"
@@ -281,7 +418,20 @@ run_case "Python release accepts dotted distribution normalised to its prefix" \
   run_release_gates "demo-pkg/v1.2.3" "$head_sha" \
     "ryanduguid/example" "pyproject" "pyproject.toml" \
     "packages/demo-pkg" "demo-pkg"
-unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
+export STUB_MAIN_SHA="$other_commit" STUB_COMPARE_RANGE="$head_sha...$other_commit"
+COMPARE_BASE="$head_sha" compare_response ahead "$head_sha" "packages/target-prefix/source.py"
+run_case "Python entrypoint passes after an unrelated merge to main" \
+  run_release_gates "payday-super-checker/v1.2.3" "$head_sha" \
+    "ryanduguid/example" "pyproject" "pyproject.toml" \
+    "packages/payday-super-checker" "payday-super-checker"
+COMPARE_BASE="$head_sha" compare_response ahead "$head_sha" "packages/payday-super-checker/source.py"
+moved_out="$(mktemp)"
+GITHUB_OUTPUT="$moved_out" expect_fail "Python entrypoint fails after a merge that changed the component" \
+  run_release_gates "payday-super-checker/v1.2.3" "$head_sha" \
+    "ryanduguid/example" "pyproject" "pyproject.toml" \
+    "packages/payday-super-checker" "payday-super-checker"
+run_case "a refused Python entrypoint writes no outputs" test ! -s "$moved_out"
+unset GH STUB_MAIN_SHA STUB_RELEASE_IDS STUB_COMPARE STUB_COMPARE_RANGE
 
 # --- source-archive metadata ---
 make_repo
@@ -355,7 +505,20 @@ expect_fail "archive release rejects an artifact stem and prefix mismatch" \
   run_archive_release_gates "target-prefix/v1.2.3" "$head_sha" \
     "ryanduguid/example" "sibling-archive" "VERSION" \
     "packages/target-prefix" "target-prefix"
-unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
+export STUB_MAIN_SHA="$other_commit" STUB_COMPARE_RANGE="$head_sha...$other_commit"
+COMPARE_BASE="$head_sha" compare_response ahead "$head_sha" "packages/target-prefix/VERSION"
+run_case "archive entrypoint passes after an unrelated merge to main" \
+  run_archive_release_gates "example-toolkit/v1.2.3" "$head_sha" \
+    "ryanduguid/example" "example-toolkit" "VERSION" \
+    "packages/example-toolkit" "example-toolkit"
+COMPARE_BASE="$head_sha" compare_response ahead "$head_sha" ".github/workflows/release.yml"
+moved_archive_out="$(mktemp)"
+GITHUB_OUTPUT="$moved_archive_out" expect_fail "archive entrypoint fails after a merge that changed the caller" \
+  run_archive_release_gates "example-toolkit/v1.2.3" "$head_sha" \
+    "ryanduguid/example" "example-toolkit" "VERSION" \
+    "packages/example-toolkit" "example-toolkit"
+run_case "a refused archive entrypoint writes no outputs" test ! -s "$moved_archive_out"
+unset GH STUB_MAIN_SHA STUB_RELEASE_IDS STUB_COMPARE STUB_COMPARE_RANGE
 
 # Windows CI runs each publication family on its own runner and sets this.
 if [[ "${GATES_SKIP_PUBLICATION:-0}" != 1 ]]; then
