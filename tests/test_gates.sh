@@ -267,7 +267,26 @@ STUB_COMPARE="$(jq -c 'del(.files)' <<<"$STUB_COMPARE")" \
   expect_fail "a response without a file list fails closed" contains
 STUB_COMPARE="$(jq -c '.files = {"a": {"filename": "README.md", "status": "modified"}}' <<<"$STUB_COMPARE")" \
   expect_fail "a file list that is not an array fails closed" contains
-unset STUB_COMPARE STUB_COMPARE_RANGE
+
+# Real compare responses captured from api.github.com (see each _source).
+# real_compare FIXTURE HEAD serves FIXTURE for base...HEAD with main at HEAD.
+real_compare() {
+  STUB_COMPARE="$(cat "$HERE/../fixtures/github-compare/$1")"
+  real_base="$(jq -r .base_commit.sha <<<"$STUB_COMPARE")"
+  export STUB_COMPARE STUB_MAIN_SHA="$2" STUB_COMPARE_RANGE="$real_base...$2"
+}
+real_compare pr-184.json db555fbbeb74b3f41fc5b535d70527cbcd09f758
+run_case "a real comparison passes a component it left untouched" \
+  gate_main_contains "$real_base" "ryanduguid/example" "scripts"
+expect_fail "a real comparison fails a component it changed" \
+  gate_main_contains "$real_base" "ryanduguid/example" "src"
+GITHUB_WORKFLOW_REF="ryanduguid/example/.github/workflows/ci.yml@refs/tags/v1.2.3" \
+  expect_fail "a real comparison fails a caller workflow it changed" \
+  gate_main_contains "$real_base" "ryanduguid/example" "scripts"
+real_compare rename.json 171aa487dbc0a8f437ed84407f0d506f814548c1
+run_case "a real rename record is readable and passes an untouched component" \
+  gate_main_contains "$real_base" "ryanduguid/example" "src"
+unset STUB_COMPARE STUB_COMPARE_RANGE real_base
 
 export STUB_RELEASE_IDS=""
 run_case  "no existing release"           gate_no_existing_release "v1.2.3" "ryanduguid/example"

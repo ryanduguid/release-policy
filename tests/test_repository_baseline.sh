@@ -43,7 +43,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/publish-archives.yml": "1fcfd0146182c6ee2f2edcd854d5300c5ab970337579d445cdcab6d2629b59ca",
     ".github/workflows/release-archive.yml": "f48381cd714886a0f9dca8b532f4d7a1316ee2d16887131270fb03775f741483",
     ".github/workflows/release-python.yml": "d6d078b210581dc29749052570b604421afced78db7e651b7ec230cb20872377",
-    ".github/workflows/release-skills.yml": "4d4f28a80fafecb507aa0ea045c91a23803e68a605ce167df8bbc8eb14975493",
+    ".github/workflows/release-skills.yml": "76a7f1996881def9f6f58e4ffdbe7a5a39557aa0e333fc445d6850be05ed2e81",
     ".github/workflows/verify-skills.yml": "6b3fc08d2a35bb65a1b61dc58df1c73a3b067ba1997c87b908342fa7d53fff18",
     ".github/workflows/virustotal-release.yml": "aff55c0d52905d575e9ec745582de013530bcae5e75a0df0a6d89c60657abaf0",
     "README.md": "6bd4a7f27470b2717e7eba58e8bec6b135880290b80f9d96c466edba0aa859a1",
