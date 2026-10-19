@@ -34,7 +34,9 @@ jobs:
   checks:
     timeout-minutes: 15
     name: require the consumer's mandatory checks
-    runs-on: ubuntu-latest
+    # Pinned whilst ubuntu-latest moves to 26.04 (actions/runner-images#14748), so a
+    # release never changes image mid-run. Move every release family together.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: read # Read this repository's own workflow runs for the release commit.
@@ -81,7 +83,7 @@ jobs:
     needs: checks
     timeout-minutes: 15
     name: gate, build, attest and publish source archives
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       attestations: write
       contents: write
