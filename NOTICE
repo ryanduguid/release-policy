@@ -3,3 +3,7 @@ Copyright 2026 Ryan Duguid
 
 This product includes work by Ryan Duguid
 (https://github.com/ryanduguid/release-policy).
+
+src/pyunicode.rs holds character tables generated from the Unicode Character
+Database as distributed with CPython 3.15.0 (Unicode 17.0.0), under the
+Unicode License v3.

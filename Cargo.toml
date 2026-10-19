@@ -1,0 +1,89 @@
+[package]
+name = "release-policy"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+description = "Release and review policy command line tooling"
+license = "Apache-2.0"
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+clap = { version = "4.6.7", features = ["derive"] }
+fancy-regex = "0.19.2"
+num-bigint = "0.4.8"
+num-traits = "0.2.19"
+regex = "1.13.1"
+ruff_python_parser = "0.0.18"
+ruff_text_size = "0.0.18"
+ruff_python_ast = "0.0.18"
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
+sha2 = "0.11.1"
+tempfile = "3.27.0"
+toml = "1"
+
+[dev-dependencies]
+num-bigint = "0.4.8"
+
+# A stand-in `gh` for the integration tests and the differential harness.
+[[bin]]
+name = "fake-gh"
+path = "tests/rust/fake_gh.rs"
+test = false
+doc = false
+
+[[test]]
+name = "goldens"
+path = "tests/rust/goldens.rs"
+
+[[test]]
+name = "pin_families"
+path = "tests/rust/pin_families.rs"
+
+[[test]]
+name = "attribution_status"
+path = "tests/rust/attribution_status.rs"
+
+[[test]]
+name = "check_reviews"
+path = "tests/rust/check_reviews.rs"
+
+[[test]]
+name = "python_release"
+path = "tests/rust/python_release.rs"
+
+[[test]]
+name = "check_egress"
+path = "tests/rust/check_egress.rs"
+
+[[test]]
+name = "release_archives"
+path = "tests/rust/release_archives.rs"
+
+[[test]]
+name = "check_canaries"
+path = "tests/rust/check_canaries.rs"
+
+[[test]]
+name = "required_checks"
+path = "tests/rust/required_checks.rs"
+
+[[test]]
+name = "fuzz_harness"
+path = "tests/rust/fuzz_harness.rs"
+
+[[test]]
+name = "entry_points"
+path = "tests/rust/entry_points.rs"
+
+[[test]]
+name = "git_revision"
+path = "tests/rust/git_revision.rs"
+
+[[test]]
+name = "verify_skills"
+path = "tests/rust/verify_skills.rs"
+
+[profile.release]
+codegen-units = 1
+lto = true
