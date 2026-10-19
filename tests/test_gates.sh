@@ -166,11 +166,12 @@ old_commit="$(printf 'b%.0s' {1..40})"
 other_commit="$(printf 'c%.0s' {1..40})"
 
 # compare_response STATUS MERGE_BASE FILE... writes a compare response for
-# old_commit...head_commit; each FILE is "name" or "old=>new" for a rename.
+# old_commit...head_commit (COMPARE_BASE overrides the base); each FILE is
+# "name" or "old=>new" for a rename.
 compare_response() {
   local status="$1" merge_base="$2"; shift 2
   STUB_COMPARE="$(printf '%s\n' "$@" | jq -Rn \
-    --arg status "$status" --arg merge_base "$merge_base" --arg base "$old_commit" '
+    --arg status "$status" --arg merge_base "$merge_base" --arg base "${COMPARE_BASE:-$old_commit}" '
       {status: $status, base_commit: {sha: $base}, merge_base_commit: {sha: $merge_base},
        files: [inputs | select(. != "") | split("=>")
                | if length == 2
@@ -205,6 +206,15 @@ GITHUB_WORKFLOW_REF="someone/else/.github/workflows/release.yml@refs/tags/v1.2.3
   expect_fail "a caller workflow in another repository fails" contains
 GITHUB_WORKFLOW_REF="ryanduguid/example/../release.yml@refs/tags/v1.2.3" \
   expect_fail "a caller outside .github/workflows fails" contains
+GITHUB_WORKFLOW_REF=".github/workflows/release.yml" \
+  expect_fail "a caller ref without repository and ref fails" contains
+GITHUB_WORKFLOW_REF="ryanduguid/example/.github/workflows/release python.yml@refs/tags/v1.2.3" \
+  run_case "a caller filename with a space is accepted" contains
+# Inputs are checked even when the release commit is main's head.
+GITHUB_WORKFLOW_REF="" expect_fail "a missing caller workflow ref fails at main's head" \
+  gate_main_contains "$head_commit" "ryanduguid/example" "."
+expect_fail "an empty source directory fails at main's head" \
+  gate_main_contains "$head_commit" "ryanduguid/example" ""
 STUB_COMPARE_RANGE="bbbbbbb...$head_commit" \
   STUB_COMPARE="$(jq -c '.base_commit.sha = "bbbbbbb" | .merge_base_commit.sha = "bbbbbbb"' <<<"$STUB_COMPARE")" \
   expect_fail "an abbreviated release commit fails" \
@@ -242,7 +252,9 @@ STUB_COMPARE="$(jq -c --arg sha "$other_commit" '.base_commit.sha = $sha' <<<"$S
 for record in '{"filename":""}' '{"filename":null}' '"README.md"' \
   '{"filename":"README.md","status":"renamed"}' \
   '{"filename":"README.md","status":"renamed","previous_filename":false}' \
-  '{"filename":"README.md","previous_filename":""}'; do
+  '{"filename":"README.md","previous_filename":""}' \
+  '{"filename":"README.md"}' '{"filename":"README.md","status":null}' \
+  '{"filename":"README.md","status":1}' '{"filename":"README.md","status":"moved"}'; do
   STUB_COMPARE="$(jq -c --argjson record "$record" '.files += [$record]' <<<"$STUB_COMPARE")" \
     expect_fail "a malformed file record fails: $record" contains
 done
@@ -253,6 +265,8 @@ compare_response ahead "$old_commit" "${many_files[@]:1}"
 run_case "299 unrelated changed files pass" contains
 STUB_COMPARE="$(jq -c 'del(.files)' <<<"$STUB_COMPARE")" \
   expect_fail "a response without a file list fails closed" contains
+STUB_COMPARE="$(jq -c '.files = {"a": {"filename": "README.md", "status": "modified"}}' <<<"$STUB_COMPARE")" \
+  expect_fail "a file list that is not an array fails closed" contains
 unset STUB_COMPARE STUB_COMPARE_RANGE
 
 export STUB_RELEASE_IDS=""
@@ -385,7 +399,20 @@ run_case "Python release accepts dotted distribution normalised to its prefix" \
   run_release_gates "demo-pkg/v1.2.3" "$head_sha" \
     "ryanduguid/example" "pyproject" "pyproject.toml" \
     "packages/demo-pkg" "demo-pkg"
-unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
+export STUB_MAIN_SHA="$other_commit" STUB_COMPARE_RANGE="$head_sha...$other_commit"
+COMPARE_BASE="$head_sha" compare_response ahead "$head_sha" "packages/target-prefix/source.py"
+run_case "Python entrypoint passes after an unrelated merge to main" \
+  run_release_gates "payday-super-checker/v1.2.3" "$head_sha" \
+    "ryanduguid/example" "pyproject" "pyproject.toml" \
+    "packages/payday-super-checker" "payday-super-checker"
+COMPARE_BASE="$head_sha" compare_response ahead "$head_sha" "packages/payday-super-checker/source.py"
+moved_out="$(mktemp)"
+GITHUB_OUTPUT="$moved_out" expect_fail "Python entrypoint fails after a merge that changed the component" \
+  run_release_gates "payday-super-checker/v1.2.3" "$head_sha" \
+    "ryanduguid/example" "pyproject" "pyproject.toml" \
+    "packages/payday-super-checker" "payday-super-checker"
+run_case "a refused Python entrypoint writes no outputs" test ! -s "$moved_out"
+unset GH STUB_MAIN_SHA STUB_RELEASE_IDS STUB_COMPARE STUB_COMPARE_RANGE
 
 # --- source-archive metadata ---
 make_repo
@@ -459,7 +486,20 @@ expect_fail "archive release rejects an artifact stem and prefix mismatch" \
   run_archive_release_gates "target-prefix/v1.2.3" "$head_sha" \
     "ryanduguid/example" "sibling-archive" "VERSION" \
     "packages/target-prefix" "target-prefix"
-unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
+export STUB_MAIN_SHA="$other_commit" STUB_COMPARE_RANGE="$head_sha...$other_commit"
+COMPARE_BASE="$head_sha" compare_response ahead "$head_sha" "packages/target-prefix/VERSION"
+run_case "archive entrypoint passes after an unrelated merge to main" \
+  run_archive_release_gates "example-toolkit/v1.2.3" "$head_sha" \
+    "ryanduguid/example" "example-toolkit" "VERSION" \
+    "packages/example-toolkit" "example-toolkit"
+COMPARE_BASE="$head_sha" compare_response ahead "$head_sha" ".github/workflows/release.yml"
+moved_archive_out="$(mktemp)"
+GITHUB_OUTPUT="$moved_archive_out" expect_fail "archive entrypoint fails after a merge that changed the caller" \
+  run_archive_release_gates "example-toolkit/v1.2.3" "$head_sha" \
+    "ryanduguid/example" "example-toolkit" "VERSION" \
+    "packages/example-toolkit" "example-toolkit"
+run_case "a refused archive entrypoint writes no outputs" test ! -s "$moved_archive_out"
+unset GH STUB_MAIN_SHA STUB_RELEASE_IDS STUB_COMPARE STUB_COMPARE_RANGE
 
 # Windows CI runs each publication family on its own runner and sets this.
 if [[ "${GATES_SKIP_PUBLICATION:-0}" != 1 ]]; then

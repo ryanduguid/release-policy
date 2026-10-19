@@ -147,7 +147,7 @@ gate_main_contains() {
     return 1
   fi
   if [[ "${GITHUB_WORKFLOW_REF:-}" != "$repo/$caller@"* \
-      || ! "$caller" =~ ^\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$ ]]; then
+      || ! "$caller" =~ ^\.github/workflows/[^/]+\.ya?ml$ ]]; then
     echo "gate_main_contains: GITHUB_WORKFLOW_REF does not name a workflow in $repo" >&2
     return 1
   fi
@@ -167,7 +167,8 @@ gate_main_contains() {
     return 0
   fi
   # GitHub lists at most 300 changed files for a comparison, so a list that
-  # long may be incomplete and fails closed. A rename must name its source.
+  # long may be incomplete and fails closed. Each file needs a documented
+  # change status, since a rename must also name its source.
   verdict="$("$GH" api -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$repo/compare/$expected...$main_sha" \
     | jq -r --arg base "$expected" --arg dir "$source_directory" --arg caller "$caller" '
@@ -181,6 +182,8 @@ gate_main_contains() {
         elif (.files | type) != "array" or (.files | length) >= 300 then
           "has 300 or more changed files, too many to check, before"
         elif any(.files[]; type != "object"
+            or (.status | IN("added", "removed", "modified", "renamed",
+                             "copied", "changed", "unchanged") | not)
             or any(names[]; type != "string" or length == 0)) then
           "has an unreadable comparison with"
         elif any(.files[]; any(names[]; owned)) then
@@ -283,7 +286,7 @@ run_release_gates() {
   )
   gate_annotated_tag "$tag"
   gate_tag_commit_matches "$tag" "$head_sha"
-  gate_main_contains "$head_sha" "$repo" "$source_directory"
+  gate_main_contains "$head_sha" "$repo" "$source_directory" || return 1
   gate_notes_header "$version_tag" "$source_directory"
   gate_clean_tree
   gate_no_existing_release "$tag" "$repo"
@@ -326,7 +329,7 @@ run_archive_release_gates() {
   )
   gate_annotated_tag "$tag"
   gate_tag_commit_matches "$tag" "$head_sha"
-  gate_main_contains "$head_sha" "$repo" "$source_directory"
+  gate_main_contains "$head_sha" "$repo" "$source_directory" || return 1
   gate_notes_header "$version_tag" "$source_directory"
   gate_clean_tree
   gate_no_existing_release "$tag" "$repo"

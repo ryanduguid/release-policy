@@ -51,7 +51,7 @@ CANONICAL_SHA256 = {
     "docs/pypi-publishing.md": "bc23812fba6cac724d8a109e9b5a070b755333cd9d2ba75407537b00a2d024b7",
     "docs/archive-consumers.md": "6f455e3fa4eaf4ecc8cf773e58da2a81d2eb715b1e364496dab6628a0d11e4b5",
     "docs/skill-consumers.md": "db6d8ae9d72582cf472d60afa2cc7d5313740d2a52f06ef9f21d749c2d701456",
-    "docs/consumer-prerequisites.md": "032554b6a1080d24189894626a7c55036a65a23769f00a716c02a01e043d1dc0",
+    "docs/consumer-prerequisites.md": "d2bf47cced7633f3b4f9626883556a70edba6bcbec770918b8bdd24823ea63a0",
     "docs/guarantees-and-evidence.md": "bae944dbfab0c8a25793a9a034bd929f0f187f8a47f468e01adba58a247efa79",
     "docs/egress-check.md": "2d8f86aad40c65edec23d370cbfb39864cf5a101d24839055c7b2718592f5994",
     "docs/re-pinning.md": "eb1b361cf717bcbabd383e0cf5592998fe5b045ae90982b0c6dd84eda626fe0f",

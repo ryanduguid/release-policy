@@ -153,8 +153,9 @@ finalise_release() {
   jq -bj '.body' /tmp/draft-release.json > /tmp/draft-release-notes.md
   diff -u --strip-trailing-cr "$source_path/RELEASE_NOTES.md" /tmp/draft-release-notes.md
 
-  # Leave the identified draft untouched if the release tag or main moved
-  # while the draft was being inspected.
+  # Withdraw the identified draft instead of publishing it if the release tag
+  # moved, or main changed the component or the caller workflow, while the
+  # draft was being inspected. An unrelated merge to main does not stop it.
   final_tag_commit="$(git ls-remote \
     "https://github.com/$GITHUB_REPOSITORY.git" \
     "refs/tags/$tag^{}" | cut -f1)"
