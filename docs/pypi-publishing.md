@@ -61,7 +61,7 @@ Set the input, then add a second job:
                  and .expired == false and .workflow_run.id == $run
                  and .workflow_run.head_sha == $sha' artifact.json >/dev/null
           - name: Download the bound distribution
-            uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+            uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
             with:
               artifact-ids: ${{ needs.release.outputs.dist-id }}
               path: candidate
