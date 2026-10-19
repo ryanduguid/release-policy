@@ -1,0 +1,23 @@
+[package]
+name = "release-policy-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+release-policy = { path = ".." }
+
+# A separate workspace, so the policy crate's own build never compiles the fuzzer.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "policy_parsers"
+path = "fuzz_targets/policy_parsers.rs"
+test = false
+doc = false
+bench = false
