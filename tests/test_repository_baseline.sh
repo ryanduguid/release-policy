@@ -45,7 +45,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/release-python.yml": "6f9b40fb789d6ad93f06625ef43a105ce85c08a0f282a9757604463d5158a880",
     ".github/workflows/release-skills.yml": "76a7f1996881def9f6f58e4ffdbe7a5a39557aa0e333fc445d6850be05ed2e81",
     ".github/workflows/verify-skills.yml": "6b3fc08d2a35bb65a1b61dc58df1c73a3b067ba1997c87b908342fa7d53fff18",
-    ".github/workflows/virustotal-release.yml": "aff55c0d52905d575e9ec745582de013530bcae5e75a0df0a6d89c60657abaf0",
+    ".github/workflows/virustotal-release.yml": "fc3ec520ef37f4ded629fbab95a2bc1fd999ab98caced8b63cc813ca8e995a44",
     "README.md": "6bd4a7f27470b2717e7eba58e8bec6b135880290b80f9d96c466edba0aa859a1",
     "docs/python-consumers.md": "f4a026b263cd7fdc706546249f812da336ca2b89db0ba7abbf3aca60546add9c",
     "docs/pypi-publishing.md": "66ef421b7008fd30967c4810d52f1d14c0b3243195e03b641635cecb05f6efb0",
