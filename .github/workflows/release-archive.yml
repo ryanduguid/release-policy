@@ -64,6 +64,18 @@ jobs:
             || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
           test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
 
+      # Head equality here, before any wait, means the run uses main's current
+      # caller workflow, policy pin and required checks. Later re-checks accept
+      # a merge that leaves the component untouched.
+      - name: Require the release commit to be main's head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          . policy/scripts/gates.sh
+          gate_main_matches "$GITHUB_SHA" "$GITHUB_REPOSITORY"
+
       - name: Require the mandatory consumer checks for this exact commit
         env:
           GH_TOKEN: ${{ github.token }}

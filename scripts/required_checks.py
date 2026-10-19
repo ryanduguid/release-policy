@@ -1,6 +1,7 @@
 """Require the consumer's mandatory checks to have succeeded for the exact release commit.
 
-The release gates prove that the tag names the current ``main`` commit. They do
+The release gates prove that the tag names the ``main`` head when the run starts,
+and that main has not changed the component since. They do
 not prove that the consumer's own CI passed for that commit: branch protection
 runs the required checks on the pull request head, the merge produces a new
 commit, and a path-filtered monorepo gate reports success for an engine whose

@@ -117,12 +117,50 @@ gate_clean_tree() {
   fi
 }
 
+# The first job of a release run requires main's head, so the run starts from
+# main's current caller workflow, policy pin and required-checks list.
 gate_main_matches() {
   local expected="$1" repo="$2" main_sha
   main_sha="$("$GH" api -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$repo/git/ref/heads/main" --jq '.object.sha')"
   if [[ "$main_sha" != "$expected" ]]; then
     echo "gate_main_matches: origin main $main_sha != $expected" >&2
+    return 1
+  fi
+}
+
+# Every later re-check accepts main's head, or an ancestor of it whose component
+# directory no later commit on main has changed, so an unrelated merge during
+# the run no longer fails it whilst a change to the component still stops it.
+# A root release ('.') owns every path, so for it any change fails.
+gate_main_contains() {
+  local expected="$1" repo="$2" source_directory="${3:-}" main_sha verdict
+  if [[ -z "$source_directory" ]]; then
+    echo "gate_main_contains: a source directory is required" >&2
+    return 1
+  fi
+  main_sha="$("$GH" api -H "X-GitHub-Api-Version: 2026-03-10" \
+    "repos/$repo/git/ref/heads/main" --jq '.object.sha')"
+  if [[ "$main_sha" = "$expected" ]]; then
+    return 0
+  fi
+  # GitHub lists at most 300 changed files for a comparison, so a list that
+  # long may be incomplete and fails closed.
+  verdict="$("$GH" api -H "X-GitHub-Api-Version: 2026-03-10" \
+    "repos/$repo/compare/$expected...$main_sha" \
+    | jq -r --arg base "$expected" --arg dir "$source_directory" '
+        def owned: $dir == "." or . == $dir or startswith($dir + "/");
+        if .status != "ahead" or .merge_base_commit.sha != $base then
+          "is not an ancestor of"
+        elif (.files | type) != "array" or (.files | length) >= 300 then
+          "has 300 or more changed files, too many to check, before"
+        elif any(.files[]; [.filename, (.previous_filename // empty)] | any(owned)) then
+          "is older than a change to \($dir) on"
+        else
+          "ok"
+        end')" || verdict=""
+  if [[ "$verdict" != "ok" ]]; then
+    echo "gate_main_contains: $expected ${verdict:-could not be compared with} origin main $main_sha" >&2
     return 1
   fi
 }
@@ -216,7 +254,7 @@ run_release_gates() {
   )
   gate_annotated_tag "$tag"
   gate_tag_commit_matches "$tag" "$head_sha"
-  gate_main_matches "$head_sha" "$repo"
+  gate_main_contains "$head_sha" "$repo" "$source_directory"
   gate_notes_header "$version_tag" "$source_directory"
   gate_clean_tree
   gate_no_existing_release "$tag" "$repo"
@@ -259,7 +297,7 @@ run_archive_release_gates() {
   )
   gate_annotated_tag "$tag"
   gate_tag_commit_matches "$tag" "$head_sha"
-  gate_main_matches "$head_sha" "$repo"
+  gate_main_contains "$head_sha" "$repo" "$source_directory"
   gate_notes_header "$version_tag" "$source_directory"
   gate_clean_tree
   gate_no_existing_release "$tag" "$repo"

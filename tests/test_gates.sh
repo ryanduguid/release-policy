@@ -140,6 +140,9 @@ cat > "$stub_dir/gh" <<'STUB'
 # Stub: emits canned responses driven by env vars.
 case "$*" in
   *git/ref/heads/main*) printf '%s\n' "${STUB_MAIN_SHA:?}" ;;
+  *"repos/ryanduguid/example/compare/${STUB_COMPARE_RANGE:-none}")
+    [[ -z "${STUB_COMPARE_FAIL:-}" ]] || exit 1
+    printf '%s\n' "${STUB_COMPARE:?}" ;;
   *releases*)           printf '%s'   "${STUB_RELEASE_IDS:-}" ;;
   *) echo "stub gh: unexpected args: $*" >&2; exit 64 ;;
 esac
@@ -147,9 +150,70 @@ STUB
 chmod +x "$stub_dir/gh"
 export GH="$stub_dir/gh"
 
-export STUB_MAIN_SHA="abc123"
+# compare_response STATUS MERGE_BASE FILE... writes the fields the gate reads
+# from GitHub's compare response; each FILE is "name" or "old=>new" for a rename.
+compare_response() {
+  local status="$1" merge_base="$2"; shift 2
+  STUB_COMPARE="$(printf '%s\n' "$@" | jq -Rn \
+    --arg status "$status" --arg merge_base "$merge_base" '
+      {status: $status, merge_base_commit: {sha: $merge_base},
+       files: [inputs | select(. != "") | split("=>")
+               | if length == 2 then {filename: .[1], previous_filename: .[0]}
+                 else {filename: .[0]} end]}')"
+  export STUB_COMPARE
+}
+
+export STUB_MAIN_SHA="abc123" STUB_COMPARE_RANGE="def456...abc123"
 run_case  "main matches"                  gate_main_matches "abc123" "ryanduguid/example"
 expect_fail "main mismatch"               gate_main_matches "def456" "ryanduguid/example"
+run_case "main head is contained"         gate_main_contains "abc123" "ryanduguid/example" "."
+compare_response ahead def456 "packages/other-tool/source.py" "README.md"
+run_case "ancestor with only other paths changed passes" \
+  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+expect_fail "the first gate still refuses that ancestor" \
+  gate_main_matches "def456" "ryanduguid/example"
+compare_response ahead def456 "packages/example-tool-two/source.py"
+run_case "a sibling sharing the directory name prefix is another component" \
+  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+expect_fail "an empty source directory fails closed" \
+  gate_main_contains "def456" "ryanduguid/example" ""
+expect_fail "a missing source directory fails closed" \
+  gate_main_contains "abc123" "ryanduguid/example"
+compare_response ahead def456 "packages/example-tool/source.py"
+expect_fail "ancestor with the component changed since fails" \
+  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+compare_response ahead def456 "packages/example-tool/old.py=>packages/moved/old.py"
+expect_fail "a rename out of the component counts as a change" \
+  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+compare_response ahead def456 "packages/example-tool"
+expect_fail "a file at the component path counts as a change" \
+  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+compare_response ahead def456 "packages/other-tool/source.py"
+expect_fail "a root release fails on any change since its commit" \
+  gate_main_contains "def456" "ryanduguid/example" "."
+compare_response diverged 0123ab "packages/other-tool/source.py"
+expect_fail "a commit that is not an ancestor of main fails" \
+  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+compare_response behind def456
+expect_fail "a commit ahead of main fails" \
+  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+compare_response ahead 0123ab "packages/other-tool/source.py"
+expect_fail "an ahead status with another merge base fails" \
+  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+mapfile -t many_files < <(seq -f "packages/other-tool/f%g.py" 1 300)
+compare_response ahead def456 "${many_files[@]}"
+expect_fail "a possibly truncated file list fails closed" \
+  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+compare_response ahead def456 "${many_files[@]:1}"
+run_case "299 unrelated changed files pass" \
+  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+export STUB_COMPARE='{"status":"ahead","merge_base_commit":{"sha":"def456"}}'
+expect_fail "a response without a file list fails closed" \
+  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+export STUB_COMPARE_FAIL=1
+expect_fail "a failed comparison fails closed" \
+  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+unset STUB_COMPARE STUB_COMPARE_FAIL STUB_COMPARE_RANGE
 
 export STUB_RELEASE_IDS=""
 run_case  "no existing release"           gate_no_existing_release "v1.2.3" "ryanduguid/example"

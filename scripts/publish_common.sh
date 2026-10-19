@@ -7,9 +7,9 @@
 # written once here. The families differ only in which assets they ship and
 # where those assets sit, which stays in each caller.
 #
-# The caller sets `tag`, `expected_commit`, `source_path` and the `assets`
-# array of file paths, then calls `create_draft`, `upload_asset` once per
-# asset, and `finalise_release`.
+# The caller sets `tag`, `expected_commit`, `source_path`, `source_directory`
+# and the `assets` array of file paths, then calls `create_draft`,
+# `upload_asset` once per asset, and `finalise_release`.
 
 # Fail at source time, not half way through a publication, when a caller
 # forgets one of them. The assignments also tell shellcheck these come from
@@ -17,6 +17,7 @@
 tag="${tag:?publish_common.sh: the caller must set tag}"
 expected_commit="${expected_commit:?publish_common.sh: the caller must set expected_commit}"
 source_path="${source_path:?publish_common.sh: the caller must set source_path}"
+source_directory="${source_directory:?publish_common.sh: the caller must set source_directory}"
 assets=("${assets[@]:?publish_common.sh: the caller must set the assets array}")
 
 release_id=""
@@ -162,7 +163,7 @@ finalise_release() {
   [[ "$GITHUB_SHA" = "$expected_commit" ]]
   # shellcheck source=scripts/gates.sh
   . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
-  gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
+  gate_main_contains "$expected_commit" "$GITHUB_REPOSITORY" "$source_directory"
   # The draft this run created must be the only release carrying the tag.
   release_ids="$(gh api --paginate \
     -H "X-GitHub-Api-Version: 2026-03-10" \

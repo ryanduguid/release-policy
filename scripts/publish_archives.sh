@@ -2,8 +2,8 @@
 # Publish one already-gated source-archive release without executing consumer code.
 set -euo pipefail
 
-if [[ "$#" -ne 5 ]]; then
-  echo "usage: publish_archives.sh TAG EXPECTED_COMMIT STEM VERSION SOURCE_PATH" >&2
+if [[ "$#" -ne 6 ]]; then
+  echo "usage: publish_archives.sh TAG EXPECTED_COMMIT STEM VERSION SOURCE_PATH SOURCE_DIRECTORY" >&2
   exit 64
 fi
 
@@ -11,6 +11,7 @@ tag="$1"
 expected_commit="$2"
 base="$3-$4"
 source_path="$5"
+source_directory="$6"
 dist="$source_path/dist"
 zip="$dist/$base.zip"
 tar="$dist/$base.tar.gz"

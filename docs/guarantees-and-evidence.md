@@ -1,8 +1,18 @@
 ## Policy guarantees
 
 - Fail closed: canonical semver tag, annotated tag object, tag commit equal
-  to `main` via the GitHub API, clean tree, matching notes header, and no
-  existing release for the tag, all verified before any build.
+  to `main` via the GitHub API when the run starts, clean tree, matching notes
+  header, and no existing release for the tag, all verified before any build.
+- The first job of a run requires the tag commit to be `main`'s head, before
+  the mandatory-checks wait, so the run uses `main`'s current caller workflow,
+  policy pin and mandatory checks. Every later gate, including the re-check
+  immediately before publication, accepts the head or an ancestor of it when
+  GitHub's comparison shows no file under the component's source directory
+  changed since, including either side of a rename. A merge to `main` that
+  leaves the component untouched therefore no longer stops a release in
+  progress; one that changes it still does. For a root release (`.`) any
+  changed file counts. A comparison listing 300 or more files may be
+  truncated and fails.
 - The consumer's named mandatory checks have each concluded `success` for the
   exact release commit, in a `push` or `workflow_dispatch` run of `main` in the
   consumer repository, in every run of the named workflow file rather than in

@@ -303,7 +303,8 @@ jobs:
           test "$remote_tag_commit" = "$expected_commit"
           test "$GITHUB_SHA" = "$expected_commit"
           . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
-          gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
+          gate_main_contains "$expected_commit" "$GITHUB_REPOSITORY" \
+            "${{ steps.release.outputs.source-directory }}"
           gate_no_existing_release "$tag" "$GITHUB_REPOSITORY"
 
       - name: Create, inspect and publish the immutable release
@@ -314,6 +315,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_DIRECTORY: ${{ steps.release.outputs.source-directory }}
           SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
         shell: bash
         run: |
@@ -323,4 +325,5 @@ jobs:
             "$EXPECTED_COMMIT" \
             "$ARTIFACT_STEM" \
             "$RELEASE_VERSION" \
-            "$SOURCE_PATH"
+            "$SOURCE_PATH" \
+            "$SOURCE_DIRECTORY"

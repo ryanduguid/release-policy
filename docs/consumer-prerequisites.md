@@ -23,7 +23,10 @@ requires a separately reviewed authentication and attestation contract.
   lock; a missing requirement stops the build before anything is published.
 - A pure-Python wheel; the `py3-none-any` wheel name is expected by the
   SBOM and attestation steps.
-- Releases cut from `main`; the main-match gate checks `heads/main`.
+- Releases cut from `main`'s head; the run's first job checks `heads/main`.
+  Later gates accept a merge to `main` that leaves the component's source
+  directory untouched, so other components need no merge freeze once the run
+  has started.
 - A non-empty `required-checks` list naming the consumer's own mandatory
   checks as `<workflow path>: <job name>`. Those checks must have succeeded in
   a `push` or `workflow_dispatch` run of `main` for the exact release commit;

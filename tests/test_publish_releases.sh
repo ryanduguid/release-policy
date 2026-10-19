@@ -76,7 +76,7 @@ gh() {
       ;;
     POST\ https://uploads.github.com/repos/example/fixture/releases/7/assets\?*)
       # The ID must be known even when the first upload fails.
-      [[ "$CASE" = success || "$CASE" = settles || "$CASE" = superseded || "$CASE" = notes || "$CASE" = published-* || "$CASE" = *verification-fails ]] || return 1
+      [[ "$CASE" = success || "$CASE" = settles || "$CASE" = superseded || "$CASE" = notes || "$CASE" = published-* || "$CASE" = *verification-fails || "$CASE" = main-moved-* ]] || return 1
       local name="${endpoint#*name=}" expected_media
       name="${name%%&*}"
       case "$name" in
@@ -96,7 +96,14 @@ gh() {
       touch "$FIXTURE/published"
       ;;
     'GET repos/example/fixture/git/ref/heads/main')
-      printf '%s\n' "$GITHUB_SHA"
+      if [[ "$CASE" = main-moved-* ]]; then printf 'cccccccccccccccccccccccccccccccccccccccc\n';
+      else printf '%s\n' "$GITHUB_SHA"; fi
+      ;;
+    "GET repos/example/fixture/compare/$GITHUB_SHA...cccccccccccccccccccccccccccccccccccccccc")
+      local changed=packages/other/source.py
+      [ "$CASE" != main-moved-component ] || changed=packages/example/source.py
+      jq -n --arg base "$GITHUB_SHA" --arg changed "$changed" \
+        '{status:"ahead",merge_base_commit:{sha:$base},files:[{filename:$changed}]}'
       ;;
     'GET repos/example/fixture/releases/7')
       if [ "$CASE" = never-settles ] || { [ "$CASE" = settles ] && [ ! -f "$FIXTURE/seen-unsettled" ]; }; then
@@ -105,7 +112,7 @@ gh() {
         return
       fi
       case "$CASE" in
-        success|settles|superseded|notes|published-*|*verification-fails)
+        success|settles|superseded|notes|published-*|*verification-fails|main-moved-*)
           local draft=true
           [ ! -f "$FIXTURE/published" ] || draft=false
           local notes="$FIXTURE/consumer/RELEASE_NOTES.md"
@@ -163,7 +170,7 @@ for CASE in create-fails upload-fails already-published wrong-identity unsettled
   : > "$FIXTURE/deleted"
   : > "$FIXTURE/sleeps"
   if bash "$POLICY/scripts/publish_$family.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3 \
-      "$FIXTURE/consumer" > "$FIXTURE/output" 2>&1; then
+      "$FIXTURE/consumer" . > "$FIXTURE/output" 2>&1; then
     echo "FAIL $CASE: publication unexpectedly succeeded"
     failures=$((failures+1))
   fi
@@ -206,7 +213,7 @@ for name in "${asset_names[@]}"; do
 done
 status=0
 bash "$POLICY/scripts/publish_$family.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3 \
-    "$FIXTURE/consumer" > "$FIXTURE/output" 2>&1 || status=$?
+    "$FIXTURE/consumer" . > "$FIXTURE/output" 2>&1 || status=$?
 expected_status=0
 [[ "$CASE" != published-* && "$CASE" != *verification-fails ]] || expected_status=1
 if [ "$status" -eq "$expected_status" ] \
@@ -225,6 +232,34 @@ if [ "$expected_status" = 0 ]; then
     failures=$((failures+1))
   fi
 fi
+done
+# A merge to main while the release publishes must not fail it unless the merge
+# changed the component; then the draft is withdrawn before publication.
+for CASE in main-moved-unrelated main-moved-component; do
+  export CASE
+  rm -f "$FIXTURE/published"
+  : > "$FIXTURE/calls"
+  : > "$FIXTURE/assets"
+  : > "$FIXTURE/deleted"
+  for name in "${asset_names[@]}"; do
+    digest="$(sha256sum "$FIXTURE/consumer/dist/$name" | cut -d' ' -f1)"
+    jq -n --arg name "$name" --arg digest "sha256:$digest" '{name:$name,digest:$digest}' >> "$FIXTURE/assets"
+  done
+  status=0
+  bash "$POLICY/scripts/publish_$family.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3 \
+    "$FIXTURE/consumer" packages/example > "$FIXTURE/output" 2>&1 || status=$?
+  if [ "$CASE" = main-moved-unrelated ] && [ "$status" = 0 ] && [ -f "$FIXTURE/published" ] \
+      && [ ! -s "$FIXTURE/deleted" ]; then
+    echo "ok   $family publishes after an unrelated merge to main"
+  elif [ "$CASE" = main-moved-component ] && [ "$status" != 0 ] && [ ! -f "$FIXTURE/published" ] \
+      && [ "$(cat "$FIXTURE/deleted")" = repos/example/fixture/releases/7 ] \
+      && grep -q 'is older than a change to packages/example on origin main' "$FIXTURE/output"; then
+    echo "ok   $family withdraws the draft after a merge that changed the component"
+  else
+    echo "FAIL $family $CASE: main movement handling was incorrect"
+    cat "$FIXTURE/output"
+    failures=$((failures+1))
+  fi
 done
 # Use byte-exact fixtures so checkout settings and native jq output cannot hide
 # newline differences. Check each verification stage, including failures that
@@ -266,7 +301,7 @@ for stage in created draft published; do
     : > "$FIXTURE/uploads"
     status=0
     bash "$POLICY/scripts/publish_$family.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3 \
-      "$FIXTURE/consumer" > "$FIXTURE/output" 2>&1 || status=$?
+      "$FIXTURE/consumer" . > "$FIXTURE/output" 2>&1 || status=$?
     if [ "$expected_status" = 0 ]; then
       if [ "$status" = 0 ] && [ -f "$FIXTURE/published" ] && [ ! -s "$FIXTURE/deleted" ] \
           && [ "$(grep -c '^release verify ' "$FIXTURE/calls")" = 1 ] \
