@@ -1,6 +1,7 @@
 # Local git hooks. Install once with `pre-commit install`. Ruff is pinned to
 # the version CI runs, so a commit that passes here passes the lint gate.
-# No format hook: CI checks nothing that ruff format would rewrite.
+# No Python format hook: CI checks nothing that ruff format would rewrite.
+# The Rust hook runs the toolchain rust-toolchain.toml pins.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.6
@@ -9,6 +10,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: cargo-fmt
+        name: check Rust formatting
+        entry: cargo fmt --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+
       - id: no-ai-attribution
         name: refuse AI authorship credit
         # Install the commit-msg stage too: `pre-commit install --hook-type commit-msg`.

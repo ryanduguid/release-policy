@@ -3,6 +3,11 @@ __pycache__/
 *.py[cod]
 .coverage
 coverage.xml
+/target/
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/coverage/
+coverage-rust.lcov
 
 # Credentials must never be committed.
 .env
