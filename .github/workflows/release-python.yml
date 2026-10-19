@@ -101,6 +101,18 @@ jobs:
             || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
           test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
 
+      # Head equality here, before any wait, means the run uses main's current
+      # caller workflow, policy pin and required checks. Later re-checks accept
+      # a merge that leaves the component and this caller untouched.
+      - name: Require the release commit to be main's head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          . policy/scripts/gates.sh
+          gate_main_matches "$GITHUB_SHA" "$GITHUB_REPOSITORY"
+
       - name: Require the mandatory consumer checks for this exact commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -566,7 +578,8 @@ jobs:
           test "$remote_tag_commit" = "$expected_commit"
           test "$GITHUB_SHA" = "$expected_commit"
           . policy/scripts/gates.sh
-          gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
+          gate_main_contains "$expected_commit" "$GITHUB_REPOSITORY" \
+            "${{ needs.build.outputs.source-directory }}"
           gate_no_existing_release "$tag" "$GITHUB_REPOSITORY"
 
       - name: Create, inspect and publish the immutable release
@@ -576,6 +589,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          SOURCE_DIRECTORY: ${{ needs.build.outputs.source-directory }}
           SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
         shell: bash
         run: |
@@ -585,4 +599,5 @@ jobs:
             "$EXPECTED_COMMIT" \
             "$ARTIFACT_STEM" \
             "$RELEASE_VERSION" \
-            "$SOURCE_PATH"
+            "$SOURCE_PATH" \
+            "$SOURCE_DIRECTORY"

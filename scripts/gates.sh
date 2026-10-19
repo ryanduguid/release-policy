@@ -117,12 +117,82 @@ gate_clean_tree() {
   fi
 }
 
+# The first job of a release run requires main's head, so the run starts from
+# main's current caller workflow, policy pin and required-checks list.
 gate_main_matches() {
   local expected="$1" repo="$2" main_sha
   main_sha="$("$GH" api -H "X-GitHub-Api-Version: 2026-03-10" \
-    "repos/$repo/git/ref/heads/main" --jq '.object.sha')"
+    "repos/$repo/git/ref/heads/main" --jq '.object.sha')" || main_sha=""
   if [[ "$main_sha" != "$expected" ]]; then
-    echo "gate_main_matches: origin main $main_sha != $expected" >&2
+    echo "gate_main_matches: origin main ${main_sha:-unreadable} != $expected" >&2
+    return 1
+  fi
+}
+
+# Every later gate accepts main's head, or an ancestor of it when main's copy of
+# the component directory and of the run's caller workflow still match the
+# commit's. An unrelated merge during the run no longer fails it; a merge that
+# changes the component, or the caller's policy pin, inputs or required checks,
+# still does. The comparison is of the two trees, not of each commit between
+# them, so a change followed by its exact revert passes. A root release ('.')
+# owns every path. The caller is the file GITHUB_WORKFLOW_REF names: the
+# tag-triggered workflow, which must call this policy directly.
+gate_main_contains() {
+  local expected="$1" repo="$2" source_directory="${3:-}" caller main_sha verdict
+  caller="${GITHUB_WORKFLOW_REF:-}"
+  caller="${caller%@*}"
+  caller="${caller#"$repo/"}"
+  if [[ -z "$source_directory" ]]; then
+    echo "gate_main_contains: a source directory is required" >&2
+    return 1
+  fi
+  if [[ "${GITHUB_WORKFLOW_REF:-}" != "$repo/$caller@"* \
+      || ! "$caller" =~ ^\.github/workflows/[^/]+\.ya?ml$ ]]; then
+    echo "gate_main_contains: GITHUB_WORKFLOW_REF does not name a workflow in $repo" >&2
+    return 1
+  fi
+  if [[ ! "$expected" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "gate_main_contains: '$expected' is not a full commit SHA" >&2
+    return 1
+  fi
+  main_sha="$("$GH" api -H "X-GitHub-Api-Version: 2026-03-10" \
+    "repos/$repo/git/ref/heads/main" \
+    --jq 'select(.ref == "refs/heads/main" and .object.type == "commit") | .object.sha')" \
+    || main_sha=""
+  if [[ ! "$main_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "gate_main_contains: origin main is not a readable commit" >&2
+    return 1
+  fi
+  if [[ "$main_sha" = "$expected" ]]; then
+    return 0
+  fi
+  # GitHub lists at most 300 changed files for a comparison, so a list that
+  # long may be incomplete and fails closed. Each file needs a documented
+  # change status, since a rename must also name its source.
+  verdict="$("$GH" api -H "X-GitHub-Api-Version: 2026-03-10" \
+    "repos/$repo/compare/$expected...$main_sha" \
+    | jq -r --arg base "$expected" --arg dir "$source_directory" --arg caller "$caller" '
+        def owned: . == $caller or $dir == "." or . == $dir or startswith($dir + "/");
+        def names: [.filename]
+          + (if has("previous_filename") or .status == "renamed"
+             then [.previous_filename] else [] end);
+        if .status != "ahead" or .merge_base_commit.sha != $base
+            or .base_commit.sha != $base then
+          "is not an ancestor of"
+        elif (.files | type) != "array" or (.files | length) >= 300 then
+          "has 300 or more changed files, too many to check, before"
+        elif any(.files[]; type != "object"
+            or (.status | IN("added", "removed", "modified", "renamed",
+                             "copied", "changed", "unchanged") | not)
+            or any(names[]; type != "string" or length == 0)) then
+          "has an unreadable comparison with"
+        elif any(.files[]; any(names[]; owned)) then
+          "is older than a change to \(first(.files[] | names[] | select(owned))) on"
+        else
+          "ok"
+        end')" || verdict=""
+  if [[ "$verdict" != "ok" ]]; then
+    echo "gate_main_contains: $expected ${verdict:-could not be compared with} origin main $main_sha" >&2
     return 1
   fi
 }
@@ -216,7 +286,7 @@ run_release_gates() {
   )
   gate_annotated_tag "$tag"
   gate_tag_commit_matches "$tag" "$head_sha"
-  gate_main_matches "$head_sha" "$repo"
+  gate_main_contains "$head_sha" "$repo" "$source_directory" || return 1
   gate_notes_header "$version_tag" "$source_directory"
   gate_clean_tree
   gate_no_existing_release "$tag" "$repo"
@@ -259,7 +329,7 @@ run_archive_release_gates() {
   )
   gate_annotated_tag "$tag"
   gate_tag_commit_matches "$tag" "$head_sha"
-  gate_main_matches "$head_sha" "$repo"
+  gate_main_contains "$head_sha" "$repo" "$source_directory" || return 1
   gate_notes_header "$version_tag" "$source_directory"
   gate_clean_tree
   gate_no_existing_release "$tag" "$repo"

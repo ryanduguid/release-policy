@@ -562,6 +562,14 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn("required_checks.py", checks_job)
         self.assertIn("actions: read", checks_job)
         self.assertNotIn("path: consumer", checks_job)
+        # The strict head check runs first, before the wait; the publish job's
+        # later gates accept an ancestor that leaves the component untouched.
+        head_check = 'gate_main_matches "$GITHUB_SHA" "$GITHUB_REPOSITORY"'
+        self.assertIn(head_check, checks_job)
+        self.assertLess(
+            checks_job.index(head_check), checks_job.index("required_checks.py")
+        )
+        self.assertNotIn("gate_main_matches", consumer_job)
         self.assertEqual(self.mapping_value(consumer_job, "needs", indent=4), "checks")
         self.assertNotIn("required_checks.py", consumer_job)
         self.assertNotIn("actions: read", consumer_job)
@@ -841,6 +849,14 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn("cleanup_current_draft()", script_text)
         self.assertNotIn("${{", script_text)
         self.assertIn('--rawfile body "$source_path/RELEASE_NOTES.md"', script_text)
+        self.assertIn('source_directory="$6"', script_text)
+        self.assertIn("SOURCE_DIRECTORY: ${{ steps.release.outputs.source-directory }}", publish)
+        recheck = self.named_step(core, "Re-check the remote tag, main and release absence")
+        self.assertIn(
+            'gate_main_contains "$expected_commit" "$GITHUB_REPOSITORY" \\\n'
+            '            "${{ steps.release.outputs.source-directory }}"',
+            recheck,
+        )
 
     def test_source_adapter_delegates_release_without_an_execution_surface(self) -> None:
         adapter = (ROOT / ".github" / "workflows" / "release-archive.yml").read_text(
@@ -998,7 +1014,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             "actions/upload-artifact@",
             "gh attestation verify",
             "gh release verify-asset",
-            "gate_main_matches",
+            "gate_main_contains",
             "gate_no_existing_release",
         ):
             with self.subTest(required=required):
@@ -1010,7 +1026,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         publish = "gh api --method PATCH"
         self.assertIn(final_recheck, publication_script)
         self.assertIn(
-            'gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"',
+            'gate_main_contains "$expected_commit" "$GITHUB_REPOSITORY" "$source_directory"',
             publication_script,
         )
         self.assertGreater(

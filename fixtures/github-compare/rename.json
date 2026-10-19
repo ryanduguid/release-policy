@@ -1,0 +1,45 @@
+{
+  "_source": {
+    "endpoint": "repos/ryanduguid/release-policy/compare/ba94d055c28cfae801a3d663404156b2af36cdd6...171aa487dbc0a8f437ed84407f0d506f814548c1",
+    "api_version": "2026-03-10",
+    "captured": "2026-10-20",
+    "note": "Real response from api.github.com, reduced to the fields gate_main_contains reads; file records keep their original keys."
+  },
+  "status": "ahead",
+  "ahead_by": 1,
+  "behind_by": 0,
+  "total_commits": 1,
+  "base_commit": {
+    "sha": "ba94d055c28cfae801a3d663404156b2af36cdd6"
+  },
+  "merge_base_commit": {
+    "sha": "ba94d055c28cfae801a3d663404156b2af36cdd6"
+  },
+  "files": [
+    {
+      "filename": "docs/guarantees-and-evidence.md",
+      "status": "modified"
+    },
+    {
+      "filename": "scripts/publish_archives.sh",
+      "status": "modified"
+    },
+    {
+      "filename": "scripts/publish_python.sh",
+      "status": "modified"
+    },
+    {
+      "filename": "tests/test_gates.sh",
+      "status": "modified"
+    },
+    {
+      "filename": "tests/test_publish_releases.sh",
+      "status": "renamed",
+      "previous_filename": "tests/test_publish_archives.sh"
+    },
+    {
+      "filename": "tests/test_repository_baseline.sh",
+      "status": "modified"
+    }
+  ]
+}
