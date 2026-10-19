@@ -7,12 +7,17 @@
   the mandatory-checks wait, so the run uses `main`'s current caller workflow,
   policy pin and mandatory checks. Every later gate, including the re-check
   immediately before publication, accepts the head or an ancestor of it when
-  GitHub's comparison shows no file under the component's source directory
-  changed since, including either side of a rename. A merge to `main` that
-  leaves the component untouched therefore no longer stops a release in
-  progress; one that changes it still does. For a root release (`.`) any
-  changed file counts. A comparison listing 300 or more files may be
-  truncated and fails.
+  GitHub's comparison of the two trees shows no change to the caller workflow
+  or to any file under the component's source directory, counting both sides
+  of a rename. A merge to `main` that leaves both untouched therefore no longer
+  stops a release in progress; one that changes the component, or the caller's
+  policy pin, inputs or mandatory checks, still does. The comparison is of the
+  trees, not of each commit between them, so a change followed by its exact
+  revert passes. For a root release (`.`) any changed file counts. A
+  comparison listing 300 or more files may be truncated and fails, as do a
+  malformed file record, a rename without its source and a `main` reference
+  that is not a full commit SHA. A caller of `publish-archives.yml` directly
+  skips the first job's head check but not the later gates.
 - The consumer's named mandatory checks have each concluded `success` for the
   exact release commit, in a `push` or `workflow_dispatch` run of `main` in the
   consumer repository, in every run of the named workflow file rather than in

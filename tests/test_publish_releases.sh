@@ -22,12 +22,13 @@ cd "$FIXTURE/consumer"
 ln -s dist candidate
 export GH=gh
 export GITHUB_REPOSITORY=example/fixture GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+export GITHUB_WORKFLOW_REF=example/fixture/.github/workflows/release.yml@refs/tags/v1.2.3
 export GITHUB_WORKSPACE="$FIXTURE/workspace"
 
 # Every GitHub request is handled here; an unexpected request fails closed.
 gh() {
   printf '%s\n' "$*" >> "$FIXTURE/calls"
-  local method=GET endpoint="" input="" media="" arg
+  local method=GET endpoint="" input="" media="" filter="" arg
   if [ "$1 $2" = "release create" ]; then return 1; fi
   if [ "$1 $2" = "release list" ]; then
     if [ "$CASE" = superseded ]; then
@@ -47,6 +48,8 @@ gh() {
   for ((arg=1; arg<=$#; arg++)); do
     if [ "${!arg}" = --method ]; then
       arg=$((arg+1)); method="${!arg}"
+    elif [ "${!arg}" = --jq ]; then
+      arg=$((arg+1)); filter="${!arg}"
     elif [ "${!arg}" = --input ]; then
       arg=$((arg+1)); input="${!arg}"
     elif [[ "${!arg}" == 'Content-Type: '* ]]; then
@@ -96,14 +99,18 @@ gh() {
       touch "$FIXTURE/published"
       ;;
     'GET repos/example/fixture/git/ref/heads/main')
-      if [[ "$CASE" = main-moved-* ]]; then printf 'cccccccccccccccccccccccccccccccccccccccc\n';
-      else printf '%s\n' "$GITHUB_SHA"; fi
+      local main_sha="$GITHUB_SHA"
+      [[ "$CASE" != main-moved-* ]] || main_sha=cccccccccccccccccccccccccccccccccccccccc
+      jq -n --arg sha "$main_sha" '{ref:"refs/heads/main",object:{type:"commit",sha:$sha}}' \
+        | jq -r "${filter:-.}"
       ;;
     "GET repos/example/fixture/compare/$GITHUB_SHA...cccccccccccccccccccccccccccccccccccccccc")
       local changed=packages/other/source.py
       [ "$CASE" != main-moved-component ] || changed=packages/example/source.py
+      [ "$CASE" != main-moved-caller ] || changed=.github/workflows/release.yml
       jq -n --arg base "$GITHUB_SHA" --arg changed "$changed" \
-        '{status:"ahead",merge_base_commit:{sha:$base},files:[{filename:$changed}]}'
+        '{status:"ahead",base_commit:{sha:$base},merge_base_commit:{sha:$base},
+          files:[{filename:$changed,status:"modified"}]}'
       ;;
     'GET repos/example/fixture/releases/7')
       if [ "$CASE" = never-settles ] || { [ "$CASE" = settles ] && [ ! -f "$FIXTURE/seen-unsettled" ]; }; then
@@ -234,8 +241,8 @@ if [ "$expected_status" = 0 ]; then
 fi
 done
 # A merge to main while the release publishes must not fail it unless the merge
-# changed the component; then the draft is withdrawn before publication.
-for CASE in main-moved-unrelated main-moved-component; do
+# changed the component or the release caller; then the draft is withdrawn.
+for CASE in main-moved-unrelated main-moved-component main-moved-caller; do
   export CASE
   rm -f "$FIXTURE/published"
   : > "$FIXTURE/calls"
@@ -251,10 +258,11 @@ for CASE in main-moved-unrelated main-moved-component; do
   if [ "$CASE" = main-moved-unrelated ] && [ "$status" = 0 ] && [ -f "$FIXTURE/published" ] \
       && [ ! -s "$FIXTURE/deleted" ]; then
     echo "ok   $family publishes after an unrelated merge to main"
-  elif [ "$CASE" = main-moved-component ] && [ "$status" != 0 ] && [ ! -f "$FIXTURE/published" ] \
+  elif [ "$CASE" != main-moved-unrelated ] && [ "$status" != 0 ] && [ ! -f "$FIXTURE/published" ] \
       && [ "$(cat "$FIXTURE/deleted")" = repos/example/fixture/releases/7 ] \
-      && grep -q 'is older than a change to packages/example on origin main' "$FIXTURE/output"; then
-    echo "ok   $family withdraws the draft after a merge that changed the component"
+      && grep -Eq 'is older than a change to (packages/example/source\.py|\.github/workflows/release\.yml) on origin main' \
+        "$FIXTURE/output"; then
+    echo "ok   $family withdraws the draft after a merge that changed the ${CASE#main-moved-}"
   else
     echo "FAIL $family $CASE: main movement handling was incorrect"
     cat "$FIXTURE/output"

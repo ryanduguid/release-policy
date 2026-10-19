@@ -25,8 +25,12 @@ requires a separately reviewed authentication and attestation contract.
   SBOM and attestation steps.
 - Releases cut from `main`'s head; the run's first job checks `heads/main`.
   Later gates accept a merge to `main` that leaves the component's source
-  directory untouched, so other components need no merge freeze once the run
-  has started.
+  directory and the caller workflow untouched, so other components need no
+  merge freeze once the run has started.
+- The tag-triggered workflow calls the release workflow here directly, with
+  its policy pin and `required-checks` written in that file. The gates protect
+  the file `GITHUB_WORKFLOW_REF` names; a local wrapper workflow between them
+  would not be protected.
 - A non-empty `required-checks` list naming the consumer's own mandatory
   checks as `<workflow path>: <job name>`. Those checks must have succeeded in
   a `push` or `workflow_dispatch` run of `main` for the exact release commit;

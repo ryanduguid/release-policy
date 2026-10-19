@@ -122,40 +122,69 @@ gate_clean_tree() {
 gate_main_matches() {
   local expected="$1" repo="$2" main_sha
   main_sha="$("$GH" api -H "X-GitHub-Api-Version: 2026-03-10" \
-    "repos/$repo/git/ref/heads/main" --jq '.object.sha')"
+    "repos/$repo/git/ref/heads/main" --jq '.object.sha')" || main_sha=""
   if [[ "$main_sha" != "$expected" ]]; then
-    echo "gate_main_matches: origin main $main_sha != $expected" >&2
+    echo "gate_main_matches: origin main ${main_sha:-unreadable} != $expected" >&2
     return 1
   fi
 }
 
-# Every later re-check accepts main's head, or an ancestor of it whose component
-# directory no later commit on main has changed, so an unrelated merge during
-# the run no longer fails it whilst a change to the component still stops it.
-# A root release ('.') owns every path, so for it any change fails.
+# Every later gate accepts main's head, or an ancestor of it when main's copy of
+# the component directory and of the run's caller workflow still match the
+# commit's. An unrelated merge during the run no longer fails it; a merge that
+# changes the component, or the caller's policy pin, inputs or required checks,
+# still does. The comparison is of the two trees, not of each commit between
+# them, so a change followed by its exact revert passes. A root release ('.')
+# owns every path. The caller is the file GITHUB_WORKFLOW_REF names: the
+# tag-triggered workflow, which must call this policy directly.
 gate_main_contains() {
-  local expected="$1" repo="$2" source_directory="${3:-}" main_sha verdict
+  local expected="$1" repo="$2" source_directory="${3:-}" caller main_sha verdict
+  caller="${GITHUB_WORKFLOW_REF:-}"
+  caller="${caller%@*}"
+  caller="${caller#"$repo/"}"
   if [[ -z "$source_directory" ]]; then
     echo "gate_main_contains: a source directory is required" >&2
     return 1
   fi
+  if [[ "${GITHUB_WORKFLOW_REF:-}" != "$repo/$caller@"* \
+      || ! "$caller" =~ ^\.github/workflows/[A-Za-z0-9._-]+\.ya?ml$ ]]; then
+    echo "gate_main_contains: GITHUB_WORKFLOW_REF does not name a workflow in $repo" >&2
+    return 1
+  fi
+  if [[ ! "$expected" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "gate_main_contains: '$expected' is not a full commit SHA" >&2
+    return 1
+  fi
   main_sha="$("$GH" api -H "X-GitHub-Api-Version: 2026-03-10" \
-    "repos/$repo/git/ref/heads/main" --jq '.object.sha')"
+    "repos/$repo/git/ref/heads/main" \
+    --jq 'select(.ref == "refs/heads/main" and .object.type == "commit") | .object.sha')" \
+    || main_sha=""
+  if [[ ! "$main_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "gate_main_contains: origin main is not a readable commit" >&2
+    return 1
+  fi
   if [[ "$main_sha" = "$expected" ]]; then
     return 0
   fi
   # GitHub lists at most 300 changed files for a comparison, so a list that
-  # long may be incomplete and fails closed.
+  # long may be incomplete and fails closed. A rename must name its source.
   verdict="$("$GH" api -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$repo/compare/$expected...$main_sha" \
-    | jq -r --arg base "$expected" --arg dir "$source_directory" '
-        def owned: $dir == "." or . == $dir or startswith($dir + "/");
-        if .status != "ahead" or .merge_base_commit.sha != $base then
+    | jq -r --arg base "$expected" --arg dir "$source_directory" --arg caller "$caller" '
+        def owned: . == $caller or $dir == "." or . == $dir or startswith($dir + "/");
+        def names: [.filename]
+          + (if has("previous_filename") or .status == "renamed"
+             then [.previous_filename] else [] end);
+        if .status != "ahead" or .merge_base_commit.sha != $base
+            or .base_commit.sha != $base then
           "is not an ancestor of"
         elif (.files | type) != "array" or (.files | length) >= 300 then
           "has 300 or more changed files, too many to check, before"
-        elif any(.files[]; [.filename, (.previous_filename // empty)] | any(owned)) then
-          "is older than a change to \($dir) on"
+        elif any(.files[]; type != "object"
+            or any(names[]; type != "string" or length == 0)) then
+          "has an unreadable comparison with"
+        elif any(.files[]; any(names[]; owned)) then
+          "is older than a change to \(first(.files[] | names[] | select(owned))) on"
         else
           "ok"
         end')" || verdict=""

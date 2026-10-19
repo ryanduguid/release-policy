@@ -137,83 +137,123 @@ make_repo
 stub_dir="$(mktemp -d)"
 cat > "$stub_dir/gh" <<'STUB'
 #!/usr/bin/env bash
-# Stub: emits canned responses driven by env vars.
+# Stub: emits canned responses driven by env vars. The main ref goes through
+# the caller's --jq filter, as gh would apply it, so its parsing is tested.
+filter=""
+for ((i=1; i<=$#; i++)); do
+  if [[ "${!i}" = --jq ]]; then j=$((i+1)); filter="${!j}"; fi
+done
 case "$*" in
-  *git/ref/heads/main*) printf '%s\n' "${STUB_MAIN_SHA:?}" ;;
+  *git/ref/heads/main*)
+    ref="${STUB_MAIN_REF:-}"
+    [[ -n "$ref" ]] || ref="$(jq -cn --arg sha "${STUB_MAIN_SHA:?}" \
+      '{ref: "refs/heads/main", object: {type: "commit", sha: $sha}}')"
+    printf '%s\n' "$ref" | jq -r "$filter"
+    [[ -z "${STUB_MAIN_FAIL:-}" ]] || exit 1 ;;
   *"repos/ryanduguid/example/compare/${STUB_COMPARE_RANGE:-none}")
-    [[ -z "${STUB_COMPARE_FAIL:-}" ]] || exit 1
-    printf '%s\n' "${STUB_COMPARE:?}" ;;
+    printf '%s\n' "${STUB_COMPARE:?}"
+    [[ -z "${STUB_COMPARE_FAIL:-}" ]] || exit 1 ;;
   *releases*)           printf '%s'   "${STUB_RELEASE_IDS:-}" ;;
   *) echo "stub gh: unexpected args: $*" >&2; exit 64 ;;
 esac
 STUB
 chmod +x "$stub_dir/gh"
 export GH="$stub_dir/gh"
+export GITHUB_WORKFLOW_REF="ryanduguid/example/.github/workflows/release.yml@refs/tags/v1.2.3"
 
-# compare_response STATUS MERGE_BASE FILE... writes the fields the gate reads
-# from GitHub's compare response; each FILE is "name" or "old=>new" for a rename.
+head_commit="$(printf 'a%.0s' {1..40})"
+old_commit="$(printf 'b%.0s' {1..40})"
+other_commit="$(printf 'c%.0s' {1..40})"
+
+# compare_response STATUS MERGE_BASE FILE... writes a compare response for
+# old_commit...head_commit; each FILE is "name" or "old=>new" for a rename.
 compare_response() {
   local status="$1" merge_base="$2"; shift 2
   STUB_COMPARE="$(printf '%s\n' "$@" | jq -Rn \
-    --arg status "$status" --arg merge_base "$merge_base" '
-      {status: $status, merge_base_commit: {sha: $merge_base},
+    --arg status "$status" --arg merge_base "$merge_base" --arg base "$old_commit" '
+      {status: $status, base_commit: {sha: $base}, merge_base_commit: {sha: $merge_base},
        files: [inputs | select(. != "") | split("=>")
-               | if length == 2 then {filename: .[1], previous_filename: .[0]}
-                 else {filename: .[0]} end]}')"
+               | if length == 2
+                 then {filename: .[1], previous_filename: .[0], status: "renamed"}
+                 else {filename: .[0], status: "modified"} end]}')"
   export STUB_COMPARE
 }
+contains() { gate_main_contains "$old_commit" "ryanduguid/example" "${1-packages/example-tool}"; }
 
-export STUB_MAIN_SHA="abc123" STUB_COMPARE_RANGE="def456...abc123"
-run_case  "main matches"                  gate_main_matches "abc123" "ryanduguid/example"
-expect_fail "main mismatch"               gate_main_matches "def456" "ryanduguid/example"
-run_case "main head is contained"         gate_main_contains "abc123" "ryanduguid/example" "."
-compare_response ahead def456 "packages/other-tool/source.py" "README.md"
-run_case "ancestor with only other paths changed passes" \
-  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+export STUB_MAIN_SHA="$head_commit" STUB_COMPARE_RANGE="$old_commit...$head_commit"
+run_case  "main matches"                  gate_main_matches "$head_commit" "ryanduguid/example"
+expect_fail "main mismatch"               gate_main_matches "$old_commit" "ryanduguid/example"
+STUB_MAIN_FAIL=1 expect_fail "a failed main read fails even when it printed the head" \
+  gate_main_matches "$head_commit" "ryanduguid/example"
+run_case "main head is contained" \
+  gate_main_contains "$head_commit" "ryanduguid/example" "."
+compare_response ahead "$old_commit" "packages/other-tool/source.py" "README.md" \
+  ".github/workflows/ci.yml"
+run_case "ancestor with only other paths changed passes" contains
 expect_fail "the first gate still refuses that ancestor" \
-  gate_main_matches "def456" "ryanduguid/example"
-compare_response ahead def456 "packages/example-tool-two/source.py"
-run_case "a sibling sharing the directory name prefix is another component" \
-  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
-expect_fail "an empty source directory fails closed" \
-  gate_main_contains "def456" "ryanduguid/example" ""
+  gate_main_matches "$old_commit" "ryanduguid/example"
+STUB_MAIN_FAIL=1 expect_fail "a failed main read fails the later gate" contains
+STUB_COMPARE_FAIL=1 expect_fail "a failed comparison fails even when it printed a pass" contains
+for ref in '{"ref":"refs/heads/main","object":{"type":"commit","sha":"aaaa"}}' \
+  '{"ref":"refs/heads/other","object":{"type":"commit","sha":"'"$head_commit"'"}}' \
+  '{"ref":"refs/heads/main","object":{"type":"tag","sha":"'"$head_commit"'"}}' \
+  '{"ref":"refs/heads/main"}'; do
+  STUB_MAIN_REF="$ref" expect_fail "an unusable main ref fails: $ref" contains
+done
+GITHUB_WORKFLOW_REF="" expect_fail "a missing caller workflow ref fails" contains
+GITHUB_WORKFLOW_REF="someone/else/.github/workflows/release.yml@refs/tags/v1.2.3" \
+  expect_fail "a caller workflow in another repository fails" contains
+GITHUB_WORKFLOW_REF="ryanduguid/example/../release.yml@refs/tags/v1.2.3" \
+  expect_fail "a caller outside .github/workflows fails" contains
+STUB_COMPARE_RANGE="bbbbbbb...$head_commit" \
+  STUB_COMPARE="$(jq -c '.base_commit.sha = "bbbbbbb" | .merge_base_commit.sha = "bbbbbbb"' <<<"$STUB_COMPARE")" \
+  expect_fail "an abbreviated release commit fails" \
+  gate_main_contains "bbbbbbb" "ryanduguid/example" "packages/example-tool"
+compare_response ahead "$old_commit" "packages/example-tool-two/source.py"
+run_case "a sibling sharing the directory name prefix is another component" contains
+expect_fail "an empty source directory fails closed" contains ""
 expect_fail "a missing source directory fails closed" \
-  gate_main_contains "abc123" "ryanduguid/example"
-compare_response ahead def456 "packages/example-tool/source.py"
-expect_fail "ancestor with the component changed since fails" \
-  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
-compare_response ahead def456 "packages/example-tool/old.py=>packages/moved/old.py"
-expect_fail "a rename out of the component counts as a change" \
-  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
-compare_response ahead def456 "packages/example-tool"
-expect_fail "a file at the component path counts as a change" \
-  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
-compare_response ahead def456 "packages/other-tool/source.py"
-expect_fail "a root release fails on any change since its commit" \
-  gate_main_contains "def456" "ryanduguid/example" "."
-compare_response diverged 0123ab "packages/other-tool/source.py"
-expect_fail "a commit that is not an ancestor of main fails" \
-  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
-compare_response behind def456
-expect_fail "a commit ahead of main fails" \
-  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
-compare_response ahead 0123ab "packages/other-tool/source.py"
-expect_fail "an ahead status with another merge base fails" \
-  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
+  gate_main_contains "$old_commit" "ryanduguid/example"
+compare_response ahead "$old_commit" "packages/example-tool/source.py"
+expect_fail "ancestor with the component changed since fails" contains
+compare_response ahead "$old_commit" ".github/workflows/release.yml"
+expect_fail "a change to the caller workflow fails" contains
+compare_response ahead "$old_commit" ".github/workflows/release.yml=>.github/workflows/old.yml"
+expect_fail "a rename of the caller workflow fails" contains
+compare_response ahead "$old_commit" "packages/example-tool/old.py=>packages/moved/old.py"
+expect_fail "a rename out of the component counts as a change" contains
+compare_response ahead "$old_commit" "packages/moved/new.py=>packages/example-tool/new.py"
+expect_fail "a rename into the component counts as a change" contains
+compare_response ahead "$old_commit" "packages/example-tool"
+expect_fail "a file at the component path counts as a change" contains
+compare_response ahead "$old_commit" "packages/other-tool/source.py"
+expect_fail "a root release fails on any change since its commit" contains "."
+compare_response ahead "$old_commit"
+run_case "a root release passes when the trees match" contains "."
+compare_response diverged "$other_commit" "packages/other-tool/source.py"
+expect_fail "a commit that is not an ancestor of main fails" contains
+compare_response behind "$old_commit"
+expect_fail "a commit ahead of main fails" contains
+compare_response ahead "$other_commit" "packages/other-tool/source.py"
+expect_fail "an ahead status with another merge base fails" contains
+compare_response ahead "$old_commit" "packages/other-tool/source.py"
+STUB_COMPARE="$(jq -c --arg sha "$other_commit" '.base_commit.sha = $sha' <<<"$STUB_COMPARE")" \
+  expect_fail "a comparison of another base commit fails" contains
+for record in '{"filename":""}' '{"filename":null}' '"README.md"' \
+  '{"filename":"README.md","status":"renamed"}' \
+  '{"filename":"README.md","status":"renamed","previous_filename":false}' \
+  '{"filename":"README.md","previous_filename":""}'; do
+  STUB_COMPARE="$(jq -c --argjson record "$record" '.files += [$record]' <<<"$STUB_COMPARE")" \
+    expect_fail "a malformed file record fails: $record" contains
+done
 mapfile -t many_files < <(seq -f "packages/other-tool/f%g.py" 1 300)
-compare_response ahead def456 "${many_files[@]}"
-expect_fail "a possibly truncated file list fails closed" \
-  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
-compare_response ahead def456 "${many_files[@]:1}"
-run_case "299 unrelated changed files pass" \
-  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
-export STUB_COMPARE='{"status":"ahead","merge_base_commit":{"sha":"def456"}}'
-expect_fail "a response without a file list fails closed" \
-  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
-export STUB_COMPARE_FAIL=1
-expect_fail "a failed comparison fails closed" \
-  gate_main_contains "def456" "ryanduguid/example" "packages/example-tool"
-unset STUB_COMPARE STUB_COMPARE_FAIL STUB_COMPARE_RANGE
+compare_response ahead "$old_commit" "${many_files[@]}"
+expect_fail "a possibly truncated file list fails closed" contains
+compare_response ahead "$old_commit" "${many_files[@]:1}"
+run_case "299 unrelated changed files pass" contains
+STUB_COMPARE="$(jq -c 'del(.files)' <<<"$STUB_COMPARE")" \
+  expect_fail "a response without a file list fails closed" contains
+unset STUB_COMPARE STUB_COMPARE_RANGE
 
 export STUB_RELEASE_IDS=""
 run_case  "no existing release"           gate_no_existing_release "v1.2.3" "ryanduguid/example"

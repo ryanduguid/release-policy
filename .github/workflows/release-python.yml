@@ -103,7 +103,7 @@ jobs:
 
       # Head equality here, before any wait, means the run uses main's current
       # caller workflow, policy pin and required checks. Later re-checks accept
-      # a merge that leaves the component untouched.
+      # a merge that leaves the component and this caller untouched.
       - name: Require the release commit to be main's head
         env:
           GH_TOKEN: ${{ github.token }}
