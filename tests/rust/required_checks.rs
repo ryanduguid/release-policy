@@ -488,8 +488,7 @@ fn balanced_movement_cannot_authorise_release_preflight() {
         assert!(!verdict.ok(), "{key}");
         assert!(
             verdict.failed[0].contains("201"),
-            "{key}: {:?}",
-            verdict.failed
+            "{key}: the moved record 201 is not the first failure"
         );
     }
 }

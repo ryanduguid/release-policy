@@ -137,7 +137,7 @@ fn support_is_link(path: &Path) -> bool {
 
 #[test]
 fn parser_defaults_to_the_repository_root() {
-    let out_dir = tempfile::tempdir().unwrap();
+    let out_dir = support::tempdir();
     let base = out_dir
         .path()
         .join("example")
@@ -162,7 +162,7 @@ fn parser_defaults_to_the_repository_root() {
 
 #[test]
 fn builder_pins_git_conversion_and_timezone() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     type Call = (Vec<String>, Vec<(String, String)>);
     let mut calls: Vec<Call> = Vec::new();
     let outputs = build_release_archives_with(
@@ -210,7 +210,7 @@ fn builder_pins_git_conversion_and_timezone() {
 
 #[test]
 fn builder_rejects_a_non_numeric_commit_timestamp() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     let result = build_release_archives_with(
         checkout(),
         "HEAD",
@@ -224,7 +224,7 @@ fn builder_rejects_a_non_numeric_commit_timestamp() {
 
 #[test]
 fn repeated_archives_are_identical_and_formats_agree() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     // The builder sets TZ itself, so the caller's zone cannot reach the archive.
     let first = build_release_archives(
         checkout(),
@@ -324,7 +324,7 @@ fn component_archive_rejects_unsafe_untracked_file_and_symlink_paths() {
 
 #[test]
 fn builder_refuses_unsafe_prefixes_and_existing_outputs() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     for prefix in ["absolute", "/absolute/", "../escape/", "safe/../escape/"] {
         assert!(
             build_release_archives(
@@ -356,7 +356,7 @@ fn builder_refuses_unsafe_prefixes_and_existing_outputs() {
 #[test]
 fn builder_rejects_an_output_directory_symlinked_outside_the_checkout() {
     let consumer = tempfile::tempdir_in(checkout()).unwrap();
-    let outside = tempfile::tempdir().unwrap();
+    let outside = support::tempdir();
     let link = consumer.path().join("dist");
     if !support::symlink(outside.path(), &link) {
         return; // Symbolic links need a privilege on Windows.
@@ -393,7 +393,7 @@ fn invalid_revisions_and_relative_traversal_have_no_write_side_effects() {
 
 #[test]
 fn intermediate_and_dangling_parent_links_create_nothing() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     let root = temp.path();
     let outside = root.join("outside");
     std::fs::create_dir(&outside).unwrap();
@@ -422,7 +422,7 @@ fn intermediate_and_dangling_parent_links_create_nothing() {
 
 #[test]
 fn existing_and_dangling_archive_links_are_preserved() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     let target = temp.path().join("target");
     for suffix in [".zip", ".tar.gz"] {
         let link = temp.path().join(format!("archive{suffix}"));
@@ -453,7 +453,7 @@ fn existing_and_dangling_archive_links_are_preserved() {
 fn preflight_rejects_resolved_parent_aliases_without_writing() {
     // A parent whose resolved form differs from its spelling is refused even
     // when no component reports itself as a link, as a Windows junction does not.
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     let root = release_policy::py::resolve(temp.path());
     let outside = root.join("outside");
     std::fs::create_dir(&outside).unwrap();
@@ -481,7 +481,7 @@ fn preflight_rejects_resolved_parent_aliases_without_writing() {
 
 #[test]
 fn preflight_refuses_a_relative_destination_outside_the_repository() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     let root = release_policy::py::resolve(temp.path());
     let repository = root.join("checkout");
     std::fs::create_dir(&repository).unwrap();
@@ -495,7 +495,7 @@ fn preflight_refuses_a_relative_destination_outside_the_repository() {
 
 #[test]
 fn component_must_be_a_tree_at_the_selected_historical_commit() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     let root = release_policy::py::resolve(temp.path());
     let repo = Repo::new_in(&root);
     repo.write("component", "formerly a file\n");
@@ -519,7 +519,7 @@ fn component_must_be_a_tree_at_the_selected_historical_commit() {
 
 #[test]
 fn failed_archive_generation_removes_only_partial_outputs() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = support::tempdir();
     let keep = temp.path().join("keep");
     std::fs::write(&keep, "keep").unwrap();
     let mut real = archives::system_git(checkout());

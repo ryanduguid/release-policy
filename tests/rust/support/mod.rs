@@ -5,6 +5,13 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// A temporary directory under the resolved system temp directory, as
+/// pytest's `tmp_path` is. Windows runners spell TEMP with an 8.3 short name
+/// (`RUNNER~1`), which the archive builder's resolved-parent check refuses.
+pub fn tempdir() -> tempfile::TempDir {
+    tempfile::tempdir_in(release_policy::py::resolve(&std::env::temp_dir())).unwrap()
+}
+
 /// A temporary Git checkout with a fixed identity and LF line endings.
 pub struct Repo {
     pub dir: tempfile::TempDir,
@@ -12,7 +19,7 @@ pub struct Repo {
 
 impl Repo {
     pub fn new() -> Self {
-        Self::init(tempfile::tempdir().unwrap())
+        Self::init(tempdir())
     }
 
     /// A checkout inside `parent`, so a test can watch its surroundings.
