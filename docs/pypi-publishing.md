@@ -25,7 +25,7 @@ Set the input, then add a second job:
       pypi:
         name: publish to PyPI
         needs: release
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-24.04
         environment:
           name: pypi
           url: https://pypi.org/p/<distribution-name>

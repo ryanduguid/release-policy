@@ -28,7 +28,9 @@ jobs:
     # Outlasts the gate's bounded wait, as the other families' checks jobs do.
     timeout-minutes: 15
     name: guard skill-pack release mode
-    runs-on: ubuntu-latest
+    # Pinned whilst ubuntu-latest moves to 26.04 (actions/runner-images#14748), so a
+    # release never changes image mid-run. Move every release family together.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: read # Read this repository's own workflow runs for the release commit.

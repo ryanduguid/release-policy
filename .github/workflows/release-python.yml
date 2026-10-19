@@ -69,7 +69,9 @@ jobs:
   checks:
     timeout-minutes: 15
     name: require the consumer's mandatory checks
-    runs-on: ubuntu-latest
+    # Pinned whilst ubuntu-latest moves to 26.04 (actions/runner-images#14748), so a
+    # release never changes image mid-run. Move every release family together.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: read # Read this repository's own workflow runs for the release commit.
@@ -116,7 +118,7 @@ jobs:
     timeout-minutes: 15
     name: gate and run consumer tests
     needs: checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -197,7 +199,7 @@ jobs:
     timeout-minutes: 20
     name: gate and build exact candidate
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       artifact-tag: ${{ steps.release.outputs.artifact-tag }}
       candidate-digest: ${{ steps.candidate.outputs.artifact-digest }}
@@ -374,7 +376,7 @@ jobs:
     timeout-minutes: 20
     name: verify, attest and publish exact candidate
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       actions: read # Inspect and download only the exact candidate artefact ID.
       attestations: write # Record provenance and the wheel SBOM attestation.
