@@ -29,27 +29,27 @@ CANONICAL_SHA256 = {
     ".github/pr-review-build-wheels.txt": "e75343a5ed6ddcd4f3c9fdb52e8a635fd52c4509dca5f0f22d2b29b0d22c9a18",
     "docs/pr-review.md": "4566bf335edb09a30839550519e4b062b18698e8e934035428cd9e148264bf93",
     ".github/pr-review-policy.json": "44036e011119babc6d6bea0e5ac9a98b05770f73cc8bc8a9d42844c7da810bba",
-    ".github/workflows/pr-review.yml": "aaa85f96285e12f0872e44f4f047aac47b75c82a1af2e74170f67ea7c23dacad",
+    ".github/workflows/pr-review.yml": "47dd445cdb3ec7402db5f74cf14516c3f23cbf16dad89e8d7e0f4e2867c36c0a",
     "docs/attribution-consumers.md": "cd58487fb917a082c4b0b73139b35824f6be4aa0cd88a0d13ed002fb050af435",
     ".github/ci/check_gates.py": "eda4b878cde2c655247ef3b4bf388cf72d875506316d4d2c882c76a0bb85ecd2",
-    ".github/actions/no-ai-attribution/action.yml": "b37c1426fcdc086e7063d5fdb6ac04a4581b1d2b78abefe5d6929a36c7801656",
+    ".github/actions/no-ai-attribution/action.yml": "4829fb6c59c34cd4f27c5d879efb136d5678b610c06be3c2c9949d95eb84fa0b",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
     ".github/dependabot.yml": "61862ed90d98b35bd357e9bf55464003ecc3b1c3643530c593d12e0f666bfd80",
-    ".github/workflows/ci.yml": "35ae25053883bc19c5ec54527d518c445b2f8520b2efde46250c463d081b7ab0",
-    ".github/workflows/codeql.yml": "447bc76406719470104571086cb35cec94e737bc1c01e45a74e0abd3fb1dc94d",
-    ".github/workflows/scorecard.yml": "0b53690e51973336600e3b9d7f05f9e3c71c5de065bb3b306a447245f8644286",
-    ".github/workflows/snyk.yml": "6e06196e83e1862cadb63c5729d3df61793cca4c87b4caa70b99ab62922a79eb",
+    ".github/workflows/ci.yml": "dd7ebf2503527242530cb3468e3177bdc349dc5b9dcd7a5c9407db8ab6dab9f7",
+    ".github/workflows/codeql.yml": "86a84c42a8de80f5c197c6ba7fd445a15734d6567d08add3d639baccf0e0835f",
+    ".github/workflows/scorecard.yml": "0cfb357dd0c38ab298a1c761f83f8c087997b05b6038a838ee27655a9199780c",
+    ".github/workflows/snyk.yml": "6bb9dd2f7d4df8a22f9bd450bfe631476afc20becc9177543b8e15aa5c59b112",
     ".github/workflows/no-ai-attribution.yml": "2c517d6f7eda8667c8a2eba186ef15d9e27b4c91d4617a39083b0a31f26f2834",
     ".github/workflows/attribution-policy.yml": "55eb47f6abbd0c08297bca7edf1c751193f537906092c3f4f4be0d07a1c5b3b9",
-    ".github/workflows/publish-archives.yml": "ce3bbebf8f50149f63e3519a0c48b0173dab0e962fc11f7245903999ae7b95b1",
-    ".github/workflows/release-archive.yml": "0a3fdd6c0bb70b990ef82164c71028d4c4e28924268101fd7d8491cc3e39a4f4",
-    ".github/workflows/release-python.yml": "ec5d42e4a1053ddd5605ce636f2bf03781ae03294b46315ba7008f04e5aac70f",
-    ".github/workflows/release-skills.yml": "5934242cdd7bbd0dbad3cb73f8bc63eafcbf1e0aaea0231be0d27b87ff9c8d4d",
-    ".github/workflows/verify-skills.yml": "3d6e51be78bf4cb0e22ce0dcf28bac5852e21daae34c3abff262d9a97f56de47",
+    ".github/workflows/publish-archives.yml": "e84d2f2b0bc4593d4f3f1e43645504fac9ccf3a8459b3e89d83b118e77dc757f",
+    ".github/workflows/release-archive.yml": "21dee8370a36f36d406a83197c2d42ce98d929eb87ce8bd086d740eca5faaac4",
+    ".github/workflows/release-python.yml": "55542259d12f2a73430163b0885fc8b1fad593e6b6475e03f6c48276f367dba2",
+    ".github/workflows/release-skills.yml": "a4b57255f0cb40bcda7a8048c34497fb3259887ce0083fa93694943defa3f47f",
+    ".github/workflows/verify-skills.yml": "45c46dbf4b06a17c13d4a2dbadd5bb8f790f28560ea43e78ac83bf9dea9683cc",
     ".github/workflows/virustotal-release.yml": "fc3ec520ef37f4ded629fbab95a2bc1fd999ab98caced8b63cc813ca8e995a44",
     "README.md": "6bd4a7f27470b2717e7eba58e8bec6b135880290b80f9d96c466edba0aa859a1",
     "docs/python-consumers.md": "f4a026b263cd7fdc706546249f812da336ca2b89db0ba7abbf3aca60546add9c",
-    "docs/pypi-publishing.md": "a2f8df87d92a6c43c293fc29922f3ea16f040517df63343545749fad204d2513",
+    "docs/pypi-publishing.md": "c04789514ed01b85fb06a9f515527e9b0363800cb36f964de1ed468257ab19ad",
     "docs/archive-consumers.md": "6f455e3fa4eaf4ecc8cf773e58da2a81d2eb715b1e364496dab6628a0d11e4b5",
     "docs/skill-consumers.md": "db6d8ae9d72582cf472d60afa2cc7d5313740d2a52f06ef9f21d749c2d701456",
     "docs/consumer-prerequisites.md": "d2bf47cced7633f3b4f9626883556a70edba6bcbec770918b8bdd24823ea63a0",
@@ -59,20 +59,23 @@ CANONICAL_SHA256 = {
     "SECURITY.md": "9f9cea868cdb60a00c98ebaa892125d83a94fba1589d55227cd239c6af7804f9",
 }
 
-# A third-party pin is hashed as action@<pin> # vMAJOR, so a Dependabot minor or
-# patch bump moves no digest. The action, its path, the major version and every
+# A third-party pin is hashed as action@<40 zeros> # vMAJOR, so a Dependabot minor
+# or patch bump moves no digest. The action, its path, the major version and every
 # other byte stay pinned: a major bump, a new action or a pin without its version
-# comment still needs a reviewed digest change. This repository's own pins are
-# never normalised.
+# comment still needs a reviewed digest change. The placeholder is itself a valid
+# pin, so no unpinned line can hash the same. This repository's own pins and local
+# ./ actions are never normalised.
 THIRD_PARTY_PIN = re.compile(
-    rb"^(?P<head>[ \t]*(?:- )?uses: (?!(?i:ryanduguid)/)[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+)"
+    rb"^(?P<head>[ \t]*(?:- )?uses: (?!(?i:ryanduguid)/)[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_./-]+)"
     rb"@[0-9a-f]{40} # (?P<major>v[0-9]+)(?:\.[0-9]+){0,2}$",
     re.MULTILINE,
 )
 
 
 def digest(canonical: bytes) -> str:
-    return hashlib.sha256(THIRD_PARTY_PIN.sub(rb"\g<head>@<pin> # \g<major>", canonical)).hexdigest()
+    return hashlib.sha256(
+        THIRD_PARTY_PIN.sub(rb"\g<head>@" + b"0" * 40 + rb" # \g<major>", canonical)
+    ).hexdigest()
 
 
 def normalise(raw: bytes, path: str) -> tuple[bytes | None, str | None]:
@@ -142,10 +145,12 @@ def mutate(canonical: dict[str, bytes], name: str) -> dict[str, bytes]:
         path = ".github/workflows/ci.yml"
         pin = re.compile(rb"(uses: actions/checkout)@[0-9a-f]{40} # v([0-9]+)(?:\.[0-9]+){0,2}$", re.MULTILINE)
         edits = {
-            "pin-bump": lambda m: m[1] + b"@" + b"0" * 40 + b" # v" + m[2] + b".99.0",
+            "pin-bump": lambda m: m[1] + b"@" + b"1" * 40 + b" # v" + m[2] + b".99.0",
             "pin-action": lambda m: m[0].replace(b"actions/", b"actionz/"),
-            "pin-major": lambda m: m[1] + b"@" + b"0" * 40 + b" # v%d.0.0" % (int(m[2]) + 1),
-            "pin-comment": lambda m: m[1] + b"@" + b"0" * 40,
+            "pin-major": lambda m: m[1] + b"@" + b"1" * 40 + b" # v%d.0.0" % (int(m[2]) + 1),
+            "pin-comment": lambda m: m[1] + b"@" + b"1" * 40,
+            "pin-placeholder": lambda m: m[1] + b"@<pin> # v" + m[2],
+            "pin-trailing": lambda m: m[0] + b" # extra",
         }
         documents[path], count = pin.subn(edits[name], documents[path], count=1)
         if count != 1:
@@ -178,10 +183,14 @@ if validate(canonical_crlf):
     self_test_failures.append("canonical CRLF control was rejected")
 if validate(mutate(canonical_lf, "pin-bump")):
     self_test_failures.append("third-party minor pin bump control was rejected")
-for owner in (b"ryanduguid", b"RyanDuguid"):
-    own_pin = b"uses: " + owner + b"/release-policy/.github/workflows/pr-review.yml@%s # v1.0.0\n"
-    if digest(own_pin % (b"a" * 40)) == digest(own_pin % (b"b" * 40)):
-        self_test_failures.append(f"own-repository pin was normalised: {owner.decode()}")
+for action in (
+    b"ryanduguid/release-policy/.github/workflows/pr-review.yml",
+    b"RyanDuguid/release-policy/.github/workflows/pr-review.yml",
+    b"./build/action",
+):
+    line = b"uses: " + action + b"@%s # v1.0.0\n"
+    if digest(line % (b"a" * 40)) == digest(line % (b"b" * 40)):
+        self_test_failures.append(f"pin was normalised: {action.decode()}")
 
 adverse = (
     "dependabot-anchor",
@@ -191,6 +200,8 @@ adverse = (
     "pin-action",
     "pin-major",
     "pin-comment",
+    "pin-placeholder",
+    "pin-trailing",
 )
 for name in adverse:
     if not validate(mutate(canonical_lf, name)):
