@@ -10,6 +10,7 @@ command -v "$PYTHON" >/dev/null 2>&1 || PYTHON=python
 from __future__ import annotations
 
 import hashlib
+import re
 import sys
 from pathlib import Path
 
@@ -28,27 +29,27 @@ CANONICAL_SHA256 = {
     ".github/pr-review-build-wheels.txt": "e75343a5ed6ddcd4f3c9fdb52e8a635fd52c4509dca5f0f22d2b29b0d22c9a18",
     "docs/pr-review.md": "4566bf335edb09a30839550519e4b062b18698e8e934035428cd9e148264bf93",
     ".github/pr-review-policy.json": "44036e011119babc6d6bea0e5ac9a98b05770f73cc8bc8a9d42844c7da810bba",
-    ".github/workflows/pr-review.yml": "ccd835043a213b46051ac70f15465e2489a5ed4c4af6207197927d294e977957",
+    ".github/workflows/pr-review.yml": "47dd445cdb3ec7402db5f74cf14516c3f23cbf16dad89e8d7e0f4e2867c36c0a",
     "docs/attribution-consumers.md": "cd58487fb917a082c4b0b73139b35824f6be4aa0cd88a0d13ed002fb050af435",
     ".github/ci/check_gates.py": "eda4b878cde2c655247ef3b4bf388cf72d875506316d4d2c882c76a0bb85ecd2",
-    ".github/actions/no-ai-attribution/action.yml": "7c3febb2fd89f92ead53571835dae1d1d20b2ce49eb127298993a1495b64e47f",
+    ".github/actions/no-ai-attribution/action.yml": "4829fb6c59c34cd4f27c5d879efb136d5678b610c06be3c2c9949d95eb84fa0b",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
     ".github/dependabot.yml": "61862ed90d98b35bd357e9bf55464003ecc3b1c3643530c593d12e0f666bfd80",
-    ".github/workflows/ci.yml": "4106f2d254ccd1f022440906a9f657205b8ce7f05aac3934b95fe9d0ed662b65",
-    ".github/workflows/codeql.yml": "775b1946fa07e027de36f33dd022959f37575d16d0fc505605e7cbc575b67b54",
-    ".github/workflows/scorecard.yml": "4fc750dcee3e872c7439f89bd36949f1f6b1a0a71c693a274219effb75e50c73",
-    ".github/workflows/snyk.yml": "391120a7708c110eda3cec528369debefd01362c464ea7acb5269314ed9e037e",
+    ".github/workflows/ci.yml": "dd7ebf2503527242530cb3468e3177bdc349dc5b9dcd7a5c9407db8ab6dab9f7",
+    ".github/workflows/codeql.yml": "86a84c42a8de80f5c197c6ba7fd445a15734d6567d08add3d639baccf0e0835f",
+    ".github/workflows/scorecard.yml": "0cfb357dd0c38ab298a1c761f83f8c087997b05b6038a838ee27655a9199780c",
+    ".github/workflows/snyk.yml": "6bb9dd2f7d4df8a22f9bd450bfe631476afc20becc9177543b8e15aa5c59b112",
     ".github/workflows/no-ai-attribution.yml": "2c517d6f7eda8667c8a2eba186ef15d9e27b4c91d4617a39083b0a31f26f2834",
     ".github/workflows/attribution-policy.yml": "55eb47f6abbd0c08297bca7edf1c751193f537906092c3f4f4be0d07a1c5b3b9",
-    ".github/workflows/publish-archives.yml": "1d7c4fa1b6989fbc37d90ea442f360d726833b7906b1ac144e2651a0a11b2f0b",
-    ".github/workflows/release-archive.yml": "f48381cd714886a0f9dca8b532f4d7a1316ee2d16887131270fb03775f741483",
-    ".github/workflows/release-python.yml": "6f9b40fb789d6ad93f06625ef43a105ce85c08a0f282a9757604463d5158a880",
-    ".github/workflows/release-skills.yml": "76a7f1996881def9f6f58e4ffdbe7a5a39557aa0e333fc445d6850be05ed2e81",
-    ".github/workflows/verify-skills.yml": "6b3fc08d2a35bb65a1b61dc58df1c73a3b067ba1997c87b908342fa7d53fff18",
+    ".github/workflows/publish-archives.yml": "e84d2f2b0bc4593d4f3f1e43645504fac9ccf3a8459b3e89d83b118e77dc757f",
+    ".github/workflows/release-archive.yml": "21dee8370a36f36d406a83197c2d42ce98d929eb87ce8bd086d740eca5faaac4",
+    ".github/workflows/release-python.yml": "55542259d12f2a73430163b0885fc8b1fad593e6b6475e03f6c48276f367dba2",
+    ".github/workflows/release-skills.yml": "a4b57255f0cb40bcda7a8048c34497fb3259887ce0083fa93694943defa3f47f",
+    ".github/workflows/verify-skills.yml": "45c46dbf4b06a17c13d4a2dbadd5bb8f790f28560ea43e78ac83bf9dea9683cc",
     ".github/workflows/virustotal-release.yml": "fc3ec520ef37f4ded629fbab95a2bc1fd999ab98caced8b63cc813ca8e995a44",
     "README.md": "6bd4a7f27470b2717e7eba58e8bec6b135880290b80f9d96c466edba0aa859a1",
     "docs/python-consumers.md": "f4a026b263cd7fdc706546249f812da336ca2b89db0ba7abbf3aca60546add9c",
-    "docs/pypi-publishing.md": "66ef421b7008fd30967c4810d52f1d14c0b3243195e03b641635cecb05f6efb0",
+    "docs/pypi-publishing.md": "c04789514ed01b85fb06a9f515527e9b0363800cb36f964de1ed468257ab19ad",
     "docs/archive-consumers.md": "6f455e3fa4eaf4ecc8cf773e58da2a81d2eb715b1e364496dab6628a0d11e4b5",
     "docs/skill-consumers.md": "db6d8ae9d72582cf472d60afa2cc7d5313740d2a52f06ef9f21d749c2d701456",
     "docs/consumer-prerequisites.md": "d2bf47cced7633f3b4f9626883556a70edba6bcbec770918b8bdd24823ea63a0",
@@ -57,6 +58,24 @@ CANONICAL_SHA256 = {
     "docs/re-pinning.md": "eb1b361cf717bcbabd383e0cf5592998fe5b045ae90982b0c6dd84eda626fe0f",
     "SECURITY.md": "9f9cea868cdb60a00c98ebaa892125d83a94fba1589d55227cd239c6af7804f9",
 }
+
+# A third-party pin is hashed as action@<40 zeros> # vMAJOR, so a Dependabot minor
+# or patch bump moves no digest. The action, its path, the major version and every
+# other byte stay pinned: a major bump, a new action or a pin without its version
+# comment still needs a reviewed digest change. The placeholder is itself a valid
+# pin, so no unpinned line can hash the same. This repository's own pins and local
+# ./ actions are never normalised.
+THIRD_PARTY_PIN = re.compile(
+    rb"^(?P<head>[ \t]*(?:- )?uses: (?!(?i:ryanduguid)/)[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_./-]+)"
+    rb"@[0-9a-f]{40} # (?P<major>v[0-9]+)(?:\.[0-9]+){0,2}$",
+    re.MULTILINE,
+)
+
+
+def digest(canonical: bytes) -> str:
+    return hashlib.sha256(
+        THIRD_PARTY_PIN.sub(rb"\g<head>@" + b"0" * 40 + rb" # \g<major>", canonical)
+    ).hexdigest()
 
 
 def normalise(raw: bytes, path: str) -> tuple[bytes | None, str | None]:
@@ -84,7 +103,7 @@ def validate(documents: dict[str, bytes]) -> list[str]:
         if error:
             failures.append(error)
             continue
-        actual = hashlib.sha256(canonical).hexdigest()
+        actual = digest(canonical)
         if actual != expected:
             failures.append(
                 f"{path}: canonical content mismatch "
@@ -122,6 +141,20 @@ def mutate(canonical: dict[str, bytes], name: str) -> dict[str, bytes]:
     elif name in {"stage-two-draft", "release-preflight"}:
         path = "docs/attribution-policy-stage2.yml" if name == "stage-two-draft" else "docs/release-preflight.md"
         documents[path] = bytes([documents[path][0] ^ 1]) + documents[path][1:]
+    elif name.startswith("pin-"):
+        path = ".github/workflows/ci.yml"
+        pin = re.compile(rb"(uses: actions/checkout)@[0-9a-f]{40} # v([0-9]+)(?:\.[0-9]+){0,2}$", re.MULTILINE)
+        edits = {
+            "pin-bump": lambda m: m[1] + b"@" + b"1" * 40 + b" # v" + m[2] + b".99.0",
+            "pin-action": lambda m: m[0].replace(b"actions/", b"actionz/"),
+            "pin-major": lambda m: m[1] + b"@" + b"1" * 40 + b" # v%d.0.0" % (int(m[2]) + 1),
+            "pin-comment": lambda m: m[1] + b"@" + b"1" * 40,
+            "pin-placeholder": lambda m: m[1] + b"@<pin> # v" + m[2],
+            "pin-trailing": lambda m: m[0] + b" # extra",
+        }
+        documents[path], count = pin.subn(edits[name], documents[path], count=1)
+        if count != 1:
+            raise AssertionError(f"{path}: no actions/checkout pin to mutate")
     else:
         raise AssertionError(f"unknown mutation: {name}")
     return documents
@@ -148,12 +181,27 @@ if validate(canonical_lf):
 canonical_crlf = {path: raw.replace(b"\n", b"\r\n") for path, raw in canonical_lf.items()}
 if validate(canonical_crlf):
     self_test_failures.append("canonical CRLF control was rejected")
+if validate(mutate(canonical_lf, "pin-bump")):
+    self_test_failures.append("third-party minor pin bump control was rejected")
+for action in (
+    b"ryanduguid/release-policy/.github/workflows/pr-review.yml",
+    b"RyanDuguid/release-policy/.github/workflows/pr-review.yml",
+    b"./build/action",
+):
+    line = b"uses: " + action + b"@%s # v1.0.0\n"
+    if digest(line % (b"a" * 40)) == digest(line % (b"b" * 40)):
+        self_test_failures.append(f"pin was normalised: {action.decode()}")
 
 adverse = (
     "dependabot-anchor",
     "workflow-extra-file",
     "stage-two-draft",
     "release-preflight",
+    "pin-action",
+    "pin-major",
+    "pin-comment",
+    "pin-placeholder",
+    "pin-trailing",
 )
 for name in adverse:
     if not validate(mutate(canonical_lf, name)):
