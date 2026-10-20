@@ -1,6 +1,8 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 
 use regex::Regex;
 use sha2::{Digest, Sha256};
@@ -80,13 +82,119 @@ pub fn text_bytes(text: &str) -> Vec<u8> {
     }
 }
 
+static UNBUFFERED: LazyLock<bool> = LazyLock::new(python_unbuffered);
+static STDOUT: LazyLock<Mutex<Box<dyn Write + Send>>> =
+    LazyLock::new(|| Mutex::new(python_stdout(*UNBUFFERED)));
+/// A write to stderr failed. Buffered, its bytes stayed pending in Python's
+/// stderr and failed again at exit.
+static STDERR_FAILED: AtomicBool = AtomicBool::new(false);
+
+/// `PYTHONUNBUFFERED` as CPython reads it: set and not an integer equal to 0.
+fn python_unbuffered() -> bool {
+    std::env::var("PYTHONUNBUFFERED").is_ok_and(|value| {
+        !value.is_empty()
+            && value
+                .trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r'])
+                .parse::<i32>()
+                != Ok(0)
+    })
+}
+
+/// stdout as the scripts had it: line-buffered on a terminal, written straight
+/// to the handle with `PYTHONUNBUFFERED`, and otherwise held in a 128 KiB
+/// buffer (CPython 3.15's `io.DEFAULT_BUFFER_SIZE`) until it fills or the
+/// process exits.
+fn python_stdout(unbuffered: bool) -> Box<dyn Write + Send> {
+    use std::io::IsTerminal;
+    let stdout = std::io::stdout();
+    if stdout.is_terminal() {
+        return Box::new(std::io::LineWriter::new(stdout));
+    }
+    if unbuffered {
+        #[cfg(unix)]
+        let handle = std::os::fd::AsFd::as_fd(&stdout)
+            .try_clone_to_owned()
+            .map(std::fs::File::from);
+        #[cfg(windows)]
+        let handle = std::os::windows::io::AsHandle::as_handle(&stdout)
+            .try_clone_to_owned()
+            .map(std::fs::File::from);
+        if let Ok(file) = handle {
+            return Box::new(file);
+        }
+    }
+    Box::new(std::io::BufWriter::with_capacity(128 * 1024, stdout))
+}
+
+fn stdout() -> MutexGuard<'static, Box<dyn Write + Send>> {
+    STDOUT.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn write_stderr(raw: &[u8]) -> std::io::Result<()> {
+    std::io::stderr()
+        .lock()
+        .write_all(raw)
+        .inspect_err(|_| STDERR_FAILED.store(true, Ordering::SeqCst))
+}
+
+/// `(type(exc).__name__, str(exc))` for a failed write to a standard stream:
+/// `OSError: [Errno 22] Invalid argument` for a closed pipe on Windows,
+/// `BrokenPipeError: [Errno 32] Broken pipe` elsewhere.
+fn stream_error(error: &std::io::Error) -> (&'static str, String) {
+    let mut text = error.to_string();
+    if let Some(at) = text.rfind(" (os error ") {
+        text.truncate(at);
+    }
+    match error.raw_os_error() {
+        Some(112) if cfg!(windows) => ("OSError", "[Errno 28] No space left on device".into()),
+        Some(_) if cfg!(windows) => ("OSError", "[Errno 22] Invalid argument".into()),
+        Some(32) => ("BrokenPipeError", format!("[Errno 32] {text}")),
+        Some(code) => ("OSError", format!("[Errno {code}] {text}")),
+        None => ("OSError", text),
+    }
+}
+
+/// `print` to stdout, or to stderr when `error`. No script caught the OSError
+/// a failed print raised: it ends the process as an uncaught exception does
+/// (docs/rust-cli.md).
 pub fn print(text: &str, error: bool) {
     let raw = text_bytes(text);
-    if error {
-        let _ = std::io::stderr().lock().write_all(&raw);
+    let written = if error {
+        write_stderr(&raw)
     } else {
-        let _ = std::io::stdout().lock().write_all(&raw);
+        stdout().write_all(&raw)
+    };
+    if let Err(failure) = written {
+        let message = format!("release-policy: {}\n", stream_error(&failure).1);
+        let _ = write_stderr(&text_bytes(&message));
+        std::process::exit(shutdown(1));
     }
+}
+
+/// argparse's help or usage message: argparse ignored its own write errors.
+pub fn print_usage(text: &str, error: bool) {
+    let raw = text_bytes(text);
+    let _ = if error {
+        write_stderr(&raw)
+    } else {
+        stdout().write_all(&raw)
+    };
+}
+
+/// Interpreter shutdown: flush stdout, then stderr. Output still pending in
+/// either fails there with exit status 120.
+pub fn shutdown(code: i32) -> i32 {
+    let mut code = code;
+    if let Err(error) = stdout().flush() {
+        let (kind, message) = stream_error(&error);
+        let text = format!("Exception ignored while flushing sys.stdout:\n{kind}: {message}\n");
+        let _ = write_stderr(&text_bytes(&text));
+        code = 120;
+    }
+    if STDERR_FAILED.load(Ordering::SeqCst) && !*UNBUFFERED {
+        code = 120;
+    }
+    code
 }
 
 pub fn symlink(path: &Path) -> bool {
