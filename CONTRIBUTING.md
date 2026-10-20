@@ -4,8 +4,11 @@ This repository publishes the reusable release workflows and the policy scripts
 behind them. Every workflow and policy document is digest-pinned by
 `tests/test_repository_baseline.sh`, so a change to one of them is a reviewed
 policy change: update the digest in the same pull request and say why the
-document changed. Consumers pin a full commit SHA and migrate on their own
-reviewed schedule.
+document changed. The digest reads a third-party action pin as its action and
+major version only, so a Dependabot minor or patch bump passes without a digest
+edit; a major bump, a new action or a pin to this repository still moves the
+digest. Consumers pin a full commit SHA and migrate on their own reviewed
+schedule.
 
 ## Local checks
 
