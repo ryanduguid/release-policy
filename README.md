@@ -1,15 +1,15 @@
 # release-policy: trace a release to its checked artefacts
 
-[![tests](https://img.shields.io/github/actions/workflow/status/ryanduguid/release-policy/ci.yml?branch=main&label=tests&labelColor=000000&style=flat-square)](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml)
-[![Codecov](https://img.shields.io/codecov/c/github/ryanduguid/release-policy?label=coverage&labelColor=000000&style=flat-square)](https://codecov.io/gh/ryanduguid/release-policy)
-[![CodeQL](https://img.shields.io/github/actions/workflow/status/ryanduguid/release-policy/codeql.yml?branch=main&label=CodeQL&labelColor=000000&style=flat-square)](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml)
-[![Snyk](https://img.shields.io/github/actions/workflow/status/ryanduguid/release-policy/snyk.yml?branch=main&label=Snyk&labelColor=000000&style=flat-square)](https://github.com/ryanduguid/release-policy/actions/workflows/snyk.yml)
-[![SonarCloud](https://img.shields.io/sonar/quality_gate/ryanduguid_release-policy?server=https%3A%2F%2Fsonarcloud.io&label=SonarCloud&labelColor=000000&style=flat-square)](https://sonarcloud.io/summary/new_code?id=ryanduguid_release-policy)
-[![Codacy code quality](https://img.shields.io/codacy/grade/49440ac0ee144a12b5fc1380425e9773?label=Codacy&labelColor=000000&style=flat-square)](https://app.codacy.com/gh/ryanduguid/release-policy/dashboard)<br>
-[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/ryanduguid/release-policy?label=Scorecard&labelColor=000000&style=flat-square)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/release-policy)
-[![OpenSSF Best Practices](https://img.shields.io/cii/level/15422?label=Best%20Practices&labelColor=000000&style=flat-square)](https://www.bestpractices.dev/projects/15422)<br>
-[![release](https://img.shields.io/github/v/release/ryanduguid/release-policy?color=66023C&labelColor=000000&style=flat-square)](https://github.com/ryanduguid/release-policy/releases/latest)
-[![licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-66023C?labelColor=000000&style=flat-square)](LICENSE)
+[![tests](https://img.shields.io/github/actions/workflow/status/ryanduguid/release-policy/ci.yml?branch=main&label=tests&labelColor=000000&style=flat)](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml)
+[![Codecov](https://img.shields.io/codecov/c/github/ryanduguid/release-policy?label=coverage&labelColor=000000&style=flat)](https://codecov.io/gh/ryanduguid/release-policy)
+[![CodeQL](https://img.shields.io/github/actions/workflow/status/ryanduguid/release-policy/codeql.yml?branch=main&label=CodeQL&labelColor=000000&style=flat)](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml)
+[![Snyk](https://img.shields.io/github/actions/workflow/status/ryanduguid/release-policy/snyk.yml?branch=main&label=Snyk&labelColor=000000&style=flat)](https://github.com/ryanduguid/release-policy/actions/workflows/snyk.yml)
+[![SonarCloud](https://img.shields.io/sonar/quality_gate/ryanduguid_release-policy?server=https%3A%2F%2Fsonarcloud.io&label=SonarCloud&labelColor=000000&style=flat)](https://sonarcloud.io/summary/new_code?id=ryanduguid_release-policy)
+[![Codacy code quality](https://img.shields.io/codacy/grade/49440ac0ee144a12b5fc1380425e9773?label=Codacy&labelColor=000000&style=flat)](https://app.codacy.com/gh/ryanduguid/release-policy/dashboard)<br>
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/ryanduguid/release-policy?label=Scorecard&labelColor=000000&style=flat)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/release-policy)
+[![OpenSSF Best Practices](https://img.shields.io/cii/level/15422?label=Best%20Practices&labelColor=000000&style=flat)](https://www.bestpractices.dev/projects/15422)<br>
+[![release](https://img.shields.io/github/v/release/ryanduguid/release-policy?color=66023C&labelColor=000000&style=flat)](https://github.com/ryanduguid/release-policy/releases/latest)
+[![licence: Apache-2.0](https://img.shields.io/badge/licence-Apache--2.0-66023C?labelColor=000000&style=flat&color=66023C)](LICENSE)
 
 Policy checks establish release evidence, not accounting correctness.
 
