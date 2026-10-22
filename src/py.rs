@@ -1016,17 +1016,16 @@ mod tests {
             PyPath::new("a/b").join("c/d").display(),
             format!("a{SEP}b{SEP}c{SEP}d")
         );
-        if cfg!(windows) {
-            assert_eq!(
-                PyPath::new("a/b").join("//host/share").display(),
-                "\u{5c}\u{5c}host\u{5c}share\u{5c}"
-            );
-        } else {
-            assert_eq!(
-                PyPath::new("a/b").join("//host/share").display(),
-                "//host/share"
-            );
-        }
+        #[cfg(windows)]
+        assert_eq!(
+            PyPath::new("a/b").join("//host/share").display(),
+            "\u{5c}\u{5c}host\u{5c}share\u{5c}"
+        );
+        #[cfg(not(windows))]
+        assert_eq!(
+            PyPath::new("a/b").join("//host/share").display(),
+            "//host/share"
+        );
     }
 
     #[test]
@@ -1057,5 +1056,49 @@ mod tests {
     fn fromisoformat_accepts_iso_week_dates() {
         let date = Date::fromisoformat("2024-W01-1").unwrap();
         assert_eq!((date.year, date.month, date.day), (2024, 1, 1));
+    }
+    #[test]
+    fn parse_int_accepts_negative_and_truncates_long_invalid_literals() {
+        assert_eq!(parse_int("-42", 10).unwrap(), BigInt::from(-42));
+        let long = format!("{}z", "1".repeat(250));
+        let error = parse_int(&long, 10).unwrap_err();
+        assert!(error.contains("invalid literal for int()"), "{error}");
+        assert!(!error.contains("z"), "{error}");
+    }
+
+    #[test]
+    fn pypath_displays_through_the_formatter() {
+        let path = PyPath::new("a/b");
+        assert_eq!(format!("{path}"), path.display());
+    }
+
+    #[test]
+    fn mkdir_parents_reports_a_file_blocking_the_target() {
+        let base = std::env::temp_dir().join("release-policy-py-mkdir-file");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let file = base.join("f.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let blocked = PyPath::new(&file.to_string_lossy());
+        assert!(mkdir_parents(&blocked).is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn from_ordinal_walks_every_day_of_the_first_two_years() {
+        let mut previous: Option<Date> = None;
+        for ordinal in 1..=731 {
+            let date = Date::from_ordinal(ordinal).unwrap();
+            assert_eq!(date.ordinal(), ordinal);
+            if let Some(before) = previous {
+                assert_eq!(date.ordinal(), before.ordinal() + 1);
+            }
+            previous = Some(date);
+        }
+    }
+
+    #[test]
+    fn fromisoformat_refuses_out_of_range_week_years() {
+        assert!(Date::fromisoformat("0000-W01-1").is_none());
     }
 }
