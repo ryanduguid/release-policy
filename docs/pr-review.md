@@ -61,6 +61,15 @@ remains available. Skipped jobs can report success, so the caller's upstream-act
 filter remains necessary alongside the REST admission checks. This schedules
 the runner; it does not establish a paid review or measured savings.
 
+The caller's prefilter compares the PR author's numeric ID with the current
+repository owner's ID and the trigger actor's ID with GitHub.com's Dependabot
+account `49699333`, verified through REST on 5 October 2026. Missing IDs reject
+the automatic path. This fixed bot identity requires a reviewed update if GitHub
+changes accounts. The bridge is disabled outside GitHub.com; GitHub Enterprise
+Server remains unqualified. Verify both
+event paths without inference or status publication before activating a changed
+caller; the downstream REST checks still decide admission.
+
 GitHub does not inherit Actions workflows from an account's `.github`
 repository. Install a pinned caller in every repository you own. For PRs in
 other people's public repositories, use the central report workflow below or
