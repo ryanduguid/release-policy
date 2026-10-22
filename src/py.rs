@@ -939,4 +939,123 @@ mod tests {
         assert_eq!(PyPath::new("./a//b/.").display(), format!("a{SEP}b"));
         assert_eq!(PyPath::new("").display(), ".");
     }
+    #[test]
+    fn prefix_chars_returns_the_whole_string_when_n_exceeds_it() {
+        assert_eq!(prefix_chars("abc", 5), "abc");
+        assert_eq!(prefix_chars("abc", 2), "ab");
+    }
+
+    #[test]
+    fn float_repr_renders_non_finite_values_like_python() {
+        assert_eq!(float_repr(f64::NAN), "nan");
+        assert_eq!(float_repr(f64::INFINITY), "inf");
+        assert_eq!(float_repr(f64::NEG_INFINITY), "-inf");
+    }
+
+    #[test]
+    fn int_repr_refuses_over_long_digits_like_python() {
+        let huge = BigInt::from(10).pow(4300);
+        assert_eq!(
+            int_repr(&huge).unwrap_err(),
+            "Exceeds the limit (4300 digits) for integer string conversion; use sys.set_int_max_str_digits() to increase the limit"
+        );
+        assert_eq!(int_repr(&BigInt::from(-42)).unwrap(), "-42");
+    }
+
+    #[test]
+    fn parse_int_accepts_signs_prefixes_underscores_and_unicode_digits() {
+        assert_eq!(parse_int("+42", 10).unwrap(), BigInt::from(42));
+        assert_eq!(parse_int("0xff", 16).unwrap(), BigInt::from(255));
+        assert_eq!(parse_int("0X17", 16).unwrap(), BigInt::from(23));
+        assert_eq!(parse_int("0o17", 8).unwrap(), BigInt::from(15));
+        assert_eq!(parse_int("0B101", 2).unwrap(), BigInt::from(5));
+        assert_eq!(parse_int("0x_1", 16).unwrap(), BigInt::from(1));
+        assert_eq!(parse_int("1_000", 10).unwrap(), BigInt::from(1000));
+        let arabic: String = ['\u{661}', '\u{662}', '\u{663}'].into_iter().collect();
+        assert_eq!(parse_int(&arabic, 10).unwrap(), BigInt::from(123));
+    }
+
+    #[test]
+    fn parse_int_refuses_malformed_literals() {
+        assert!(parse_int("1__0", 10).is_err());
+        assert!(parse_int("_1", 10).is_err());
+        assert!(parse_int("1_", 10).is_err());
+        assert!(parse_int("+", 10).is_err());
+        let with_accent = format!("12{}", '\u{e9}');
+        assert!(parse_int(&with_accent, 10).is_err());
+        assert_eq!(
+            parse_int(&"1".repeat(4301), 10).unwrap_err(),
+            "Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit"
+        );
+    }
+
+    #[test]
+    fn universal_newlines_normalises_every_carriage_form() {
+        let plain: String = ['a', '\u{a}', 'b'].into_iter().collect();
+        let mixed: String = ['a', '\u{d}', '\u{a}', 'b', '\u{d}', 'c']
+            .into_iter()
+            .collect();
+        let expected: String = ['a', '\u{a}', 'b', '\u{a}', 'c'].into_iter().collect();
+        assert_eq!(universal_newlines(&plain), plain);
+        assert_eq!(universal_newlines(&mixed), expected);
+    }
+
+    #[test]
+    fn oserror_str_passes_plain_messages_through() {
+        let error = std::io::Error::other("boom");
+        assert_eq!(oserror_str(&error, "f.txt", OsStyle::Native), "boom");
+    }
+
+    #[test]
+    fn pypath_joins_anchors_parents_and_names_like_pathlib() {
+        assert_eq!(PyPath::new("a/b/c.txt").name(), "c.txt");
+        assert_eq!(PyPath::new("").name(), "");
+        assert_eq!(PyPath::new("a/b").parent().display(), "a");
+        assert!(!PyPath::new("a/b").is_absolute());
+        assert_eq!(
+            PyPath::new("a/b").join("c/d").display(),
+            format!("a{SEP}b{SEP}c{SEP}d")
+        );
+        if cfg!(windows) {
+            assert_eq!(
+                PyPath::new("a/b").join("//host/share").display(),
+                "\u{5c}\u{5c}host\u{5c}share\u{5c}"
+            );
+        } else {
+            assert_eq!(
+                PyPath::new("a/b").join("//host/share").display(),
+                "//host/share"
+            );
+        }
+    }
+
+    #[test]
+    fn mkdir_parents_creates_recursively_and_tolerates_existing_directories() {
+        let base = std::env::temp_dir().join("release-policy-py-mkdir");
+        let _ = std::fs::remove_dir_all(&base);
+        let nested = PyPath::new(&base.join("x").join("y").to_string_lossy());
+        assert!(mkdir_parents(&nested).is_ok());
+        assert!(mkdir_parents(&nested).is_ok());
+        let file = base.join("f.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let blocked = PyPath::new(&file.join("d").to_string_lossy());
+        assert!(mkdir_parents(&blocked).is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn from_ordinal_resolves_boundaries_like_cpython() {
+        let first = Date::from_ordinal(1).unwrap();
+        assert_eq!((first.year, first.month, first.day), (1, 1, 1));
+        assert!(Date::from_ordinal(0).is_none());
+        assert!(Date::from_ordinal(366).is_some());
+        assert!(Date::from_ordinal(3_652_059).is_some());
+        assert!(Date::from_ordinal(3_652_060).is_none());
+    }
+
+    #[test]
+    fn fromisoformat_accepts_iso_week_dates() {
+        let date = Date::fromisoformat("2024-W01-1").unwrap();
+        assert_eq!((date.year, date.month, date.day), (2024, 1, 1));
+    }
 }
