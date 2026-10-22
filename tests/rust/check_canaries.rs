@@ -1605,3 +1605,161 @@ fn live_audit_reports_and_fails_on_errors_or_required_warnings() {
     };
     assert_eq!(cc::render(&stale, 4, true), ("WARN stale run\n".into(), 1));
 }
+
+struct UnexpectedLive;
+
+impl Live for UnexpectedLive {
+    fn fetch_json(&mut self, _endpoint: &str) -> Result<Json, LiveError> {
+        Err(LiveError::Unexpected("boom: transport".into()))
+    }
+    fn fetch_text(&mut self, _endpoint: &str) -> Result<String, LiveError> {
+        Err(LiveError::Unexpected("boom: transport".into()))
+    }
+    fn verify_provenance(&mut self, _canary: &Canary) -> Result<(), Failure> {
+        Err(Failure::Runtime("not reached in this test".into()))
+    }
+}
+
+#[test]
+fn failure_conversions_preserve_live_error_messages() {
+    assert_eq!(
+        Failure::from(LiveError::GitHub(GitHubError {
+            message: "Not Found".into(),
+            status: Some(404),
+        })),
+        Failure::Runtime("Not Found".into())
+    );
+    assert_eq!(
+        Failure::from(LiveError::Unexpected("boom".into())),
+        Failure::Unexpected("boom".into())
+    );
+}
+
+#[test]
+fn unexpected_transport_errors_escape_the_audit() {
+    let canaries = parse(&python()).unwrap();
+    let error = cc::check_live(&canaries, &mut UnexpectedLive, false, Utc::now()).unwrap_err();
+    assert_eq!(error, "boom: transport");
+}
+
+#[test]
+fn malformed_manifest_fields_are_refused_with_field_names() {
+    let cases = [
+        (
+            json!({"workflow_path": "workflow.yml"}),
+            "python.workflow_path is not a workflow path",
+        ),
+        (
+            json!({"policy_workflow": "nope.yml"}),
+            "python.policy_workflow is not a workflow path",
+        ),
+        (
+            json!({"current_policy_sha": "xyz"}),
+            "python.current_policy_sha",
+        ),
+        (
+            json!({"evidence": {
+                "run_id": 0,
+                "head_sha": HEAD,
+                "ref": "v1.2.3",
+                "policy_sha": SHA,
+                "started_at": RECORDED,
+            }}),
+            "python.evidence.run_id",
+        ),
+        (
+            json!({"evidence": {
+                "run_id": 123,
+                "head_sha": HEAD,
+                "ref": "v1.2.3",
+                "policy_sha": SHA,
+                "started_at": "2026-08-27",
+            }}),
+            "python.evidence.started_at must be a UTC timestamp",
+        ),
+        (
+            json!({"evidence": {
+                "run_id": 123,
+                "ref": "v1.2.3",
+                "policy_sha": SHA,
+                "started_at": RECORDED,
+            }}),
+            "python.evidence",
+        ),
+    ];
+    for (fields, expected) in cases {
+        let error = parse(&manifest("python", "v1.2.3", fields)).unwrap_err();
+        assert!(error.contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn unhashable_compare_statuses_raise_type_errors() {
+    for (status, kind) in [(json!([]), "list"), (json!({}), "dict")] {
+        let closure = move |endpoint: &str| {
+            if endpoint.contains("/compare/") {
+                body(json!({"status": status.clone()}))
+            } else {
+                listing(vec![])
+            }
+        };
+        let error = cc::check_live(
+            &parse(&python()).unwrap(),
+            &mut Fake {
+                json: closure,
+                pin: SHA.into(),
+                verifier: None,
+                requests: Vec::new(),
+            },
+            false,
+            Utc::now(),
+        )
+        .unwrap_err();
+        assert!(error.contains("TypeError: unhashable type"), "{error}");
+        assert!(error.contains(kind), "{error}");
+    }
+}
+
+#[test]
+fn non_object_evidence_run_responses_are_reported() {
+    let result = live(
+        &python(),
+        |endpoint| {
+            if endpoint.contains("/compare/") {
+                body(json!({"status": "identical"}))
+            } else if endpoint.ends_with("/actions/runs/123") {
+                body(json!(5))
+            } else {
+                listing(vec![])
+            }
+        },
+        &pin("python"),
+    );
+    assert!(has(
+        &result.errors,
+        "evidence run response is not an object"
+    ));
+}
+
+#[test]
+fn expired_evidence_runs_with_verified_provenance_record_a_notice() {
+    let result = audit_with(
+        &python(),
+        |endpoint| {
+            if endpoint.contains("/compare/") {
+                body(json!({"status": "identical"}))
+            } else if endpoint.ends_with("/actions/runs/123") {
+                Reply::Fail("Not Found", Some(404))
+            } else {
+                listing(vec![])
+            }
+        },
+        &pin("python"),
+        accept(),
+        after_expiry(),
+    );
+    assert!(
+        result.notices.iter().any(|n| n.contains("has expired")),
+        "{result:?}"
+    );
+}
