@@ -360,6 +360,11 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
         self.assertRegex(guard, r"(?m)^    timeout-minutes: 15$")
         wait = int(re.search(r"--wait-seconds (\d+)", guard).group(1))  # type: ignore[union-attr]
         self.assertLess(wait, 15 * 60)
+        # The publish job calls publish-archives.yml, whose later gates accept an
+        # ancestor of main, so the strict head check must run here, before the wait.
+        head_check = 'gate_main_matches "$GITHUB_SHA" "$GITHUB_REPOSITORY"'
+        self.assertIn(head_check, guard)
+        self.assertLess(guard.index(head_check), guard.index("required_checks.py"))
         self.assertEqual(
             self.permission_map(guard, indent=4),
             {"contents": "read", "actions": "read"},

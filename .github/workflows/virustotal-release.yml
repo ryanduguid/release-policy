@@ -18,7 +18,9 @@ permissions:
 jobs:
   scan:
     name: upload release assets to VirusTotal
-    runs-on: ubuntu-latest
+    # Pinned whilst ubuntu-latest moves to 26.04 (actions/runner-images#14748), as the
+    # release families are, so a scan never changes image between releases.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read # Download the published release assets.
@@ -83,7 +85,8 @@ jobs:
   annotate:
     name: link the VirusTotal reports in the release notes
     needs: scan
-    runs-on: ubuntu-latest
+    # Pinned with the scan job above.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write # Edit the release notes; immutable releases keep assets and tag locked.

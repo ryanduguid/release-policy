@@ -69,7 +69,9 @@ jobs:
   checks:
     timeout-minutes: 15
     name: require the consumer's mandatory checks
-    runs-on: ubuntu-latest
+    # Pinned whilst ubuntu-latest moves to 26.04 (actions/runner-images#14748), so a
+    # release never changes image mid-run. Move every release family together.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: read # Read this repository's own workflow runs for the release commit.
@@ -99,6 +101,18 @@ jobs:
             || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
           test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
 
+      # Head equality here, before any wait, means the run uses main's current
+      # caller workflow, policy pin and required checks. Later re-checks accept
+      # a merge that leaves the component and this caller untouched.
+      - name: Require the release commit to be main's head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          . policy/scripts/gates.sh
+          gate_main_matches "$GITHUB_SHA" "$GITHUB_REPOSITORY"
+
       - name: Require the mandatory consumer checks for this exact commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -116,7 +130,7 @@ jobs:
     timeout-minutes: 15
     name: gate and run consumer tests
     needs: checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -141,7 +155,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install the locked toolchain
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: "0.12.0"
           enable-cache: false
@@ -197,7 +211,7 @@ jobs:
     timeout-minutes: 20
     name: gate and build exact candidate
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       artifact-tag: ${{ steps.release.outputs.artifact-tag }}
       candidate-digest: ${{ steps.candidate.outputs.artifact-digest }}
@@ -236,7 +250,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install the locked toolchain
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: "0.12.0"
           enable-cache: false
@@ -338,7 +352,7 @@ jobs:
 
       - name: Preserve the immutable candidate
         id: candidate
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-${{ steps.release.outputs.artifact-tag }}-${{ github.run_id }}-${{ github.run_attempt }}-candidate
           path: |
@@ -355,7 +369,7 @@ jobs:
       - name: Upload the distribution for a caller-side publish
         id: dist
         if: inputs.upload-dist-artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}
           path: |
@@ -374,7 +388,7 @@ jobs:
     timeout-minutes: 20
     name: verify, attest and publish exact candidate
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       actions: read # Inspect and download only the exact candidate artefact ID.
       attestations: write # Record provenance and the wheel SBOM attestation.
@@ -452,7 +466,7 @@ jobs:
             /tmp/candidate-artifact.json >/dev/null
 
       - name: Download only the bound candidate artefact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.build.outputs.candidate-id }}
           path: candidate
@@ -564,7 +578,8 @@ jobs:
           test "$remote_tag_commit" = "$expected_commit"
           test "$GITHUB_SHA" = "$expected_commit"
           . policy/scripts/gates.sh
-          gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
+          gate_main_contains "$expected_commit" "$GITHUB_REPOSITORY" \
+            "${{ needs.build.outputs.source-directory }}"
           gate_no_existing_release "$tag" "$GITHUB_REPOSITORY"
 
       - name: Create, inspect and publish the immutable release
@@ -574,6 +589,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          SOURCE_DIRECTORY: ${{ needs.build.outputs.source-directory }}
           SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
         shell: bash
         run: |
@@ -583,4 +599,5 @@ jobs:
             "$EXPECTED_COMMIT" \
             "$ARTIFACT_STEM" \
             "$RELEASE_VERSION" \
-            "$SOURCE_PATH"
+            "$SOURCE_PATH" \
+            "$SOURCE_DIRECTORY"

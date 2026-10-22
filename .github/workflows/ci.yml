@@ -44,6 +44,29 @@ jobs:
           python -m fuzz.policy_parsers fuzz/corpus
           -max_total_time=60 -max_len=4096 -timeout=2 -rss_limit_mb=1024
 
+  rust-fuzzing:
+    name: fuzz the Rust policy parsers
+    # The same 60-second exploration, over the same corpus, for the Rust CLI.
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # libFuzzer instrumentation needs a nightly compiler; the date is pinned.
+      - name: Install the pinned fuzzer
+        run: |
+          rustup toolchain install nightly-2026-10-15 --profile minimal
+          cargo install cargo-fuzz --locked --version 0.13.2
+
+      - name: Fuzz pure policy parsers
+        run: >-
+          cargo +nightly-2026-10-15 fuzz run policy_parsers fuzz/corpus --
+          -max_total_time=60 -max_len=4096 -timeout=2 -rss_limit_mb=1024
+
   checks:
     timeout-minutes: 15
     name: lint and test
@@ -200,7 +223,7 @@ jobs:
         run: bash tests/test_determinism.sh
 
       - name: Install the release toolchain's uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: "0.12.0"
           enable-cache: false
@@ -266,12 +289,68 @@ jobs:
           PART: ${{ matrix.part }}
         run: bash tests/test_publish_releases.sh "$PART"
 
+  # The Rust CLI that replaces the policy scripts once a release of it is
+  # published. Until then the reusable workflows keep calling the scripts,
+  # so both are tested.
+  rust:
+    timeout-minutes: 30
+    name: Rust CLI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      # rust-toolchain.toml pins the same release.
+      RUST_TOOLCHAIN: "1.99.1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned toolchain
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt,llvm-tools
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Lint the CLI and its tests
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Run the CLI tests
+        if: matrix.os != 'ubuntu-latest'
+        run: cargo test --locked
+
+      # The floor is the measured line coverage, rounded down (92.15% on
+      # 19 October 2026). Raise it with the tests, never lower it to pass.
+      - name: Run the CLI tests with line coverage
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo install cargo-llvm-cov --locked --version 0.9.1
+          cargo llvm-cov --locked --lcov --output-path coverage-rust.lcov --fail-under-lines 92
+
+      - name: Keep the Rust coverage report for the Codecov upload
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-rust
+          path: coverage-rust.lcov
+          retention-days: 1
+
+      - name: Build the release binary
+        run: cargo build --locked --release --bin release-policy
+
   # The upload runs apart from the tests so the OIDC token is never available
   # while test code runs. It is exempt from ci-gates: a Codecov outage must
   # not block merges.
   codecov:
     name: upload coverage to Codecov
-    needs: checks
+    needs: [checks, rust]
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -285,10 +364,13 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-codecov
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-rust
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           use_oidc: true
-          files: coverage-codecov.xml
+          files: coverage-codecov.xml,coverage-rust.lcov
           disable_search: true
           fail_ci_if_error: true
 
@@ -297,7 +379,7 @@ jobs:
     # unless every job it needs succeeded, when a job in this file is missing
     # from needs, or when a pull request removes a job without adding a
     # "# removed-jobs: <job>" comment to this file.
-    needs: [checks, windows]
+    needs: [checks, windows, rust]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -316,4 +398,4 @@ jobs:
       - name: Require every job to be listed, kept and successful
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: python3 .github/ci/check_gates.py .github/workflows/ci.yml ci-gates --exempt fuzzing --exempt codecov
+        run: python3 .github/ci/check_gates.py .github/workflows/ci.yml ci-gates --exempt fuzzing --exempt rust-fuzzing --exempt codecov

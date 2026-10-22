@@ -32,7 +32,9 @@ jobs:
   checks:
     timeout-minutes: 15
     name: require the consumer's mandatory checks
-    runs-on: ubuntu-latest
+    # Pinned whilst ubuntu-latest moves to 26.04 (actions/runner-images#14748), so a
+    # release never changes image mid-run. Move every release family together.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: read # Read this repository's own workflow runs for the release commit.
@@ -62,6 +64,18 @@ jobs:
             || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
           test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
 
+      # Head equality here, before any wait, means the run uses main's current
+      # caller workflow, policy pin and required checks. Later re-checks accept
+      # a merge that leaves the component and this caller untouched.
+      - name: Require the release commit to be main's head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          . policy/scripts/gates.sh
+          gate_main_matches "$GITHUB_SHA" "$GITHUB_REPOSITORY"
+
       - name: Require the mandatory consumer checks for this exact commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -79,7 +93,7 @@ jobs:
     timeout-minutes: 15
     name: run consumer source-archive tests
     needs: checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       source-directory: ${{ steps.inputs.outputs.source-directory }}
       tag-prefix: ${{ steps.inputs.outputs.tag-prefix }}

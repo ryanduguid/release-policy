@@ -183,6 +183,13 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
         for forbidden in ("uv run", "pytest", "python -m build"):
             self.assertNotIn(forbidden, checks)
 
+        # The strict head check runs before the wait; later jobs accept an ancestor.
+        head_check = 'gate_main_matches "$GITHUB_SHA" "$GITHUB_REPOSITORY"'
+        self.assertIn(head_check, checks)
+        self.assertLess(checks.index(head_check), checks.index("required_checks.py"))
+        for job in (test, build, publish):
+            self.assertNotIn("gate_main_matches", job)
+
         self.assertIn("needs: checks", test)
         self.assertNotIn("actions: read", test)
         self.assertNotIn("actions: read", build)
@@ -237,7 +244,7 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
             "--source-ref",
             "--signer-workflow",
             "--signer-digest",
-            "gate_main_matches",
+            "gate_main_contains",
             "gate_no_existing_release",
             ".immutable == true",
             "gh release verify-asset",
@@ -307,6 +314,13 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
         self.assertIn("cleanup_current_draft()", script_text)
         self.assertNotIn("${{", script_text)
         self.assertIn('source_path="$5"', script_text)
+        self.assertIn('source_directory="$6"', script_text)
+        self.assertIn("SOURCE_DIRECTORY: ${{ needs.build.outputs.source-directory }}", publish)
+        self.assertIn(
+            'gate_main_contains "$expected_commit" "$GITHUB_REPOSITORY" \\\n'
+            '            "${{ needs.build.outputs.source-directory }}"',
+            publish,
+        )
 
 
 if __name__ == "__main__":

@@ -4,8 +4,11 @@ This repository publishes the reusable release workflows and the policy scripts
 behind them. Every workflow and policy document is digest-pinned by
 `tests/test_repository_baseline.sh`, so a change to one of them is a reviewed
 policy change: update the digest in the same pull request and say why the
-document changed. Consumers pin a full commit SHA and migrate on their own
-reviewed schedule.
+document changed. The digest reads a third-party action pin as its action and
+major version only, so a Dependabot minor or patch bump passes without a digest
+edit; a major bump, a new action or a pin to this repository still moves the
+digest. Consumers pin a full commit SHA and migrate on their own reviewed
+schedule.
 
 ## Local checks
 
@@ -45,7 +48,20 @@ CI also runs pinned ShellCheck and actionlint over `scripts/*.sh`, `tests/*.sh`
 and the workflows. Changed lines in `scripts/*.py` need complete branch
 coverage.
 
-Install the git hook once with `python -m pip install pre-commit && pre-commit install`; it runs the pinned ruff check on staged files.
+The Rust CLI in `src/` reimplements the policy scripts; a change to a ported
+script needs the same change in Rust. Run its checks with the toolchain that
+`rust-toolchain.toml` pins:
+
+```bash
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+```
+
+[docs/rust-cli.md](docs/rust-cli.md) maps the scripts to commands and lists
+the known differences.
+
+Install the git hook once with `python -m pip install pre-commit && pre-commit install`; it runs the pinned ruff check on staged files and `cargo fmt --check`.
 
 ## Pull requests
 

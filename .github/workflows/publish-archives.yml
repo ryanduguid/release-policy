@@ -34,7 +34,9 @@ jobs:
   checks:
     timeout-minutes: 15
     name: require the consumer's mandatory checks
-    runs-on: ubuntu-latest
+    # Pinned whilst ubuntu-latest moves to 26.04 (actions/runner-images#14748), so a
+    # release never changes image mid-run. Move every release family together.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: read # Read this repository's own workflow runs for the release commit.
@@ -81,7 +83,7 @@ jobs:
     needs: checks
     timeout-minutes: 15
     name: gate, build, attest and publish source archives
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       attestations: write
       contents: write
@@ -199,7 +201,7 @@ jobs:
           test "$actual_after" = "$expected_after"
 
       - name: Preserve the exact candidate assets
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ steps.release.outputs.artifact-tag }}-${{ github.run_id }}-${{ github.run_attempt }}-candidate-assets
           path: |
@@ -301,7 +303,8 @@ jobs:
           test "$remote_tag_commit" = "$expected_commit"
           test "$GITHUB_SHA" = "$expected_commit"
           . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
-          gate_main_matches "$expected_commit" "$GITHUB_REPOSITORY"
+          gate_main_contains "$expected_commit" "$GITHUB_REPOSITORY" \
+            "${{ steps.release.outputs.source-directory }}"
           gate_no_existing_release "$tag" "$GITHUB_REPOSITORY"
 
       - name: Create, inspect and publish the immutable release
@@ -312,6 +315,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_DIRECTORY: ${{ steps.release.outputs.source-directory }}
           SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
         shell: bash
         run: |
@@ -321,4 +325,5 @@ jobs:
             "$EXPECTED_COMMIT" \
             "$ARTIFACT_STEM" \
             "$RELEASE_VERSION" \
-            "$SOURCE_PATH"
+            "$SOURCE_PATH" \
+            "$SOURCE_DIRECTORY"
