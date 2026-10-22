@@ -218,3 +218,76 @@ pub fn read_utf8(path: &Path, label: &str) -> Result<String> {
     }
     String::from_utf8(raw).map_err(|_| format!("{label} must be UTF-8"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn run_reports_spawn_failures() {
+        let error = run(&std::env::temp_dir(), "release-policy-no-such-program", &[]).unwrap_err();
+        assert!(!error.is_empty());
+    }
+
+    #[test]
+    fn checked_reports_non_zero_exits_like_python() {
+        let error =
+            checked(&std::env::temp_dir(), "git", &["--release-policy-nonsense"]).unwrap_err();
+        let repr = std::iter::once("git")
+            .chain(["--release-policy-nonsense"])
+            .map(py::repr_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(
+            error.starts_with(&format!(
+                "Command '[{repr}]' returned non-zero exit status "
+            )),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn dumps_renders_python_separators_escapes_and_orderings() {
+        let specials = "q\u{22}\u{5c}\u{8}\u{c}\u{a}\u{d}\u{9}\u{1}\u{e9}";
+        let rendered =
+            "q\u{5c}\u{22}\u{5c}\u{5c}\u{5c}b\u{5c}f\u{5c}n\u{5c}r\u{5c}t\u{5c}u0001\u{e9}";
+        let rendered_ascii =
+            "q\u{5c}\u{22}\u{5c}\u{5c}\u{5c}b\u{5c}f\u{5c}n\u{5c}r\u{5c}t\u{5c}u0001\u{5c}u00e9";
+        let value = json!({
+            "b": [1, 2.0, specials, [], {}],
+            "a": 1,
+        });
+        assert_eq!(
+            dumps(&value, false, false, false, false),
+            format!(
+                "{{\u{22}b\u{22}: [1, 2.0, \u{22}{rendered}\u{22}, [], {{}}], \u{22}a\u{22}: 1}}"
+            )
+        );
+        assert_eq!(
+            dumps(&value, false, false, false, true),
+            format!("{{\u{22}b\u{22}:[1,2.0,\u{22}{rendered}\u{22},[],{{}}],\u{22}a\u{22}:1}}")
+        );
+        assert_eq!(
+            dumps(&value, false, true, false, false),
+            format!(
+                "{{\u{22}a\u{22}: 1, \u{22}b\u{22}: [1, 2.0, \u{22}{rendered}\u{22}, [], {{}}]}}"
+            )
+        );
+        assert_eq!(
+            dumps(&value, false, false, true, false),
+            format!(
+                "{{\u{22}b\u{22}: [1, 2.0, \u{22}{rendered_ascii}\u{22}, [], {{}}], \u{22}a\u{22}: 1}}"
+            )
+        );
+    }
+
+    #[test]
+    fn dumps_indents_nested_containers_like_python() {
+        let value = json!({"a": [1, 2]});
+        assert_eq!(
+            dumps(&value, true, false, false, false),
+            "{\n  \"a\": [\n    1,\n    2\n  ]\n}"
+        );
+    }
+}

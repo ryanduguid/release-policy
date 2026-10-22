@@ -374,3 +374,29 @@ pub fn check_candidate(
     }
     Ok(checked)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glob_matches_fnmatch_classes_and_literals() {
+        assert!(glob("a*c", "abc"));
+        assert!(!glob("a*c", "abd"));
+        assert!(glob("a?c", "abc"));
+        assert!(!glob("a?c", "ac"));
+        assert!(glob("a[bc]d", "abd"));
+        assert!(!glob("a[bc]d", "aed"));
+        assert!(glob("a[!bc]d", "aed"));
+        assert!(!glob("a[!bc]d", "abd"));
+        assert!(glob("a[^bc]d", "a^d"));
+        assert!(glob("a[^bc]d", "abd"));
+        assert!(glob("a[b", "a[b"));
+    }
+
+    #[test]
+    fn candidate_files_reports_unreadable_roots() {
+        let missing = std::env::temp_dir().join("release-policy-egress-no-such-root");
+        assert!(candidate_files(&[missing]).is_err());
+    }
+}

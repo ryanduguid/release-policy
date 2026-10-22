@@ -751,4 +751,178 @@ mod tests {
             "\"\\ud83d\\ude00\""
         );
     }
+
+    #[test]
+    fn repr_matches_python_for_every_value_shape() {
+        assert_eq!(Json::Null.repr(), "None");
+        assert_eq!(Json::Bool(true).repr(), "True");
+        assert_eq!(Json::Bool(false).repr(), "False");
+        assert_eq!(Json::Int(42.into()).repr(), "42");
+        assert_eq!(Json::Float(1.5).repr(), "1.5");
+        assert_eq!(Json::Str("x".into()).repr(), "'x'");
+        assert_eq!(
+            Json::Array(vec![Json::Null, Json::Bool(true)]).repr(),
+            "[None, True]"
+        );
+        assert_eq!(
+            Json::Object(vec![("a".to_string(), Json::Bool(false))]).repr(),
+            "{'a': False}"
+        );
+    }
+
+    #[test]
+    fn py_eq_matches_python_semantics() {
+        let one = Json::Int(1.into());
+        assert!(Json::Null.py_eq(&Json::Null));
+        assert!(Json::Float(1.0).py_eq(&Json::Float(1.0)));
+        assert!(Json::Float(1.0).py_eq(&one));
+        assert!(one.py_eq(&Json::Float(1.0)));
+        assert!(!Json::Float(2.5).py_eq(&one));
+        assert!(!Json::Float(f64::NAN).py_eq(&Json::Float(f64::NAN)));
+        assert!(Json::Str("a".into()).py_eq(&Json::Str("a".into())));
+        assert!(Json::Bool(true).py_eq(&one));
+        assert!(!Json::Null.py_eq(&one));
+    }
+
+    #[test]
+    fn truthy_matches_python() {
+        assert!(!Json::Null.truthy());
+        assert!(Json::Bool(true).truthy());
+        assert!(!Json::Bool(false).truthy());
+        assert!(!Json::Int(0.into()).truthy());
+        assert!(Json::Int((-1).into()).truthy());
+        assert!(!Json::Float(0.0).truthy());
+        assert!(Json::Float(-0.5).truthy());
+        assert!(!Json::Str(String::new()).truthy());
+        assert!(Json::Str("a".into()).truthy());
+        assert!(!Json::Array(vec![]).truthy());
+        assert!(Json::Array(vec![Json::Null]).truthy());
+        assert!(!Json::Object(vec![]).truthy());
+        assert!(Json::Object(vec![("a".into(), Json::Null)]).truthy());
+    }
+
+    #[test]
+    fn decode_errors_display_their_messages() {
+        assert_eq!(
+            loads("").unwrap_err().to_string(),
+            "Expecting value: line 1 column 1 (char 0)"
+        );
+    }
+
+    #[test]
+    fn loads_bytes_detects_every_python_encoding() {
+        let empty = Json::Object(vec![]);
+        assert_eq!(
+            loads_bytes(b"\x00\x00\xfe\xff\x00\x00\x00\x7b\x00\x00\x00\x7d").unwrap(),
+            empty
+        );
+        assert_eq!(
+            loads_bytes(b"\xff\xfe\x00\x00\x7b\x00\x00\x00\x7d\x00\x00\x00").unwrap(),
+            empty
+        );
+        assert_eq!(loads_bytes(b"\xfe\xff\x00\x7b\x00\x7d").unwrap(), empty);
+        assert_eq!(loads_bytes(b"\xff\xfe\x7b\x00\x7d\x00").unwrap(), empty);
+        assert_eq!(loads_bytes(b"\xef\xbb\xbf{}").unwrap(), empty);
+        assert_eq!(
+            loads_bytes(b"\x00\x00\x00\x7b\x00\x00\x00\x7d").unwrap(),
+            empty
+        );
+        assert_eq!(
+            loads_bytes(b"\x7b\x00\x00\x00\x7d\x00\x00\x00").unwrap(),
+            empty
+        );
+        assert_eq!(loads_bytes(b"\x00\x7b\x00\x7d").unwrap(), empty);
+        assert_eq!(loads_bytes(b"\x7b\x00\x7d\x00").unwrap(), empty);
+        assert_eq!(
+            loads_bytes(b"\xfe\xff\x7b").unwrap_err().0,
+            "truncated data"
+        );
+        assert_eq!(
+            loads_bytes(b"\x00\x00\xfe\xff\x00").unwrap_err().0,
+            "truncated data"
+        );
+        assert_eq!(
+            loads_bytes(b"\x00\x00\xfe\xff\x00\x00\xd8\x00")
+                .unwrap_err()
+                .0,
+            "invalid code point"
+        );
+        assert!(
+            loads_bytes(b"\xff\xfe\x00\xd8")
+                .unwrap_err()
+                .0
+                .contains("surrogate")
+        );
+        assert!(loads_bytes(b"\xff").is_err());
+        assert_eq!(
+            loads_bytes(b"\x00\x7b").unwrap_err().0,
+            "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+        );
+        assert_eq!(
+            loads_bytes(b"\x7b\x00").unwrap_err().0,
+            "Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+        );
+    }
+
+    #[test]
+    fn loads_decodes_every_escape_arm() {
+        let bs = '\u{5c}';
+        let input: String = [
+            bs, '\u{22}', ' ', bs, bs, ' ', bs, '/', ' ', bs, 'b', ' ', bs, 'f', ' ', bs, 'n', ' ',
+            bs, 'r', ' ', bs, 't',
+        ]
+        .into_iter()
+        .collect();
+        let text = format!("\u{22}{input}\u{22}");
+        assert_eq!(
+            loads(&text).unwrap(),
+            Json::Str("\u{22} \u{5c} / \u{8} \u{c} \u{a} \u{d} \u{9}".to_string())
+        );
+    }
+
+    #[test]
+    fn lone_surrogate_escapes_are_refused() {
+        let message = err(r#""\ud800""#);
+        assert!(
+            message.contains("Unpaired surrogate in \\uXXXX escape"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn dumps_escapes_every_special_character() {
+        let bs = '\u{5c}';
+        let specials: String = [
+            'q', '\u{22}', bs, '\u{8}', '\u{c}', '\u{a}', '\u{d}', '\u{9}', '\u{1}', '\u{e9}',
+        ]
+        .into_iter()
+        .collect();
+        let expected = [
+            "\u{22}",
+            "q",
+            "\u{5c}\u{22}",
+            "\u{5c}\u{5c}",
+            "\u{5c}b",
+            "\u{5c}f",
+            "\u{5c}n",
+            "\u{5c}r",
+            "\u{5c}t",
+            "\u{5c}u0001",
+            "\u{5c}u00e9",
+            "\u{22}",
+        ]
+        .concat();
+        assert_eq!(dumps(&Json::Str(specials), Dump::default()), expected);
+    }
+
+    #[test]
+    fn exponent_numbers_and_their_fallbacks() {
+        assert_eq!(loads("1.25").unwrap(), Json::Float(1.25));
+        assert_eq!(loads("1e10").unwrap(), Json::Float(1e10));
+        assert_eq!(loads("1E+2").unwrap(), Json::Float(100.0));
+        assert_eq!(loads("1e-2").unwrap(), Json::Float(0.01));
+        assert_eq!(loads("-1.5").unwrap(), Json::Float(-1.5));
+        assert_eq!(err("1e"), "Extra data: line 1 column 2 (char 1)");
+        assert_eq!(err("1e+"), "Extra data: line 1 column 2 (char 1)");
+    }
 }
