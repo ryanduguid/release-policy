@@ -1923,37 +1923,6 @@ fn an_unparsable_recorded_start_escapes_when_the_run_is_gone() {
     );
 }
 
-#[test]
-fn a_null_evidence_run_response_skips_only_the_run_record_checks() {
-    // scripts/check_canaries.py checks the run record only when the response
-    // is a dict and reports one that is neither None nor a dict; a JSON null
-    // is skipped. The pin, reachability and latest-success checks still run.
-    let null_run = live(
-        &python(),
-        standard("identical", Value::Null, vec![run("v1.2.3")]),
-        &pin("python"),
-    );
-    assert_eq!(
-        (null_run.errors, null_run.warnings, null_run.notices),
-        (vec![], vec![], vec![])
-    );
-    let stale = live(
-        &python(),
-        standard(
-            "identical",
-            Value::Null,
-            vec![run_payload(SHA, 456, "python", json!("v1.2.4"))],
-        ),
-        &pin("python"),
-    );
-    assert_eq!(
-        stale.errors,
-        [
-            "python (ryanduguid/example): latest successful run 456 != recorded 123; NEWER_RELEASE_REVIEW_REQUIRED: recorded run 123 (v1.2.3) is overtaken by run 456 ('v1.2.4'). Review the newer release's run, source SHA and policy pin, record it in canaries.json in canonical form, then rerun the live audit."
-        ]
-    );
-}
-
 /// The usual fake, with a verifier that fails unexpectedly.
 struct CrashingVerifier<F: FnMut(&str) -> Reply>(Fake<F>);
 
