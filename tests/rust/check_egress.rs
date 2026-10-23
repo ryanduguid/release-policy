@@ -474,3 +474,34 @@ fn public_addresses_either_side_of_the_range_are_not_findings() {
     let out = c.run(&[".", "--no-terms"]);
     assert_eq!(out.code, 0, "{}", out.stdout);
 }
+
+// LineScanTests
+
+#[test]
+fn a_million_character_line_is_scanned() {
+    let padding = "x".repeat(1_000_000);
+    for (label, text, expected) in [
+        ("clean", format!("{padding}\n"), 0),
+        ("finding", format!("{padding} host 10.1.2.3\n"), 1),
+    ] {
+        let c = Candidate::new(&[("notes.md", &text)]);
+        let out = c.run(&[".", "--no-terms"]);
+        assert_eq!(out.code, expected, "{label}: {}{}", out.stdout, out.stderr);
+    }
+}
+
+#[test]
+fn a_word_boundary_follows_the_unicode_word_class() {
+    // A combining mark is not a word character; a superscript digit is.
+    for (text, expected) in [
+        ("box.internal\u{301}\n", 1),
+        ("\u{301}box.internal\n", 1),
+        ("\u{b2}box.internal\n", 0),
+        ("10.0.0.1\u{b2}\n", 0),
+        ("\u{345}.env\n", 1),
+    ] {
+        let c = Candidate::new(&[("notes.md", text)]);
+        let out = c.run(&[".", "--no-terms"]);
+        assert_eq!(out.code, expected, "{text:?}: {}{}", out.stdout, out.stderr);
+    }
+}

@@ -377,5 +377,32 @@ class PrivateAddressTests(unittest.TestCase):
             self.assertEqual(code, 0, out)
 
 
+class LineScanTests(unittest.TestCase):
+    """Each line is scanned whole, whatever its length."""
+
+    def test_a_million_character_line_is_scanned(self):
+        padding = "x" * 1_000_000
+        for label, text, expected in (
+            ("clean", f"{padding}\n", 0),
+            ("finding", f"{padding} host 10.1.2.3\n", 1),
+        ):
+            with self.subTest(label), candidate({"notes.md": text}):
+                code, out, err = run([".", "--no-terms"])
+                self.assertEqual(code, expected, out + err)
+
+    def test_a_word_boundary_follows_the_unicode_word_class(self):
+        # A combining mark is not a word character; a superscript digit is.
+        for text, expected in (
+            ("box.internaĺ\n", 1),
+            ("́box.internal\n", 1),
+            ("²box.internal\n", 0),
+            ("10.0.0.1²\n", 0),
+            ("ͅ.env\n", 1),
+        ):
+            with self.subTest(ascii(text)), candidate({"notes.md": text}):
+                code, out, err = run([".", "--no-terms"])
+                self.assertEqual(code, expected, out + err)
+
+
 if __name__ == "__main__":
     unittest.main()
