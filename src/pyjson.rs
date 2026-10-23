@@ -340,10 +340,8 @@ pub fn loads(text: &str) -> Result<Json, DecodeError> {
                     idx = skip(idx);
                     if idx < len && s[idx] == ']' {
                         idx += 1;
-                        let Some(Frame::Array(items)) = stack.pop() else {
-                            unreachable!()
-                        };
-                        value = Json::Array(items);
+                        value = Json::Array(std::mem::take(items));
+                        stack.pop();
                         continue;
                     }
                     if idx >= len || s[idx] != ',' {
@@ -365,10 +363,8 @@ pub fn loads(text: &str) -> Result<Json, DecodeError> {
                     idx = skip(idx);
                     if idx < len && s[idx] == '}' {
                         idx += 1;
-                        let Some(Frame::Object(pairs, _)) = stack.pop() else {
-                            unreachable!()
-                        };
-                        value = Json::Object(dict(pairs));
+                        value = Json::Object(dict(std::mem::take(pairs)));
+                        stack.pop();
                         continue;
                     }
                     if idx >= len || s[idx] != ',' {

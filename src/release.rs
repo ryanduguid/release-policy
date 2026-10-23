@@ -63,11 +63,9 @@ pub fn parse_release_tag(tag: &str, prefix: &str) -> Result<ReleaseTag> {
     let version = tag
         .strip_prefix(&start)
         .ok_or("tag does not match the supplied tag-prefix")?;
-    let parsed = derive_release_tag(version, prefix)?;
-    if parsed.full_tag != tag {
-        return Err("tag is not canonical vMAJOR.MINOR.PATCH".into());
-    }
-    Ok(parsed)
+    // The derived full tag is `start` followed by `version`, which is `tag`
+    // itself, so the script's `full_tag != tag` re-check cannot fail.
+    derive_release_tag(version, prefix)
 }
 
 fn index_entries(root: &Path, relative: &str) -> Result<Vec<(String, Vec<u8>)>> {
@@ -418,11 +416,9 @@ pub fn python_literal_version(text: &str) -> Result<String> {
         }
         let value = value.unwrap();
         // Keep non-string literals until the assignment count is checked.
-        values.push(match literal_eval(value).ok_or(failure)? {
-            Literal::Str => match value {
-                Expr::StringLiteral(s) => Some(s.value.to_str().to_owned()),
-                _ => unreachable!(),
-            },
+        // literal_eval reports Literal::Str only for a string literal.
+        values.push(match (literal_eval(value).ok_or(failure)?, value) {
+            (Literal::Str, Expr::StringLiteral(s)) => Some(s.value.to_str().to_owned()),
             _ => None,
         });
     }

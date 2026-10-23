@@ -1317,3 +1317,124 @@ fn reads_the_list_from_stdin_by_default() {
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert!(out.stdout.contains("required checks passed"));
 }
+
+#[test]
+fn boolean_and_float_trust_fields_are_named_by_their_python_types() {
+    for (overrides, expected) in [
+        (json!({"head_sha": true}), "head_sha is bool, not text"),
+        (json!({"event": 1.5}), "event is float, not text"),
+    ] {
+        let mut github = FakeGitHub::new(vec![run(1, overrides)], vec![]);
+        refusal(trusted(&mut github), expected);
+    }
+}
+
+#[test]
+fn a_true_attempt_is_labelled_as_python_prints_it() {
+    let job = Job {
+        run_id: BigInt::from(10),
+        job_id: BigInt::from(5),
+        attempt: Json::Bool(true),
+        status: "completed".into(),
+        conclusion: "success".into(),
+    };
+    assert_eq!(job.label(), "5 (attempt True)");
+}
+
+#[test]
+fn a_run_without_a_status_is_pending_in_an_unknown_state() {
+    let mut github = complete_success();
+    github.runs.push(run(12, json!({"status": null})));
+    github.jobs.insert(12, vec![]);
+    let verdict = check(&mut github, &format!("{CI}: lint\n")).unwrap();
+    assert_eq!(
+        verdict.pending,
+        [format!(
+            "{CI}: lint: run 12 is in an unknown state and has not reported this check yet"
+        )]
+    );
+}
+
+#[test]
+fn the_command_sleeps_between_polls_until_the_wait_ends() {
+    let mut github = FakeGitHub::new(
+        vec![run(10, json!({"status": "in_progress"}))],
+        vec![(10, vec![])],
+    );
+    // The clock moves only when the command sleeps.
+    let now = std::cell::Cell::new(0.0);
+    let mut sleeps = Vec::new();
+    let outcome = rc::command(
+        REPO,
+        SHA,
+        &BigInt::from(1),
+        &BigInt::from(1),
+        || Ok(format!("{CI}: lint\n")),
+        &mut |e| github.call(e),
+        || now.get(),
+        |s| {
+            sleeps.push(s);
+            now.set(now.get() + s);
+        },
+    );
+    assert_eq!(sleeps, [1.0]);
+    assert_eq!(
+        outcome,
+        rc::Outcome {
+            code: 1,
+            stdout: String::new(),
+            stderr: format!(
+                "FAIL {CI}: lint: run 10 is in_progress and has not reported this check yet after the 1s wait\n"
+            ),
+        }
+    );
+    // Each of the 2 polls reads the run listing twice to see that it held still.
+    let listings = github
+        .requests
+        .iter()
+        .filter(|e| e.contains("/actions/runs?"))
+        .count();
+    assert_eq!(listings, 4);
+}
+
+#[test]
+fn the_command_line_waits_for_a_pending_check_then_fails_closed() {
+    let mut github = FakeGitHub::new(
+        vec![run(10, json!({"status": "in_progress"}))],
+        vec![(10, vec![])],
+    );
+    let mut rules = Vec::new();
+    for endpoint in [
+        format!("repos/{REPO}/actions/runs?head_sha={SHA}&per_page=100&page=1"),
+        format!("repos/{REPO}/actions/runs/10/jobs?filter=latest&per_page=100&page=1"),
+    ] {
+        let body = github.call(&endpoint).unwrap();
+        rules.push(json!({"args": ["api", "-H", "X-GitHub-Api-Version: 2026-03-10", endpoint],
+                          "stdout": pyjson::dumps(&body, pyjson::Dump::default()), "stderr": "", "code": 0}));
+    }
+    let fake = support::FakeGh::new(Value::Array(rules));
+    // However many polls fit in the wait, the verdict is the same.
+    let out = fake.run(
+        Path::new("."),
+        &[
+            "required-checks",
+            "--repository",
+            REPO,
+            "--commit",
+            SHA,
+            "--wait-seconds",
+            "1",
+            "--poll-seconds",
+            "1",
+        ],
+        &format!("{CI}: lint\n"),
+    );
+    assert_eq!(out.code, 1);
+    assert_eq!(out.stdout, "");
+    assert_eq!(
+        out.stderr,
+        format!(
+            "FAIL {CI}: lint: run 10 is in_progress and has not reported this check yet after the 1s wait\n"
+        )
+    );
+}
