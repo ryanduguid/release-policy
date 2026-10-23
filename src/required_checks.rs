@@ -116,13 +116,9 @@ pub fn parse_required_checks(input: &str) -> Result<Vec<RequiredCheck>> {
                 py::repr_str(line)
             )
         })?;
+        // The line is stripped, so the text after ": " ends in a non-space
+        // character and the job name is never empty.
         let (workflow, job) = (py::strip(workflow), py::strip(job));
-        if job.is_empty() {
-            return Err(format!(
-                "required check {} is not '<workflow path>: <job name>'",
-                py::repr_str(line)
-            ));
-        }
         if !full(WORKFLOW, workflow) {
             return Err(format!(
                 "required check {} names a path outside .github/workflows/",

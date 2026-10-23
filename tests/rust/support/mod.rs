@@ -131,8 +131,13 @@ pub struct FakeGh {
 
 impl FakeGh {
     pub fn new(rules: serde_json::Value) -> Self {
+        Self::program("gh", rules)
+    }
+
+    /// The same double installed under another program name.
+    pub fn program(program: &str, rules: serde_json::Value) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let name = if cfg!(windows) { "gh.exe" } else { "gh" };
+        let name = format!("{program}{}", std::env::consts::EXE_SUFFIX);
         std::fs::create_dir(dir.path().join("bin")).unwrap();
         std::fs::copy(
             env!("CARGO_BIN_EXE_fake-gh"),
@@ -142,6 +147,11 @@ impl FakeGh {
         let fake = FakeGh { dir };
         fake.set_rules(rules);
         fake
+    }
+
+    /// The directory holding the installed double.
+    pub fn bin(&self) -> PathBuf {
+        self.dir.path().join("bin")
     }
 
     pub fn set_rules(&self, rules: serde_json::Value) {

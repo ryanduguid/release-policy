@@ -499,6 +499,32 @@ mod tests {
         assert!(glob("a[^bc]d", "a^d"));
         assert!(glob("a[^bc]d", "abd"));
         assert!(glob("a[b", "a[b"));
+        // A ']' first in a class, or just after its '!', is a member.
+        assert!(glob("a[]]d", "a]d"));
+        assert!(glob("a[!]]d", "abd"));
+        assert!(!glob("a[!]]d", "a]d"));
+    }
+
+    #[test]
+    fn scan_text_compiles_patterns_other_than_the_structural_set() {
+        let findings = scan_text(
+            "first\nticket ABC-123 here\n",
+            "notes.md",
+            &[],
+            "terms",
+            &[("ticket id", r"\b[A-Z]+-\d+\b")],
+        )
+        .unwrap();
+        assert_eq!(
+            findings,
+            [Finding {
+                layer: 'B',
+                path: "notes.md".into(),
+                line: 2,
+                label: "ticket id".into(),
+                excerpt: "ticket ABC-123 here".into(),
+            }]
+        );
     }
 
     #[test]

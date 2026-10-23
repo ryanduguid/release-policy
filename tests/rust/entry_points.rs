@@ -49,3 +49,30 @@ fn skill_release_guard_command_accepts_a_supported_mode() {
     );
     assert_eq!((out.code, out.stderr.as_str()), (0, ""));
 }
+
+#[test]
+fn a_refused_archive_build_prints_one_line_and_exits_1() {
+    let repo = Repo::new();
+    repo.write("a.txt", "a\n");
+    repo.commit("fixture");
+    let out = cli(
+        repo.root(),
+        &[
+            "build-release-archives",
+            "--commit",
+            "HEAD",
+            "--prefix",
+            "../escape/",
+            "--output-base",
+            "dist/example",
+        ],
+        "",
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stdout.is_empty());
+    assert_eq!(
+        out.stderr,
+        "release-policy: prefix must be a safe relative POSIX path ending in '/'\n"
+    );
+    assert!(!repo.path("dist").exists());
+}

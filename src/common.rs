@@ -290,4 +290,13 @@ mod tests {
             "{\n  \"a\": [\n    1,\n    2\n  ]\n}"
         );
     }
+
+    #[test]
+    fn dumps_writes_null_and_booleans_as_json_literals() {
+        let value = json!([null, true, false]);
+        assert_eq!(
+            dumps(&value, false, false, false, false),
+            "[null, true, false]"
+        );
+    }
 }
