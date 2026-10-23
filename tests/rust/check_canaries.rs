@@ -1818,12 +1818,14 @@ fn manifest_text_and_sha_fields_are_refused_with_field_names() {
 #[test]
 fn runs_without_a_start_time_sort_after_dated_runs() {
     let canary = parse(&python()).unwrap().remove(0);
-    let mut undated = run_payload(SHA, 5, "python", json!("v1.2.3"));
+    // The dated run has the smallest id and is neither first nor last, so
+    // neither id order nor listing order would pick it.
+    let mut undated = run_payload(SHA, 9, "python", json!("v1.2.3"));
     undated.as_object_mut().unwrap().remove("run_started_at");
-    let mut null_dated = run_payload(SHA, 6, "python", json!("v1.2.3"));
+    let mut null_dated = run_payload(SHA, 8, "python", json!("v1.2.3"));
     null_dated["run_started_at"] = Value::Null;
     let dated = run_payload(SHA, 7, "python", json!("v1.2.3"));
-    let payload = to_json(&json!({"workflow_runs": [undated, null_dated, dated]}));
+    let payload = to_json(&json!({"workflow_runs": [undated, dated, null_dated]}));
     let latest = cc::latest_relevant_run(&payload, &canary).unwrap();
     assert_eq!(latest.get("id"), Some(&Json::Int(7.into())));
 }
@@ -1880,16 +1882,33 @@ fn an_unparsable_recorded_start_escapes_when_the_run_is_gone() {
 }
 
 #[test]
-fn a_null_evidence_run_response_adds_no_run_error() {
-    let result = live(
+fn a_null_evidence_run_response_skips_only_the_run_record_checks() {
+    // scripts/check_canaries.py checks the run record only when the response
+    // is a dict and reports one that is neither None nor a dict; a JSON null
+    // is skipped. The pin, reachability and latest-success checks still run.
+    let null_run = live(
         &python(),
         standard("identical", Value::Null, vec![run("v1.2.3")]),
         &pin("python"),
     );
-    assert!(
-        !result.errors.iter().any(|e| e.contains("evidence run")),
-        "{:?}",
-        result.errors
+    assert_eq!(
+        (null_run.errors, null_run.warnings, null_run.notices),
+        (vec![], vec![], vec![])
+    );
+    let stale = live(
+        &python(),
+        standard(
+            "identical",
+            Value::Null,
+            vec![run_payload(SHA, 456, "python", json!("v1.2.4"))],
+        ),
+        &pin("python"),
+    );
+    assert_eq!(
+        stale.errors,
+        [
+            "python (ryanduguid/example): latest successful run 456 != recorded 123; NEWER_RELEASE_REVIEW_REQUIRED: recorded run 123 (v1.2.3) is overtaken by run 456 ('v1.2.4'). Review the newer release's run, source SHA and policy pin, record it in canaries.json in canonical form, then rerun the live audit."
+        ]
     );
 }
 

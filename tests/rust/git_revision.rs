@@ -45,7 +45,10 @@ fn rejects_non_sha_output_even_from_a_successful_process() {
 fn a_checkout_git_cannot_enter_is_an_error() {
     let parent = tempfile::tempdir().unwrap();
     let error = resolve_commit(&parent.path().join("missing"), "HEAD").unwrap_err();
-    #[cfg(unix)]
-    assert_eq!(error, "[Errno 2] No such file or directory: 'git'");
-    assert!(!error.is_empty());
+    let expected = if cfg!(windows) {
+        "[WinError 267] The directory name is invalid: 'git'"
+    } else {
+        "[Errno 2] No such file or directory: 'git'"
+    };
+    assert_eq!(error, expected);
 }

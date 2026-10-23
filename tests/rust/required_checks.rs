@@ -1361,6 +1361,48 @@ fn the_command_sleeps_between_polls_until_the_wait_ends() {
         vec![run(10, json!({"status": "in_progress"}))],
         vec![(10, vec![])],
     );
+    // The clock moves only when the command sleeps.
+    let now = std::cell::Cell::new(0.0);
+    let mut sleeps = Vec::new();
+    let outcome = rc::command(
+        REPO,
+        SHA,
+        &BigInt::from(1),
+        &BigInt::from(1),
+        || Ok(format!("{CI}: lint\n")),
+        &mut |e| github.call(e),
+        || now.get(),
+        |s| {
+            sleeps.push(s);
+            now.set(now.get() + s);
+        },
+    );
+    assert_eq!(sleeps, [1.0]);
+    assert_eq!(
+        outcome,
+        rc::Outcome {
+            code: 1,
+            stdout: String::new(),
+            stderr: format!(
+                "FAIL {CI}: lint: run 10 is in_progress and has not reported this check yet after the 1s wait\n"
+            ),
+        }
+    );
+    // Each of the 2 polls reads the run listing twice to see that it held still.
+    let listings = github
+        .requests
+        .iter()
+        .filter(|e| e.contains("/actions/runs?"))
+        .count();
+    assert_eq!(listings, 4);
+}
+
+#[test]
+fn the_command_line_waits_for_a_pending_check_then_fails_closed() {
+    let mut github = FakeGitHub::new(
+        vec![run(10, json!({"status": "in_progress"}))],
+        vec![(10, vec![])],
+    );
     let mut rules = Vec::new();
     for endpoint in [
         format!("repos/{REPO}/actions/runs?head_sha={SHA}&per_page=100&page=1"),
@@ -1371,7 +1413,7 @@ fn the_command_sleeps_between_polls_until_the_wait_ends() {
                           "stdout": pyjson::dumps(&body, pyjson::Dump::default()), "stderr": "", "code": 0}));
     }
     let fake = support::FakeGh::new(Value::Array(rules));
-    let started = std::time::Instant::now();
+    // However many polls fit in the wait, the verdict is the same.
     let out = fake.run(
         Path::new("."),
         &[
@@ -1387,19 +1429,12 @@ fn the_command_sleeps_between_polls_until_the_wait_ends() {
         ],
         &format!("{CI}: lint\n"),
     );
-    assert!(started.elapsed() >= std::time::Duration::from_secs(1));
     assert_eq!(out.code, 1);
+    assert_eq!(out.stdout, "");
     assert_eq!(
         out.stderr,
         format!(
             "FAIL {CI}: lint: run 10 is in_progress and has not reported this check yet after the 1s wait\n"
         )
     );
-    // Each poll reads the run listing twice to see that it held still.
-    let listings = fake
-        .calls()
-        .iter()
-        .filter(|call| call[3].contains("/actions/runs?"))
-        .count();
-    assert_eq!(listings, 4);
 }

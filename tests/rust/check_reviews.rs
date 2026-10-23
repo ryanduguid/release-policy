@@ -1023,19 +1023,17 @@ fn a_base_register_must_be_canonical_text() {
 }
 
 #[test]
-#[should_panic(expected = "parse_index accepted the document")]
-fn the_append_only_check_needs_an_index_parse_index_accepted() {
+fn an_unvalidated_index_is_refused_before_the_append_only_check() {
+    // check_consumer, the only caller, validates the current index with
+    // parse_index before it compares the ledgers with the base revision.
     let c = Consumer::new();
     c.install();
-    let (_, register) = current_ledgers(&c);
-    let unchecked = release_policy::pyjson::loads("{}").unwrap();
-    let raw_index = std::fs::read(c.repo.path(reviews::INDEX_PATH)).unwrap();
-    let _ = reviews::require_append_only_with(
-        c.repo.root(),
-        "HEAD",
-        &unchecked,
-        &register,
-        &mut |_, path| Ok((path == reviews::INDEX_PATH).then(|| raw_index.clone())),
+    c.repo.git(&["commit", "--quiet", "-m", "ledgers"]);
+    c.install_with(Some(b"{}\n"));
+    let error = check_consumer(c.repo.root(), Some("HEAD")).unwrap_err();
+    assert_eq!(
+        error,
+        "review index must contain exactly ['reviews', 'schema']"
     );
 }
 

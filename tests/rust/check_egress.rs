@@ -475,14 +475,14 @@ fn public_addresses_either_side_of_the_range_are_not_findings() {
     assert_eq!(out.code, 0, "{}", out.stdout);
 }
 
+// Windows needs a privilege to make the link, so the case runs on Unix only.
+#[cfg(unix)]
 #[test]
 fn a_symlinked_directory_inside_the_candidate_is_not_walked() {
     let c = Candidate::new(&[("README.md", "clean\n")]);
     let outside = tempfile::tempdir().unwrap();
     std::fs::write(outside.path().join("notes.md"), "x-internal-token\n").unwrap();
-    if !support::symlink(outside.path(), &c.root().join("linked")) {
-        return; // Windows needs a privilege to make the link.
-    }
+    assert!(support::symlink(outside.path(), &c.root().join("linked")));
     let out = c.run(&[&c.here(), "--no-terms"]);
     assert_eq!(out.code, 0, "{}", out.stdout);
     assert_eq!(out.stdout, "check_egress: RESULT: clean\n");
