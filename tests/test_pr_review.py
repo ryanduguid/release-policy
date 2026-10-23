@@ -692,6 +692,11 @@ class ReviewBoundaryTests(unittest.TestCase):
                 review.request_json("https://api.github.com/test", "")
         with self.assertRaisesRegex(review.ReviewError, "origin"):
             review.request_json("https://attacker.example", "fixture-key")
+        for path in ("repos/../user", "repos/owner/./name", "repos/%2E%2E/user", "repos/owner/..?ref=x"):
+            with (self.subTest(path=path), mock.patch.object(review, "build_opener") as opener,
+                  self.assertRaisesRegex(review.ReviewError, "dot_segment_api_path")):
+                review.request_json("https://api.github.com/" + path, "fixture-key")
+            opener.assert_not_called()
         with self.assertRaisesRegex(review.ReviewError, "redirect"):
             review.NoRedirect().redirect_request(None, None, 302, "", {}, "https://attacker.example")
 
