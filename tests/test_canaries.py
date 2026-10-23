@@ -812,27 +812,32 @@ class CanaryRetentionTests(unittest.TestCase):
 
     def test_a_null_evidence_run_fails_in_every_mode_and_never_expires(self) -> None:
         # Only a 404 can mark a run expired; a JSON null body is not a run record.
-        def fetch_json(endpoint: str) -> object:
-            if "/compare/" in endpoint:
-                return {"status": "identical"}
-            if endpoint.endswith("/actions/runs/123"):
-                return None
-            if "/releases?" in endpoint:
-                return [release("v1.2.3", "2026-08-27T00:05:00Z")]
-            return {"workflow_runs": [run_payload()]}
+        cases = (
+            (manifest(), RELEASE_PIN, run_payload(), "python"),
+            (manifest(family="verify", ref="main"), VERIFY_PIN, verify_run(123, RECORDED), "verify"),
+        )
+        for document, pin, latest, family in cases:
+            def fetch_json(endpoint: str, latest: object = latest) -> object:
+                if "/compare/" in endpoint:
+                    return {"status": "identical"}
+                if endpoint.endswith("/actions/runs/123"):
+                    return None
+                if "/releases?" in endpoint:
+                    return [release("v1.2.3", "2026-08-27T00:05:00Z")]
+                return {"workflow_runs": [latest]}
 
-        for verifier in (None, accept):
-            for now in (BEFORE_EXPIRY, AFTER_EXPIRY):
-                with self.subTest(verifier=verifier, now=now):
-                    result = audit(manifest(), fetch_json, verifier=verifier, now=now)
-                    self.assertEqual(
-                        (result.errors, result.warnings, result.notices),
-                        (
-                            ("python (ryanduguid/example): evidence run response is not an object",),
-                            (),
-                            (),
-                        ),
-                    )
+            for verifier in (None, accept):
+                for now in (BEFORE_EXPIRY, AFTER_EXPIRY):
+                    with self.subTest(family=family, verifier=verifier, now=now):
+                        result = audit(document, fetch_json, pin=pin, verifier=verifier, now=now)
+                        self.assertEqual(
+                            (result.errors, result.warnings, result.notices),
+                            (
+                                (f"{family} (ryanduguid/example): evidence run response is not an object",),
+                                (),
+                                (),
+                            ),
+                        )
 
     def test_a_newer_release_without_a_successful_run_fails_while_the_run_exists(self) -> None:
         releases = [
