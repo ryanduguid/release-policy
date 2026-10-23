@@ -9,7 +9,8 @@ from pathlib import Path
 
 def resolve_commit(root: Path, revision: str) -> str:
     """Peel one revision safely; subsequent Git operations use only the full SHA."""
-    result = subprocess.run(
+    # --end-of-options keeps the revision an operand, so it can never be read as an option.
+    result = subprocess.run(  # NOSONAR
         ["git", "rev-parse", "--verify", "--end-of-options", f"{revision}^{{commit}}"],
         cwd=root,
         capture_output=True,

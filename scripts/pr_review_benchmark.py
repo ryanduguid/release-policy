@@ -39,7 +39,8 @@ def save_manifest(path: Path, manifest: dict[str, Any]) -> None:
             stream.write(canonical(manifest) + b"\n")
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(name, path)
+        # The operator's --output chooses this path; no workflow or PR content supplies it.
+        os.replace(name, path)  # NOSONAR
     finally:
         Path(name).unlink(missing_ok=True)
 
