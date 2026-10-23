@@ -812,12 +812,8 @@ class CanaryRetentionTests(unittest.TestCase):
 
     def test_a_null_evidence_run_fails_in_every_mode_and_never_expires(self) -> None:
         # Only a 404 can mark a run expired; a JSON null body is not a run record.
-        cases = (
-            (manifest(), RELEASE_PIN, run_payload(), "python"),
-            (manifest(family="verify", ref="main"), VERIFY_PIN, verify_run(123, RECORDED), "verify"),
-        )
-        for document, pin, latest, family in cases:
-            def fetch_json(endpoint: str, latest: object = latest) -> object:
+        def null_run_fetch(latest: dict[str, object]):
+            def fetch_json(endpoint: str) -> object:
                 if "/compare/" in endpoint:
                     return {"status": "identical"}
                 if endpoint.endswith("/actions/runs/123"):
@@ -826,6 +822,18 @@ class CanaryRetentionTests(unittest.TestCase):
                     return [release("v1.2.3", "2026-08-27T00:05:00Z")]
                 return {"workflow_runs": [latest]}
 
+            return fetch_json
+
+        cases = (
+            (manifest(), RELEASE_PIN, null_run_fetch(run_payload()), "python"),
+            (
+                manifest(family="verify", ref="main"),
+                VERIFY_PIN,
+                null_run_fetch(verify_run(123, RECORDED)),
+                "verify",
+            ),
+        )
+        for document, pin, fetch_json, family in cases:
             for verifier in (None, accept):
                 for now in (BEFORE_EXPIRY, AFTER_EXPIRY):
                     with self.subTest(family=family, verifier=verifier, now=now):
