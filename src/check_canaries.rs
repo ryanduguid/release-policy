@@ -834,7 +834,8 @@ pub fn check_live(
                     ));
                 }
             }
-            Ok(Json::Null) => {}
+            // Only a 404 can mark a run expired. Any other body, JSON null
+            // included, is not a run record and fails.
             Ok(_) => errors.push(format!("{prefix}: evidence run response is not an object")),
         }
 

@@ -1063,6 +1063,40 @@ fn a_non_object_run_and_an_unreadable_listing_are_reported_once_each() {
 }
 
 #[test]
+fn a_null_evidence_run_fails_in_every_mode_and_never_expires() {
+    // Only a 404 can mark a run expired; a JSON null body is not a run record.
+    let fetch = |endpoint: &str| {
+        if endpoint.contains("/compare/") {
+            body(json!({"status": "identical"}))
+        } else if endpoint.ends_with("/actions/runs/123") {
+            body(Value::Null)
+        } else if endpoint.contains("/releases?") {
+            body(json!([release("v1.2.3", "2026-08-27T00:05:00Z", false)]))
+        } else {
+            listing(vec![run("v1.2.3")])
+        }
+    };
+    for release_evidence in [false, true] {
+        for now in [before_expiry(), after_expiry()] {
+            let verifier = if release_evidence { accept() } else { None };
+            let result = audit_with(&python(), fetch, &pin("python"), verifier, now);
+            assert_eq!(
+                (result.errors, result.warnings, result.notices),
+                (
+                    vec![
+                        "python (ryanduguid/example): evidence run response is not an object"
+                            .to_string()
+                    ],
+                    vec![],
+                    vec![]
+                ),
+                "release_evidence={release_evidence} now={now}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_newer_release_without_a_successful_run_fails_while_the_run_exists() {
     let releases = std::rc::Rc::new(std::cell::RefCell::new(json!([
         release("v1.2.3", "2026-08-27T00:05:00Z", false),
