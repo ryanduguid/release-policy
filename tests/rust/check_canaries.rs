@@ -1805,3 +1805,328 @@ fn expired_evidence_runs_with_verified_provenance_record_a_notice() {
         "{result:?}"
     );
 }
+
+#[test]
+fn a_boolean_run_id_counts_as_python_int() {
+    let mut document = python();
+    document["families"][0]["evidence"]["run_id"] = json!(false);
+    assert_eq!(
+        parse(&document).unwrap_err(),
+        "python.evidence.run_id must be positive"
+    );
+    document["families"][0]["evidence"]["run_id"] = json!(true);
+    let canary = parse(&document).unwrap().remove(0);
+    assert_eq!(canary.evidence.run_id, Json::Bool(true));
+}
+
+#[test]
+fn manifest_text_and_sha_fields_are_refused_with_field_names() {
+    let family = |key: &str, value: Value| {
+        let mut document = python();
+        document["families"][0][key] = value;
+        document
+    };
+    let evidence = |key: &str, value: Value| {
+        let mut document = python();
+        document["families"][0]["evidence"][key] = value;
+        document
+    };
+    for (document, message) in [
+        (
+            family("workflow_path", json!(5)),
+            "python.workflow_path must be a non-empty string",
+        ),
+        (
+            family("policy_workflow", Value::Null),
+            "python.policy_workflow must be a non-empty string",
+        ),
+        (
+            evidence("started_at", json!(20260827)),
+            "python.evidence.started_at must be a non-empty string",
+        ),
+        (
+            evidence("head_sha", json!("abc")),
+            "python.evidence.head_sha must be a full lower-case SHA",
+        ),
+        (
+            evidence("policy_sha", json!("A".repeat(40))),
+            "python.evidence.policy_sha must be a full lower-case SHA",
+        ),
+    ] {
+        assert_eq!(parse(&document).unwrap_err(), message);
+    }
+}
+
+#[test]
+fn runs_without_a_start_time_sort_after_dated_runs() {
+    let canary = parse(&python()).unwrap().remove(0);
+    // The dated run has the smallest id and is neither first nor last, so
+    // neither id order nor listing order would pick it.
+    let mut undated = run_payload(SHA, 9, "python", json!("v1.2.3"));
+    undated.as_object_mut().unwrap().remove("run_started_at");
+    let mut null_dated = run_payload(SHA, 8, "python", json!("v1.2.3"));
+    null_dated["run_started_at"] = Value::Null;
+    let dated = run_payload(SHA, 7, "python", json!("v1.2.3"));
+    let payload = to_json(&json!({"workflow_runs": [undated, dated, null_dated]}));
+    let latest = cc::latest_relevant_run(&payload, &canary).unwrap();
+    assert_eq!(latest.get("id"), Some(&Json::Int(7.into())));
+}
+
+#[test]
+fn a_replacement_run_needs_a_textual_start_time() {
+    let later = verify_run(789, "2026-11-20T00:00:00Z", SHA);
+    let mut detail = later.clone();
+    detail["run_started_at"] = json!(20261120);
+    let spec = Expired {
+        listing: Some(json!({"workflow_runs": [later]})),
+        details: vec![(789, Ok(detail))],
+        ..Expired::default()
+    };
+    let result = audit_with(
+        &verify_manifest(),
+        expired(spec),
+        &pin("verify"),
+        None,
+        after_expiry(),
+    );
+    assert!(
+        has(&result.errors, "run_started_at 20261120 is not later"),
+        "{:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn an_unparsable_recorded_start_escapes_when_the_run_is_gone() {
+    // The manifest pattern admits month 13; strptime then refuses it.
+    let mut document = python();
+    document["families"][0]["evidence"]["started_at"] = json!("2026-13-27T00:00:00Z");
+    let canaries = parse(&document).unwrap();
+    let mut fake = Fake {
+        json: |endpoint: &str| {
+            if endpoint.contains("/compare/") {
+                body(json!({"status": "identical"}))
+            } else if endpoint.ends_with("/actions/runs/123") {
+                Reply::Fail("Not Found", Some(404))
+            } else {
+                listing(vec![])
+            }
+        },
+        pin: pin("python"),
+        verifier: None,
+        requests: Vec::new(),
+    };
+    let error = cc::check_live(&canaries, &mut fake, false, after_expiry()).unwrap_err();
+    assert_eq!(
+        error,
+        "ValueError: time data '2026-13-27T00:00:00Z' does not match format '%Y-%m-%dT%H:%M:%SZ'"
+    );
+}
+
+#[test]
+fn a_null_evidence_run_response_skips_only_the_run_record_checks() {
+    // scripts/check_canaries.py checks the run record only when the response
+    // is a dict and reports one that is neither None nor a dict; a JSON null
+    // is skipped. The pin, reachability and latest-success checks still run.
+    let null_run = live(
+        &python(),
+        standard("identical", Value::Null, vec![run("v1.2.3")]),
+        &pin("python"),
+    );
+    assert_eq!(
+        (null_run.errors, null_run.warnings, null_run.notices),
+        (vec![], vec![], vec![])
+    );
+    let stale = live(
+        &python(),
+        standard(
+            "identical",
+            Value::Null,
+            vec![run_payload(SHA, 456, "python", json!("v1.2.4"))],
+        ),
+        &pin("python"),
+    );
+    assert_eq!(
+        stale.errors,
+        [
+            "python (ryanduguid/example): latest successful run 456 != recorded 123; NEWER_RELEASE_REVIEW_REQUIRED: recorded run 123 (v1.2.3) is overtaken by run 456 ('v1.2.4'). Review the newer release's run, source SHA and policy pin, record it in canaries.json in canonical form, then rerun the live audit."
+        ]
+    );
+}
+
+/// The usual fake, with a verifier that fails unexpectedly.
+struct CrashingVerifier<F: FnMut(&str) -> Reply>(Fake<F>);
+
+impl<F: FnMut(&str) -> Reply> Live for CrashingVerifier<F> {
+    fn fetch_json(&mut self, endpoint: &str) -> Result<Json, LiveError> {
+        self.0.fetch_json(endpoint)
+    }
+    fn fetch_text(&mut self, endpoint: &str) -> Result<String, LiveError> {
+        self.0.fetch_text(endpoint)
+    }
+    fn verify_provenance(&mut self, _canary: &Canary) -> Result<(), Failure> {
+        Err(Failure::Unexpected("OSError: disk full".into()))
+    }
+}
+
+#[test]
+fn unexpected_provenance_failures_escape_the_audit() {
+    let mut live = CrashingVerifier(Fake {
+        json: standard("identical", run("v1.2.3"), vec![run("v1.2.3")]),
+        pin: pin("python"),
+        verifier: None,
+        requests: Vec::new(),
+    });
+    let error =
+        cc::check_live(&parse(&python()).unwrap(), &mut live, true, before_expiry()).unwrap_err();
+    assert_eq!(error, "OSError: disk full");
+}
+
+#[test]
+fn gh_cli_reads_json_and_reports_raw_read_failures() {
+    let include = ["api", "--include", "repos/x"];
+    let value = with_gh(
+        json!([rule(&include, "HTTP/2.0 200 OK\n\n{\"a\": 1}", "", 0)]),
+        || cc::GhCli.fetch_json("repos/x"),
+    );
+    assert_eq!(value.unwrap(), to_json(&json!({"a": 1})));
+    let raw = [
+        "api",
+        "-H",
+        "Accept: application/vnd.github.raw+json",
+        "repos/x/contents/f",
+    ];
+    let error = with_gh(json!([rule(&raw, "", "HTTP 404: Not Found", 1)]), || {
+        cc::GhCli.fetch_text("repos/x/contents/f")
+    });
+    assert_eq!(
+        error.unwrap_err(),
+        LiveError::GitHub(GitHubError {
+            message: "HTTP 404: Not Found".into(),
+            status: None
+        })
+    );
+}
+
+#[test]
+fn archive_provenance_is_signed_by_the_archive_publisher() {
+    let canary = parse(&manifest("archive", "v1.2.3", json!({})))
+        .unwrap()
+        .remove(0);
+    let mut rules = verifier_rules(None, HEAD, None, ASSET);
+    // The Python signer does not vouch for an archive release.
+    let python_signed = with_gh(rules.clone(), || cc::GhCli.verify_provenance(&canary));
+    assert!(
+        matches!(&python_signed, Err(Failure::Runtime(m)) if m.contains("no rule")),
+        "{python_signed:?}"
+    );
+    rules[3]["args"][6] = json!("ryanduguid/release-policy/.github/workflows/publish-archives.yml");
+    with_gh(rules, || cc::GhCli.verify_provenance(&canary)).unwrap();
+}
+
+#[test]
+fn release_assets_must_be_a_list() {
+    let release = |assets: Option<Value>| {
+        let mut document = json!({"draft": false, "immutable": true});
+        if let Some(assets) = assets {
+            document["assets"] = assets;
+        }
+        verifier_rules(Some(document), HEAD, None, ASSET)
+    };
+    // An absent, empty, mapping or string listing holds no asset mapping.
+    for assets in [
+        None,
+        Some(json!([])),
+        Some(json!({"a": 1})),
+        Some(json!("x")),
+    ] {
+        assert_eq!(
+            verify(release(assets.clone())),
+            Err(Failure::Runtime(
+                "release v1.2.3 has 0 .tar.gz assets, expected 1".into()
+            )),
+            "{assets:?}"
+        );
+    }
+    for (assets, kind) in [
+        (json!(5), "int"),
+        (json!(true), "bool"),
+        (json!(1.5), "float"),
+    ] {
+        assert_eq!(
+            verify(release(Some(assets))),
+            Err(Failure::Unexpected(format!(
+                "TypeError: '{kind}' object is not iterable"
+            )))
+        );
+    }
+}
+
+#[test]
+fn a_download_that_writes_no_asset_is_an_unexpected_failure() {
+    let mut rules = verifier_rules(None, HEAD, None, ASSET);
+    rules[2].as_object_mut().unwrap().remove("files");
+    match verify(rules) {
+        Err(Failure::Unexpected(message)) => {
+            assert!(message.starts_with("[Errno 2] "), "{message}");
+            assert!(message.ends_with("pkg-1.2.3.tar.gz'"), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn main_refuses_an_unreadable_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("canaries.json");
+    std::fs::write(&path, b"\xff").unwrap();
+    let out = support::cli(
+        dir.path(),
+        &["check-canaries", "--manifest", &path.to_string_lossy()],
+        "",
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stdout.is_empty());
+    assert!(
+        out.stderr.starts_with("check_canaries: ") && out.stderr.contains("must be valid UTF-8"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn main_live_audit_fails_each_family_github_will_not_answer() {
+    let fake = FakeGh::new(json!([]));
+    let out = fake.run(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        &["check-canaries", "--live"],
+        "",
+    );
+    assert_eq!(out.code, 1, "{}", out.stderr);
+    assert!(out.stderr.is_empty(), "{}", out.stderr);
+    let lines = out.stdout.lines().collect::<Vec<_>>();
+    assert!(!lines.is_empty());
+    assert!(lines.iter().all(|l| l.starts_with("FAIL ")), "{lines:?}");
+    for family in ["archive", "python", "verify"] {
+        assert!(out.stdout.contains(family), "{family}: {}", out.stdout);
+    }
+}
+
+#[test]
+fn main_live_audit_without_gh_is_an_unexpected_error() {
+    let empty = tempfile::tempdir().unwrap();
+    let out = support::cli_env(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        &["check-canaries", "--live"],
+        "",
+        &[("PATH", &empty.path().to_string_lossy())],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stdout.is_empty());
+    let expected = if cfg!(windows) {
+        "check_canaries: unexpected error: program not found\n"
+    } else {
+        "check_canaries: unexpected error: [Errno 2] No such file or directory: 'gh'\n"
+    };
+    assert_eq!(out.stderr, expected);
+}

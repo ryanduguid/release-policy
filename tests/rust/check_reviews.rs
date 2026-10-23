@@ -972,3 +972,121 @@ fn both_historical_ledgers_use_the_same_resolved_commit() {
     .unwrap();
     assert_eq!(observed, [base.clone(), base]);
 }
+
+#[test]
+fn a_required_change_needs_its_change_line() {
+    let mut c = Consumer::new();
+    c.text_edits = vec![(
+        "  Change: add an income_year field.\n".into(),
+        String::new(),
+    )];
+    c.install();
+    c.refused("change 'Defect: no year label on the output.' needs a non-empty 'Change:' line");
+}
+
+/// The current ledgers, read from the working tree as `check_consumer` reads them.
+fn current_ledgers(
+    c: &Consumer,
+) -> (
+    release_policy::pyjson::Json,
+    Vec<(String, reviews::KnownUnknown)>,
+) {
+    let index = reviews::load_index_document(
+        &std::fs::read(c.repo.path(reviews::INDEX_PATH)).unwrap(),
+        "index",
+    )
+    .unwrap();
+    let register = reviews::parse_known_unknowns(
+        &std::fs::read_to_string(c.repo.path(reviews::KNOWN_UNKNOWNS_PATH)).unwrap(),
+    )
+    .unwrap();
+    (index, register)
+}
+
+#[test]
+fn a_base_register_must_be_canonical_text() {
+    let c = Consumer::new();
+    c.install();
+    let (index, register) = current_ledgers(&c);
+    let error = reviews::require_append_only_with(
+        c.repo.root(),
+        "HEAD",
+        &index,
+        &register,
+        &mut |_, path| {
+            Ok((path == reviews::KNOWN_UNKNOWNS_PATH)
+                .then(|| [b"\xef\xbb\xbf".as_slice(), KNOWN_UNKNOWNS.as_bytes()].concat()))
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error, "base HEAD register must not contain a UTF-8 BOM");
+}
+
+#[test]
+fn an_unvalidated_index_is_refused_before_the_append_only_check() {
+    // check_consumer, the only caller, validates the current index with
+    // parse_index before it compares the ledgers with the base revision.
+    let c = Consumer::new();
+    c.install();
+    c.repo.git(&["commit", "--quiet", "-m", "ledgers"]);
+    c.install_with(Some(b"{}\n"));
+    let error = check_consumer(c.repo.root(), Some("HEAD")).unwrap_err();
+    assert_eq!(
+        error,
+        "review index must contain exactly ['reviews', 'schema']"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn undecodable_git_output_fails_each_subject_check_closed() {
+    use std::os::unix::fs::PermissionsExt;
+    let c = Consumer::new();
+    c.install();
+    let real = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join("git"))
+        .find(|candidate| candidate.is_file())
+        .unwrap();
+    // A git that answers the call named in FAKE_GIT_UNDECODABLE with a byte
+    // UTF-8 cannot decode, and passes every other call to the real git.
+    let bin = tempfile::tempdir().unwrap();
+    let script = bin.path().join("git");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\ncase \"$*\" in\n  \"$FAKE_GIT_UNDECODABLE\"*) printf '\\377'; exit 0 ;;\nesac\nexec '{}' \"$@\"\n",
+            real.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin.path().to_path_buf())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let path = path.to_string_lossy();
+    let run = |call: &str| {
+        support::cli_env(
+            c.repo.root(),
+            &["check-reviews"],
+            "",
+            &[("PATH", &path), ("FAKE_GIT_UNDECODABLE", call)],
+        )
+    };
+    let passing = run("no such call");
+    assert_eq!(passing.code, 0, "{}", passing.stderr);
+    for call in [
+        "cat-file -e",
+        "merge-base --is-ancestor",
+        "rev-parse --verify --quiet",
+    ] {
+        let out = run(call);
+        assert_eq!(out.code, 1, "{call}");
+        assert_eq!(
+            out.stderr,
+            "check_reviews: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte\n",
+            "{call}"
+        );
+    }
+}

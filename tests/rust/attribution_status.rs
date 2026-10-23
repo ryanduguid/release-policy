@@ -482,3 +482,27 @@ fn surviving_old_event_reads_current_metadata() {
         &format!("repos/{REPOSITORY}/pulls/1")
     );
 }
+
+#[test]
+fn prepare_refuses_an_invalid_pr_before_writing_or_posting() {
+    let dir = tempfile::tempdir().unwrap();
+    let snapshot = dir.path().join("snapshot.json");
+    let mut github = Fake {
+        response: Some(payload(json!({"number": 2}))),
+        posts: Vec::new(),
+        reads: Vec::new(),
+    };
+    let error = attribution::prepare(REPOSITORY, &BigInt::from(1), &snapshot, &mut github);
+    assert_eq!(error, Err("unreadable PR identity".into()));
+    assert!(!snapshot.exists());
+    assert!(github.posts.is_empty());
+}
+
+#[test]
+fn an_invalid_current_pr_closes_owned_pending_as_failure() {
+    let mut f = Fixture::new();
+    f.proof(json!({}));
+    f.github.response = Some(payload(json!({"title": null})));
+    assert!(!f.finish("success").unwrap());
+    assert_eq!(f.last_post(), (head(), "failure".into()));
+}

@@ -545,3 +545,42 @@ fn failed_archive_generation_removes_only_partial_outputs() {
     assert_eq!(tree(temp.path()), std::slice::from_ref(&keep));
     assert_eq!(std::fs::read(&keep).unwrap(), b"keep");
 }
+
+#[test]
+fn failed_tree_and_timestamp_reads_are_unexpected_errors() {
+    let temp = support::tempdir();
+    let root = release_policy::py::resolve(temp.path());
+    let repo = Repo::new_in(&root);
+    repo.write("component/VERSION", "1.2.3\n");
+    let commit = repo.commit("tree");
+    let mut real = archives::system_git(repo.root());
+    for (refused_call, expected) in [
+        (
+            "cat-file",
+            format!(
+                "unexpected error: Command 'git cat-file -t {commit}:component' returned non-zero exit status 1."
+            ),
+        ),
+        (
+            "show",
+            "unexpected error: Command 'git show' returned non-zero exit status 1.".to_owned(),
+        ),
+    ] {
+        let before = tree(&root);
+        let result = build_release_archives_with(
+            repo.root(),
+            "HEAD",
+            "safe/",
+            &root.join("outside").join("archive"),
+            "component",
+            &mut |args, env| {
+                if args.iter().any(|a| a == refused_call) {
+                    return Ok((false, String::new()));
+                }
+                real(args, env)
+            },
+        );
+        assert_eq!(result.unwrap_err(), expected);
+        assert_eq!(tree(&root), before);
+    }
+}
