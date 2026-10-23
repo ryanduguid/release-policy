@@ -199,3 +199,122 @@ fn cli_returns_nonzero_for_guard_and_verification_errors() {
     assert_eq!(out.code, 1);
     assert!(out.stderr.starts_with("verify_skills: "), "{}", out.stderr);
 }
+
+/// Rules for a fake `python` answering the four verification commands, the
+/// second with `unittest_code`.
+fn python_rules(unittest_code: i32) -> serde_json::Value {
+    let rules = expected_commands()
+        .into_iter()
+        .enumerate()
+        .map(|(i, command)| {
+            let code = if i == 1 { unittest_code } else { 0 };
+            support::rule(
+                &command[1..].iter().map(String::as_str).collect::<Vec<_>>(),
+                "",
+                "",
+                code,
+            )
+        })
+        .collect();
+    serde_json::Value::Array(rules)
+}
+
+#[test]
+fn cli_verify_runs_the_commands_with_the_first_python_on_path() {
+    let repo = pack();
+    let python = support::FakeGh::program("python", python_rules(0));
+    let out = python.run(
+        repo.root(),
+        &["verify-skills", "verify", "--mode", MODE],
+        "",
+    );
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+    let calls = python.calls();
+    let expected = expected_commands()
+        .into_iter()
+        .map(|command| command[1..].to_vec())
+        .collect::<Vec<_>>();
+    assert_eq!(calls, expected);
+}
+
+#[test]
+fn cli_verify_reports_a_failing_command_as_the_script_did() {
+    let repo = pack();
+    let python = support::FakeGh::program("python", python_rules(3));
+    let out = python.run(
+        repo.root(),
+        &["verify-skills", "verify", "--mode", MODE],
+        "",
+    );
+    assert_eq!(out.code, 1);
+    let program = python
+        .bin()
+        .join(format!("python{}", std::env::consts::EXE_SUFFIX))
+        .to_string_lossy()
+        .into_owned();
+    let command = std::iter::once(program.as_str())
+        .chain(["-B", "-m", "unittest", "discover", "-s", "tests", "-v"])
+        .map(release_policy::py::repr_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert_eq!(
+        out.stderr,
+        format!("verify_skills: Command '({command})' returned non-zero exit status 3.\n")
+    );
+    // The commands after the failure never run.
+    assert_eq!(python.calls().len(), 2);
+}
+
+#[test]
+fn cli_verify_reports_a_python_that_cannot_start() {
+    let repo = pack();
+    let bin = tempfile::tempdir().unwrap();
+    let name = format!("python{}", std::env::consts::EXE_SUFFIX);
+    // A plain file: found on PATH, but not a program.
+    std::fs::write(bin.path().join(name), "not a program\n").unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin.path().to_path_buf())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    let out = support::cli_env(
+        repo.root(),
+        &["verify-skills", "verify", "--mode", MODE],
+        "",
+        &[("PATH", &path.to_string_lossy())],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stderr.starts_with("verify_skills: "), "{}", out.stderr);
+    #[cfg(unix)]
+    assert_eq!(
+        out.stderr,
+        "verify_skills: Permission denied (os error 13)\n"
+    );
+}
+
+#[test]
+fn a_path_through_a_file_is_an_os_error_not_a_missing_path() {
+    let repo = pack();
+    let error = resolve_safe_relative(repo.root(), "VERSION/inner", "path").unwrap_err();
+    #[cfg(unix)]
+    {
+        let cursor = std::fs::canonicalize(repo.root())
+            .unwrap()
+            .join("VERSION/inner");
+        assert_eq!(
+            error,
+            format!("[Errno 20] Not a directory: '{}'", cursor.display())
+        );
+    }
+    #[cfg(windows)]
+    assert_eq!(error, "path is missing: VERSION/inner");
+}
+
+#[test]
+fn tracked_mode_reports_a_checkout_git_cannot_enter() {
+    let parent = tempfile::tempdir().unwrap();
+    let error = tracked_mode(&parent.path().join("missing"), "VERSION").unwrap_err();
+    #[cfg(unix)]
+    assert_eq!(error, "[Errno 2] No such file or directory: 'git'");
+    assert!(!error.is_empty());
+}

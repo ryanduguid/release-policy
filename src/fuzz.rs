@@ -14,6 +14,7 @@ pub struct Parsers {
     pub derive: fn(&str, &str) -> Result<ReleaseTag, String>,
     pub parse: fn(&str, &str) -> Result<ReleaseTag, String>,
     pub checks: fn(&str) -> Result<Vec<RequiredCheck>, String>,
+    pub relative: fn(&str) -> Result<String, String>,
 }
 
 impl Default for Parsers {
@@ -22,6 +23,7 @@ impl Default for Parsers {
             derive: derive_release_tag,
             parse: parse_release_tag,
             checks: parse_required_checks,
+            relative: safe_relative_path,
         }
     }
 }
@@ -74,7 +76,7 @@ pub fn check_with(data: &[u8], parsers: &Parsers) -> Result<(), String> {
         }
     }
 
-    if let Ok(relative) = safe_relative_path(&text) {
+    if let Ok(relative) = (parsers.relative)(&text) {
         if relative.starts_with('/') {
             return Err("a safe relative path is absolute".into());
         }
@@ -84,7 +86,7 @@ pub fn check_with(data: &[u8], parsers: &Parsers) -> Result<(), String> {
         if relative.contains('\\') {
             return Err("a safe relative path holds a backslash".into());
         }
-        if safe_relative_path(&relative).as_ref() != Ok(&relative) {
+        if (parsers.relative)(&relative).as_ref() != Ok(&relative) {
             return Err("a safe relative path is not stable".into());
         }
     }

@@ -474,3 +474,32 @@ fn public_addresses_either_side_of_the_range_are_not_findings() {
     let out = c.run(&[".", "--no-terms"]);
     assert_eq!(out.code, 0, "{}", out.stdout);
 }
+
+#[test]
+fn a_symlinked_directory_inside_the_candidate_is_not_walked() {
+    let c = Candidate::new(&[("README.md", "clean\n")]);
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("notes.md"), "x-internal-token\n").unwrap();
+    if !support::symlink(outside.path(), &c.root().join("linked")) {
+        return; // Windows needs a privilege to make the link.
+    }
+    let out = c.run(&[&c.here(), "--no-terms"]);
+    assert_eq!(out.code, 0, "{}", out.stdout);
+    assert_eq!(out.stdout, "check_egress: RESULT: clean\n");
+}
+
+#[test]
+fn an_undecodable_terms_file_exits_2_with_the_decode_error() {
+    let c = Candidate::new(&[("README.md", "clean\n")]);
+    let terms = c.dir.path().join("terms.txt");
+    std::fs::write(&terms, b"\xff\n").unwrap();
+    let out = c.run(&[&c.here(), "--terms", &terms.to_string_lossy()]);
+    assert_eq!(out.code, 2);
+    assert_eq!(
+        out.stderr,
+        format!(
+            "check_egress: EGRESS CHECK ERROR: cannot read the terms file {}: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte\n",
+            terms.display()
+        )
+    );
+}
