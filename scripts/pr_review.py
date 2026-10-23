@@ -21,7 +21,7 @@ from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from required_checks import _FULL_SHA, _REPOSITORY
@@ -72,12 +72,16 @@ def request_json(url: str, key: str, payload: Any = None, *,
     """Send only to fixed API origins; never forward a credential through a redirect."""
     require(url.startswith(("https://api.github.com/", "https://openrouter.ai/api/v1/")),
             "untrusted_api_origin")
+    # A dot segment could reach another endpoint of the fixed origin with the same key.
+    require(not {".", ".."} & {unquote(part) for part in urlsplit(url).path.split("/")},
+            "dot_segment_api_path")
     headers = {"Accept": "application/json", "User-Agent": "independent-pr-review/1"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
     if payload is not None:
         headers["Content-Type"] = "application/json"
-    req = Request(url, data=None if payload is None else canonical(payload), headers=headers)
+    # The origin is fixed, and literal or percent-encoded dot segments are refused above.
+    req = Request(url, data=None if payload is None else canonical(payload), headers=headers)  # NOSONAR
     try:
         with build_opener(NoRedirect()).open(req, timeout=timeout) as response:
             if response_observer is not None:
