@@ -159,7 +159,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "summary":
             text = summary(read_json(args.snapshot), read_json(args.report) if args.report.exists() else None,
                            policy, args.policy_sha)
-            Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(text, encoding="utf-8")
+            # The runner chooses this path; the report is only the written content.
+            Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(text, encoding="utf-8")  # NOSONAR
         else:
             parse_url(args.url)
             if args.command == "capture":
