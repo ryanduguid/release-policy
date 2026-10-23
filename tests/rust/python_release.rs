@@ -3,8 +3,9 @@
 //!
 //! Two Python cases replaced `derive_release_tag` with a mock returning a tag
 //! it can never derive, to reach the defensive re-check in `parse_release_tag`
-//! and in the candidate context; that state is unreachable without a mock, so
-//! those two assertions have no Rust counterpart.
+//! and in the candidate context. The Rust `parse_release_tag` has no such
+//! re-check, since the tag it derives is its input by construction; the
+//! candidate context's re-check is reached by a version that names another tag.
 mod support;
 
 use num_bigint::BigInt;
@@ -920,4 +921,145 @@ fn create_and_verify_commands_round_trip() {
         assert_eq!(out.code, 0, "{}", out.stderr);
     }
     assert!(dist.join("SHA256SUMS").is_file());
+}
+
+#[test]
+fn python_literal_keeps_cpythons_literal_rules() {
+    // A set holding an unhashable tuple raises TypeError at once; a hashable
+    // one waits for the assignment count.
+    refused(
+        python_literal_version("__version__ = {([],)}\n__version__ = \"1.2.3\"\n"),
+        "one direct literal string assignment",
+    );
+    refused(
+        python_literal_version("__version__ = {(1,)}\n__version__ = \"1.2.3\"\n"),
+        "exactly one __version__ assignment",
+    );
+    // A leading zero alone does not make a based literal.
+    assert_eq!(
+        python_literal_version("zero = 00\n__version__ = \"1.2.3\"\n").unwrap(),
+        "1.2.3"
+    );
+    // The 4300-digit limit covers decimal literals only.
+    let hexadecimal = format!("big = 0x{}\n__version__ = \"1.2.3\"\n", "1".repeat(5000));
+    assert_eq!(python_literal_version(&hexadecimal).unwrap(), "1.2.3");
+    let decimal = format!("big = {}\n__version__ = \"1.2.3\"\n", "1".repeat(4301));
+    refused(python_literal_version(&decimal), "valid Python source");
+    let largest = format!("big = {}\n__version__ = \"1.2.3\"\n", "1".repeat(4300));
+    assert_eq!(python_literal_version(&largest).unwrap(), "1.2.3");
+}
+
+#[test]
+fn metadata_refuses_a_checkout_whose_git_cannot_run() {
+    let repo = Repo::new();
+    project(&repo, DEMO);
+    repo.commit("fixture");
+    let empty = tempfile::tempdir().unwrap();
+    let out = support::cli_env(
+        repo.root(),
+        &[
+            "python-release",
+            "metadata",
+            "--version-parser",
+            "pyproject",
+            "--version-file",
+            "pyproject.toml",
+        ],
+        "",
+        &[("PATH", &empty.path().to_string_lossy())],
+    );
+    assert_eq!(out.code, 1);
+    assert!(out.stdout.is_empty());
+    // Windows reports the failed program search without naming the program.
+    let expected = if cfg!(windows) {
+        "release-policy: program not found\n"
+    } else {
+        "release-policy: [Errno 2] No such file or directory: 'git'\n"
+    };
+    assert_eq!(out.stderr, expected);
+}
+
+#[test]
+fn a_candidate_version_must_name_its_tag() {
+    let (_dir, dist) = dist();
+    let ctx = CandidateContext {
+        version: "1.2.4".into(),
+        ..context("v1.2.3")
+    };
+    refused(
+        write_candidate_inventory(&dist, &ctx),
+        "candidate tag and canonical version do not match",
+    );
+}
+
+#[test]
+fn manifest_policy_and_source_must_be_exact_mappings() {
+    let ctx = context("v1.2.3");
+    let (_dir, dist) = dist();
+    write_candidate_inventory(&dist, &ctx).unwrap();
+    for (key, value, message) in [
+        ("policy", Json::Int(1.into()), "policy has an invalid shape"),
+        ("source", Json::Array(vec![]), "source has an invalid shape"),
+        ("run", Json::Null, "run has an invalid shape"),
+    ] {
+        let mut document = manifest(&dist);
+        set(&mut document, &[key], Some(value));
+        refused(inventory_from_manifest(&document), message);
+    }
+}
+
+#[test]
+fn manifest_run_numbers_convert_as_python_int_does() {
+    let ctx = context("v1.2.3");
+    let (_dir, dist) = dist();
+    write_candidate_inventory(&dist, &ctx).unwrap();
+    let read = |id: Json| {
+        let mut document = manifest(&dist);
+        set(&mut document, &["run", "id"], Some(id));
+        inventory_from_manifest(&document).map(|i| i.context.run_id)
+    };
+    // bool is an int, and int() truncates a float towards zero.
+    assert_eq!(read(Json::Bool(true)).unwrap(), BigInt::from(1));
+    assert_eq!(read(Json::Float(12345.9)).unwrap(), BigInt::from(12345));
+    assert_eq!(read(Json::str_obj("12345")).unwrap(), BigInt::from(12345));
+    for id in [Json::Bool(false), Json::Float(0.5)] {
+        refused(read(id), "run id and attempt must be positive");
+    }
+    for id in [Json::Float(f64::NAN), Json::Null, Json::Array(vec![])] {
+        refused(read(id), "scalar fields are invalid");
+    }
+    for id in [Json::Float(f64::INFINITY), Json::Float(f64::NEG_INFINITY)] {
+        assert_eq!(
+            read(id).unwrap_err(),
+            "unexpected error: OverflowError: cannot convert float infinity to integer"
+        );
+    }
+}
+
+#[test]
+fn verification_compares_the_run_id_and_attempt() {
+    let ctx = context("v1.2.3");
+    let (_dir, dist) = dist();
+    write_candidate_inventory(&dist, &ctx).unwrap();
+    for (other, message) in [
+        (
+            CandidateContext {
+                run_id: BigInt::from(999),
+                ..ctx.clone()
+            },
+            "candidate run id mismatch: 12345 != 999",
+        ),
+        (
+            CandidateContext {
+                run_attempt: BigInt::from(3),
+                ..ctx.clone()
+            },
+            "candidate run attempt mismatch: 2 != 3",
+        ),
+    ] {
+        assert_eq!(
+            verify_candidate_inventory(&dist, &other).unwrap_err(),
+            message
+        );
+    }
 }

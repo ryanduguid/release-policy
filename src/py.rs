@@ -736,13 +736,13 @@ impl Date {
         if !(1..=MAX_DATE.ordinal()).contains(&ordinal) {
             return None;
         }
-        // Estimate the year, then correct it.
+        // Estimate the year from the mean Gregorian year, then correct it
+        // upwards. The estimate never overshoots: days_before_year exceeds the
+        // mean by less than 1 day (at most 0.72, before a century year), and
+        // every year to 9999 is checked in the tests.
         let mut year = ((ordinal - 1) * 400 / 146_097 + 1) as i32;
         while days_before_year(year + 1) < ordinal {
             year += 1;
-        }
-        while days_before_year(year) >= ordinal {
-            year -= 1;
         }
         let mut rest = ordinal - days_before_year(year);
         let mut month = 1;
@@ -1100,5 +1100,54 @@ mod tests {
     #[test]
     fn fromisoformat_refuses_out_of_range_week_years() {
         assert!(Date::fromisoformat("0000-W01-1").is_none());
+    }
+
+    #[test]
+    fn from_ordinal_finds_the_last_day_of_every_year() {
+        // The year estimate peaks on 31 December, so these are the days on
+        // which an overshooting estimate would first appear.
+        for year in 1..=9999 {
+            let last = Date {
+                year,
+                month: 12,
+                day: 31,
+            };
+            let found = Date::from_ordinal(last.ordinal()).unwrap();
+            assert_eq!((found.year, found.month, found.day), (year, 12, 31));
+            let next = Date::from_ordinal(last.ordinal() + 1);
+            assert_eq!(
+                next.map(|d| (d.year, d.month, d.day)),
+                (year < 9999).then_some((year + 1, 1, 1))
+            );
+        }
+    }
+
+    #[test]
+    fn strip_os_suffix_keeps_a_message_without_an_os_code() {
+        assert_eq!(
+            strip_os_suffix("Access is denied. (os error 5)"),
+            "Access is denied."
+        );
+        assert_eq!(strip_os_suffix("Access is denied."), "Access is denied.");
+    }
+
+    #[test]
+    fn mkdir_parents_reports_a_target_that_fails_after_its_parents_exist() {
+        let base = tempfile::tempdir().unwrap();
+        let parent = base.path().join("missing");
+        let name = "a".repeat(300);
+        let target = PyPath::new(&parent.join(&name).to_string_lossy());
+        let error = mkdir_parents(&target).unwrap_err();
+        assert!(error.contains(&name), "{error}");
+        // The missing parent is reported as such first, so it is created
+        // before the over-long name is refused.
+        #[cfg(unix)]
+        {
+            assert!(
+                error.starts_with("[Errno 36] File name too long"),
+                "{error}"
+            );
+            assert!(parent.is_dir());
+        }
     }
 }
