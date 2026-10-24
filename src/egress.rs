@@ -623,7 +623,7 @@ mod tests {
     /// A caller's pattern keeps Python's syntax and its own group names.
     #[test]
     fn custom_patterns_keep_python_syntax_and_spans() {
-        let cases: [(&str, &str, &[&str]); 3] = [
+        let cases: [(&str, &str, &[&str]); 4] = [
             (
                 "abcdefghijklmnopqrstuvwxyzfoobarABCDEFGHIJKLMNOPQRSTUVWXYZ",
                 "(?P<prefix>foo)bar",
@@ -632,6 +632,7 @@ mod tests {
                 ],
             ),
             ("foo", "(?<!x)foo", &["f.md:1: [B] custom: foo"]),
+            ("xfoo", "(?<!x)foo", &[]),
             (
                 "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.env.local",
                 STRUCTURAL_PATTERNS[8].1,
@@ -643,15 +644,19 @@ mod tests {
             let found = found.iter().map(Finding::render).collect::<Vec<_>>();
             assert_eq!(found, expected, "{pattern}");
         }
-        let line = "x".repeat(200);
+        let (pad, run) = ("~".repeat(30), "x".repeat(200));
         let found = scan_text(
-            &line,
+            &format!("{pad}{run}{pad}"),
             "f.md",
             &[],
             "t",
-            &[("custom", "(?P<post>.{100})(?P<pre>.{100})")],
+            &[("custom", "(?P<post>x{100})(?P<pre>x{100})")],
         )
         .unwrap();
-        assert_eq!(found[0].render(), format!("f.md:1: [B] custom: {line}"));
+        let context = &pad[..24];
+        assert_eq!(
+            found.iter().map(Finding::render).collect::<Vec<_>>(),
+            [format!("f.md:1: [B] custom: ...{context}{run}{context}...")]
+        );
     }
 }
