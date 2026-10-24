@@ -486,7 +486,6 @@ def check_live(
         try:
             raw_run = fetch_json(run_endpoint)
         except RuntimeError as error:
-            raw_run = None
             if getattr(error, "status", None) != 404:
                 errors.append(f"{prefix}: could not read evidence run: {error}")
             elif current - _started_at(canary) > RETENTION + EXPIRY_MARGIN:
@@ -496,27 +495,30 @@ def check_live(
                     f"{prefix}: evidence run {canary.evidence.run_id} is missing "
                     f"before its retention period ended (started {canary.evidence.started_at})"
                 )
-        if raw_run is not None and not isinstance(raw_run, dict):
-            errors.append(f"{prefix}: evidence run response is not an object")
-        elif isinstance(raw_run, dict):
-            expected = {
-                "conclusion": "success",
-                "head_branch": canary.evidence.ref,
-                "head_sha": canary.evidence.head_sha,
-                "path": canary.workflow_path,
-                "run_started_at": canary.evidence.started_at,
-            }
-            for field, value in expected.items():
-                if raw_run.get(field) != value:
+        else:
+            # Only a 404 can mark a run expired. Any other body, JSON null
+            # included, is not a run record and fails.
+            if not isinstance(raw_run, dict):
+                errors.append(f"{prefix}: evidence run response is not an object")
+            else:
+                expected = {
+                    "conclusion": "success",
+                    "head_branch": canary.evidence.ref,
+                    "head_sha": canary.evidence.head_sha,
+                    "path": canary.workflow_path,
+                    "run_started_at": canary.evidence.started_at,
+                }
+                for field, value in expected.items():
+                    if raw_run.get(field) != value:
+                        errors.append(
+                            f"{prefix}: evidence run {field} {raw_run.get(field)!r} != {value!r}"
+                        )
+                observed_evidence_pin = _referenced_policy_sha(raw_run, canary)
+                if observed_evidence_pin != canary.evidence.policy_sha:
                     errors.append(
-                        f"{prefix}: evidence run {field} {raw_run.get(field)!r} != {value!r}"
+                        f"{prefix}: evidence policy pin {observed_evidence_pin!r} != "
+                        f"{canary.evidence.policy_sha}"
                     )
-            observed_evidence_pin = _referenced_policy_sha(raw_run, canary)
-            if observed_evidence_pin != canary.evidence.policy_sha:
-                errors.append(
-                    f"{prefix}: evidence policy pin {observed_evidence_pin!r} != "
-                    f"{canary.evidence.policy_sha}"
-                )
 
         if canary.family in _RELEASE_FAMILIES and verify_provenance is not None:
             try:
