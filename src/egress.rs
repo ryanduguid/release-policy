@@ -27,6 +27,61 @@ pub const STRUCTURAL_PATTERNS: [(&str, &str); 10] = [
     ),
     ("unc share", r"\\\\[A-Za-z0-9._-]+\\[A-Za-z0-9._$-]+"),
 ];
+
+/// Python's `\b` before a word character: the start, or a non-word character.
+macro_rules! pre {
+    () => {
+        r"(?:\A|(?P<pre>(?-i:[^\w])))"
+    };
+}
+/// Python's `\b` after a word character: the end, or a non-word character.
+macro_rules! post {
+    () => {
+        r"(?:\z|(?P<post>(?-i:[^\w])))"
+    };
+}
+
+/// STRUCTURAL_PATTERNS rewritten for the `regex` crate, which scans a line in
+/// linear time with no backtracking limit; fancy-regex gave up on a long line.
+/// `regex` has no lookaround and its `\b` uses other Unicode tables, so
+/// Python's `\b` and the dotenv lookbehind consume the neighbouring character
+/// in a group named `pre*` or `post*`, which the reported span leaves out.
+/// Leftmost-first matching then picks the match Python's backtracking picks.
+const SCAN_PATTERNS: [&str; 10] = [
+    STRUCTURAL_PATTERNS[0].1,
+    STRUCTURAL_PATTERNS[1].1,
+    concat!(pre!(), r"(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}", post!()),
+    concat!(pre!(), r"192\.168\.\d{1,3}\.\d{1,3}", post!()),
+    concat!(
+        pre!(),
+        r"172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}",
+        post!()
+    ),
+    concat!(
+        pre!(),
+        r"https?://(?:localhost|127\.0\.0\.1)(?::\d+)?",
+        post!()
+    ),
+    // A leading hyphen is not a word character, so its \b needs one before it.
+    concat!(
+        r"(?:",
+        pre!(),
+        r"[A-Za-z0-9]|(?P<pre_hyphen>(?-i:[\w]))-)",
+        r"[A-Za-z0-9-]*\.(?:internal|local|lan|corp|intranet)",
+        post!()
+    ),
+    concat!(pre!(), r"(?:s3|gs|azure)://[A-Za-z0-9._-]+"),
+    // Python ignores case in a class with no cased character, as here. The
+    // suffix is tried longest first, as Python's greedy `+` backtracks; a
+    // suffix ending in a hyphen needs a word character after it.
+    concat!(
+        r"(?:\A|(?P<pre>(?-i:[^\w.-])))\.env",
+        r"(?:\.[A-Za-z0-9_-]*(?:[A-Za-z0-9_]",
+        post!(),
+        r"|-(?P<post_hyphen>(?-i:[\w])))|(?:\z|(?P<post_bare>(?-i:[^\w]))))"
+    ),
+    STRUCTURAL_PATTERNS[9].1,
+];
 const SUFFIXES: &[&str] = &[
     "cfg", "cff", "csv", "html", "ini", "json", "jsonl", "md", "py", "rst", "sh", "toml", "ts",
     "tsv", "txt", "xml", "yaml", "yml",
@@ -226,16 +281,61 @@ fn excerpt(line: &str, start: usize, end: usize) -> String {
     )
 }
 
-fn compile_patterns<'a>(patterns: &[(&'a str, &str)]) -> Result<Vec<(&'a str, Regex)>> {
+/// A compiled structural pattern: a SCAN_PATTERNS rewrite, or a caller's own
+/// pattern on fancy-regex, which has lookaround but a backtracking limit.
+enum Pattern {
+    Scan(regex::Regex),
+    Custom(Regex),
+}
+
+impl Pattern {
+    /// The byte span of the first match, as `re.search` finds it.
+    fn search(&self, line: &str) -> Result<Option<std::ops::Range<usize>>> {
+        match self {
+            Pattern::Custom(regex) => Ok(regex
+                .find(line)
+                .map_err(|e| e.to_string())?
+                .map(|m| m.range())),
+            Pattern::Scan(regex) => Ok(regex.captures(line).map(|caps| {
+                let mut span = caps.get_match().range();
+                for (name, group) in regex.capture_names().zip(caps.iter()) {
+                    match (name, group) {
+                        (Some(n), Some(g)) if n.starts_with("pre") => span.start = g.end(),
+                        (Some(n), Some(g)) if n.starts_with("post") => span.end = g.start(),
+                        _ => {}
+                    }
+                }
+                span
+            })),
+        }
+    }
+}
+
+fn compile_patterns<'a>(
+    patterns: &[(&'a str, &str)],
+    scan: bool,
+) -> Result<Vec<(&'a str, Pattern)>> {
     let mut compiled = Vec::new();
     for (label, pattern) in patterns {
         // Rust regex Unicode tables differ from Python's pinned release for
         // \d, \s and \w. Use the copied CPython tables in those classes.
-        let pattern = pattern
-            .replace(r"\d", &py::D)
-            .replace(r"\s", &py::class_body(crate::pyunicode::SPACE))
-            .replace(r"\w", &py::class_body(crate::pyunicode::WORD));
-        let regex = Regex::new(&format!("(?i){pattern}")).map_err(|e| {
+        let pattern = format!(
+            "(?i){}",
+            pattern
+                .replace(r"\d", &py::D)
+                .replace(r"\s", &py::class_body(crate::pyunicode::SPACE))
+                .replace(r"\w", &py::class_body(crate::pyunicode::WORD))
+        );
+        let regex = if scan {
+            regex::Regex::new(&pattern)
+                .map(Pattern::Scan)
+                .map_err(|e| e.to_string())
+        } else {
+            Regex::new(&pattern)
+                .map(Pattern::Custom)
+                .map_err(|e| e.to_string())
+        };
+        let regex = regex.map_err(|e| {
             format!(
                 "structural pattern {} does not compile: {e}",
                 py::repr_str(label)
@@ -253,13 +353,20 @@ pub fn scan_text(
     terms_label: &str,
     patterns: &[(&str, &str)],
 ) -> Result<Vec<Finding>> {
-    static DEFAULT: std::sync::LazyLock<Result<Vec<(&str, Regex)>>> =
-        std::sync::LazyLock::new(|| compile_patterns(&STRUCTURAL_PATTERNS));
+    static DEFAULT: std::sync::LazyLock<Result<Vec<(&str, Pattern)>>> =
+        std::sync::LazyLock::new(|| {
+            let scan = STRUCTURAL_PATTERNS
+                .iter()
+                .zip(SCAN_PATTERNS)
+                .map(|(&(label, _), pattern)| (label, pattern))
+                .collect::<Vec<_>>();
+            compile_patterns(&scan, true)
+        });
     let dynamic;
     let compiled = if patterns == STRUCTURAL_PATTERNS {
         DEFAULT.as_ref().map_err(Clone::clone)?
     } else {
-        dynamic = compile_patterns(patterns)?;
+        dynamic = compile_patterns(patterns, false)?;
         &dynamic
     };
     let lowered_terms = terms
@@ -284,7 +391,7 @@ pub fn scan_text(
             }
         }
         for (label, regex) in compiled {
-            if let Some(m) = regex.find(line).map_err(|e| e.to_string())? {
+            if let Some(span) = regex.search(line)? {
                 findings.push(Finding {
                     layer: 'B',
                     path: path.into(),
@@ -292,8 +399,8 @@ pub fn scan_text(
                     label: (*label).into(),
                     excerpt: excerpt(
                         line,
-                        line[..m.start()].chars().count(),
-                        line[..m.end()].chars().count(),
+                        line[..span.start].chars().count(),
+                        line[..span.end].chars().count(),
                     ),
                 });
             }
@@ -424,5 +531,132 @@ mod tests {
     fn candidate_files_reports_unreadable_roots() {
         let missing = std::env::temp_dir().join("release-policy-egress-no-such-root");
         assert!(candidate_files(&[missing]).is_err());
+    }
+
+    /// Python's findings, from CPython 3.15.0, where a span or boundary is subtle.
+    const BOUNDARY_CASES: [(&str, &[&str]); 13] = [
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u{b2}-.internal ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] internal hostname: ...~~~~~~~~~~~~~~~~~~~~~~~\u{b2}-.internal ~~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~box.internal\u{301} ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] internal hostname: ...~~~~~~~~~~~~~~~~~~~~~~~~box.internal\u{301} ~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u{b2}box.internal ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~10.0.0.1\u{b2} ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u{345}.env ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] dotenv reference: ...~~~~~~~~~~~~~~~~~~~~~~~\u{345}.env ~~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.env.foo-bar ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] dotenv reference: ...~~~~~~~~~~~~~~~~~~~~~~~~.env.foo-bar ~~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.env.foo- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] dotenv reference: ...~~~~~~~~~~~~~~~~~~~~~~~~.env.foo- ~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.env.foo-\u{b2} ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] dotenv reference: ...~~~~~~~~~~~~~~~~~~~~~~~~.env.foo-\u{b2} ~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.env.---\u{b2} ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] dotenv reference: ...~~~~~~~~~~~~~~~~~~~~~~~~.env.---\u{b2} ~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.env.---! ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] dotenv reference: ...~~~~~~~~~~~~~~~~~~~~~~~~.env.---! ~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.env. ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] dotenv reference: ...~~~~~~~~~~~~~~~~~~~~~~~~.env. ~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~http://localhost:80x ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] localhost url: ...~~~~~~~~~~~~~~~~~~~~~~~~http://localhost:80x ~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~http://localhost:80. ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] localhost url: ...~~~~~~~~~~~~~~~~~~~~~~~~http://localhost:80. ~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+    ];
+
+    #[test]
+    fn spans_and_boundaries_match_python() {
+        for (text, expected) in BOUNDARY_CASES {
+            let found = scan_text(text, "f.md", &[], "t", &STRUCTURAL_PATTERNS).unwrap();
+            let found = found.iter().map(Finding::render).collect::<Vec<_>>();
+            assert_eq!(found, expected, "{text:?}");
+        }
+    }
+
+    /// A caller's pattern keeps Python's syntax and its own group names.
+    #[test]
+    fn custom_patterns_keep_python_syntax_and_spans() {
+        let cases: [(&str, &str, &[&str]); 4] = [
+            (
+                "abcdefghijklmnopqrstuvwxyzfoobarABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                "(?P<prefix>foo)bar",
+                &[
+                    "f.md:1: [B] custom: ...cdefghijklmnopqrstuvwxyzfoobarABCDEFGHIJKLMNOPQRSTUVWX...",
+                ],
+            ),
+            ("foo", "(?<!x)foo", &["f.md:1: [B] custom: foo"]),
+            ("xfoo", "(?<!x)foo", &[]),
+            (
+                "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.env.local",
+                STRUCTURAL_PATTERNS[8].1,
+                &["f.md:1: [B] custom: ...~~~~~~~~~~~~~~~~~~~~~~~~.env.local"],
+            ),
+        ];
+        for (text, pattern, expected) in cases {
+            let found = scan_text(text, "f.md", &[], "t", &[("custom", pattern)]).unwrap();
+            let found = found.iter().map(Finding::render).collect::<Vec<_>>();
+            assert_eq!(found, expected, "{pattern}");
+        }
+        let (pad, run) = ("~".repeat(30), "x".repeat(200));
+        let found = scan_text(
+            &format!("{pad}{run}{pad}"),
+            "f.md",
+            &[],
+            "t",
+            &[("custom", "(?P<post>x{100})(?P<pre>x{100})")],
+        )
+        .unwrap();
+        let context = &pad[..24];
+        assert_eq!(
+            found.iter().map(Finding::render).collect::<Vec<_>>(),
+            [format!("f.md:1: [B] custom: ...{context}{run}{context}...")]
+        );
     }
 }
