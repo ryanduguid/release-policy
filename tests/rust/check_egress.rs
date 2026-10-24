@@ -140,6 +140,26 @@ fn structural_shapes_are_findings_by_default() {
 }
 
 #[test]
+fn a_dotted_or_dotless_i_is_an_i_whatever_its_case() {
+    // re.IGNORECASE takes U+0130 and U+0131 as i, so neither hides a host.
+    for (text, label) in [
+        ("box.\u{130}nternal", "internal hostname"),
+        ("box.\u{131}ntranet", "internal hostname"),
+        ("s3://b\u{130}cket", "object store uri"),
+    ] {
+        let c = Candidate::new(&[("notes.md", &format!("{text}\n"))]);
+        let out = c.run(&[".", "--no-terms"]);
+        assert_eq!(out.code, 1, "{text:?}: {}{}", out.stdout, out.stderr);
+        assert!(
+            out.stdout
+                .contains(&format!("notes.md:1: [B] {label}: {text}\n")),
+            "{}",
+            out.stdout
+        );
+    }
+}
+
+#[test]
 fn ordinary_prose_does_not_trip_the_structural_layer() {
     let text = "The service is published at https://example.com/reports.\n\
                 Version 10.1.2 shipped on Tuesday and 192.168 is not in it.\n\
