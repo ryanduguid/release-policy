@@ -1063,6 +1063,48 @@ fn a_non_object_run_and_an_unreadable_listing_are_reported_once_each() {
 }
 
 #[test]
+fn a_null_evidence_run_fails_in_every_mode_and_never_expires() {
+    // Only a 404 can mark a run expired; a JSON null body is not a run record.
+    for (document, family, latest) in [
+        (python(), "python", run("v1.2.3")),
+        (
+            verify_manifest(),
+            "verify",
+            verify_run(123, "2026-08-27T00:00:00Z", SHA),
+        ),
+    ] {
+        let fetch = |endpoint: &str| {
+            if endpoint.contains("/compare/") {
+                body(json!({"status": "identical"}))
+            } else if endpoint.ends_with("/actions/runs/123") {
+                body(Value::Null)
+            } else if endpoint.contains("/releases?") {
+                body(json!([release("v1.2.3", "2026-08-27T00:05:00Z", false)]))
+            } else {
+                listing(vec![latest.clone()])
+            }
+        };
+        for release_evidence in [false, true] {
+            for now in [before_expiry(), after_expiry()] {
+                let verifier = if release_evidence { accept() } else { None };
+                let result = audit_with(&document, fetch, &pin(family), verifier, now);
+                assert_eq!(
+                    (result.errors, result.warnings, result.notices),
+                    (
+                        vec![format!(
+                            "{family} (ryanduguid/example): evidence run response is not an object"
+                        )],
+                        vec![],
+                        vec![]
+                    ),
+                    "{family} release_evidence={release_evidence} now={now}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn a_newer_release_without_a_successful_run_fails_while_the_run_exists() {
     let releases = std::rc::Rc::new(std::cell::RefCell::new(json!([
         release("v1.2.3", "2026-08-27T00:05:00Z", false),
@@ -1878,37 +1920,6 @@ fn an_unparsable_recorded_start_escapes_when_the_run_is_gone() {
     assert_eq!(
         error,
         "ValueError: time data '2026-13-27T00:00:00Z' does not match format '%Y-%m-%dT%H:%M:%SZ'"
-    );
-}
-
-#[test]
-fn a_null_evidence_run_response_skips_only_the_run_record_checks() {
-    // scripts/check_canaries.py checks the run record only when the response
-    // is a dict and reports one that is neither None nor a dict; a JSON null
-    // is skipped. The pin, reachability and latest-success checks still run.
-    let null_run = live(
-        &python(),
-        standard("identical", Value::Null, vec![run("v1.2.3")]),
-        &pin("python"),
-    );
-    assert_eq!(
-        (null_run.errors, null_run.warnings, null_run.notices),
-        (vec![], vec![], vec![])
-    );
-    let stale = live(
-        &python(),
-        standard(
-            "identical",
-            Value::Null,
-            vec![run_payload(SHA, 456, "python", json!("v1.2.4"))],
-        ),
-        &pin("python"),
-    );
-    assert_eq!(
-        stale.errors,
-        [
-            "python (ryanduguid/example): latest successful run 456 != recorded 123; NEWER_RELEASE_REVIEW_REQUIRED: recorded run 123 (v1.2.3) is overtaken by run 456 ('v1.2.4'). Review the newer release's run, source SHA and policy pin, record it in canaries.json in canonical form, then rerun the live audit."
-        ]
     );
 }
 
