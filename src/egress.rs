@@ -41,6 +41,20 @@ macro_rules! post {
     };
 }
 
+/// Python's `re.IGNORECASE` matches U+0130 and U+0131 wherever it matches `i`;
+/// `regex` folds no other ASCII letter differently. An `i` in SCAN_PATTERNS,
+/// alone or in a class, is spelt with one of these.
+macro_rules! i {
+    () => {
+        r"[i\x{130}\x{131}]"
+    };
+}
+macro_rules! letters {
+    () => {
+        r"A-Za-z\x{130}\x{131}"
+    };
+}
+
 /// STRUCTURAL_PATTERNS rewritten for the `regex` crate, which scans a line in
 /// linear time with no backtracking limit; fancy-regex gave up on a long line.
 /// `regex` has no lookaround and its `\b` uses other Unicode tables, so
@@ -48,8 +62,8 @@ macro_rules! post {
 /// in a group named `pre*` or `post*`, which the reported span leaves out.
 /// Leftmost-first matching then picks the match Python's backtracking picks.
 const SCAN_PATTERNS: [&str; 10] = [
-    STRUCTURAL_PATTERNS[0].1,
-    STRUCTURAL_PATTERNS[1].1,
+    concat!("[", letters!(), r#"]:\\+Users\\+[^\\\s"']+"#),
+    concat!(r"/(?:home|Users)/[", letters!(), r"0-9._-]+/"),
     concat!(pre!(), r"(?:10|127)\.\d{1,3}\.\d{1,3}\.\d{1,3}", post!()),
     concat!(pre!(), r"192\.168\.\d{1,3}\.\d{1,3}", post!()),
     concat!(
@@ -66,21 +80,38 @@ const SCAN_PATTERNS: [&str; 10] = [
     concat!(
         r"(?:",
         pre!(),
-        r"[A-Za-z0-9]|(?P<pre_hyphen>(?-i:[\w]))-)",
-        r"[A-Za-z0-9-]*\.(?:internal|local|lan|corp|intranet)",
+        "[",
+        letters!(),
+        r"0-9]|(?P<pre_hyphen>(?-i:[\w]))-)[",
+        letters!(),
+        r"0-9-]*\.(?:",
+        i!(),
+        "nternal|local|lan|corp|",
+        i!(),
+        "ntranet)",
         post!()
     ),
-    concat!(pre!(), r"(?:s3|gs|azure)://[A-Za-z0-9._-]+"),
+    concat!(pre!(), r"(?:s3|gs|azure)://[", letters!(), r"0-9._-]+"),
     // Python ignores case in a class with no cased character, as here. The
     // suffix is tried longest first, as Python's greedy `+` backtracks; a
     // suffix ending in a hyphen needs a word character after it.
     concat!(
         r"(?:\A|(?P<pre>(?-i:[^\w.-])))\.env",
-        r"(?:\.[A-Za-z0-9_-]*(?:[A-Za-z0-9_]",
+        r"(?:\.[",
+        letters!(),
+        r"0-9_-]*(?:[",
+        letters!(),
+        r"0-9_]",
         post!(),
         r"|-(?P<post_hyphen>(?-i:[\w])))|(?:\z|(?P<post_bare>(?-i:[^\w]))))"
     ),
-    STRUCTURAL_PATTERNS[9].1,
+    concat!(
+        r"\\\\[",
+        letters!(),
+        r"0-9._-]+\\[",
+        letters!(),
+        r"0-9._$-]+"
+    ),
 ];
 const SUFFIXES: &[&str] = &[
     "cfg", "cff", "csv", "html", "ini", "json", "jsonl", "md", "py", "rst", "sh", "toml", "ts",
@@ -614,6 +645,110 @@ mod tests {
     #[test]
     fn spans_and_boundaries_match_python() {
         for (text, expected) in BOUNDARY_CASES {
+            let found = scan_text(text, "f.md", &[], "t", &STRUCTURAL_PATTERNS).unwrap();
+            let found = found.iter().map(Finding::render).collect::<Vec<_>>();
+            assert_eq!(found, expected, "{text:?}");
+        }
+    }
+
+    /// Every `i` a scan pattern matches under `(?i)` goes through i!() or
+    /// letters!(); the only other `i` is the `(?-i:` flag.
+    #[test]
+    fn scan_patterns_spell_every_i_with_the_python_folds() {
+        for pattern in SCAN_PATTERNS {
+            let rest = pattern
+                .replace(i!(), "")
+                .replace(letters!(), "")
+                .replace("(?-i:", "");
+            assert!(!rest.contains(['i', 'I']), "{pattern}");
+            assert!(!rest.contains("a-z") && !rest.contains("A-Z"), "{pattern}");
+        }
+    }
+
+    /// Python's findings, from CPython 3.15.0, for U+0130 and U+0131 where an
+    /// `i` is matched: `re.IGNORECASE` takes both as `i`, as `regex` does not.
+    const FOLD_CASES: [(&str, &[&str]); 14] = [
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u{130}:\\Users\\bob ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] windows user path: ...~~~~~~~~~~~~~~~~~~~~~~~~\u{130}:\\Users\\bob ~~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~/home/\u{131}/ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] unix home path: ...~~~~~~~~~~~~~~~~~~~~~~~~/home/\u{131}/ ~~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~box.\u{130}nternal ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] internal hostname: ...~~~~~~~~~~~~~~~~~~~~~~~~box.\u{130}nternal ~~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~BOX.\u{131}NTRANET ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] internal hostname: ...~~~~~~~~~~~~~~~~~~~~~~~~BOX.\u{131}NTRANET ~~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u{130}-x.lan ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] internal hostname: ...~~~~~~~~~~~~~~~~~~~~~~~~\u{130}-x.lan ~~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~x\u{131}.corp ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] internal hostname: ...~~~~~~~~~~~~~~~~~~~~~~~~x\u{131}.corp ~~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~s3://b\u{130}cket ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] object store uri: ...~~~~~~~~~~~~~~~~~~~~~~~~s3://b\u{130}cket ~~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.env.\u{131} ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] dotenv reference: ...~~~~~~~~~~~~~~~~~~~~~~~~.env.\u{131} ~~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.env.\u{130}x-\u{131} ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] dotenv reference: ...~~~~~~~~~~~~~~~~~~~~~~~~.env.\u{130}x-\u{131} ~~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\\\\\u{131}server\\\u{130}share ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[
+                "f.md:1: [B] unc share: ...~~~~~~~~~~~~~~~~~~~~~~~~\\\\\u{131}server\\\u{130}share ~~~~~~~~~~~~~~~~~~~~~~~...",
+            ],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~x-\u{130}nternal- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~x-\u{131}nternal- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u{131}.env ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[],
+        ),
+        (
+            "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~box.internal\u{130} ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+            &[],
+        ),
+    ];
+
+    #[test]
+    fn dotted_and_dotless_i_match_as_python_folds_them() {
+        for (text, expected) in FOLD_CASES {
             let found = scan_text(text, "f.md", &[], "t", &STRUCTURAL_PATTERNS).unwrap();
             let found = found.iter().map(Finding::render).collect::<Vec<_>>();
             assert_eq!(found, expected, "{text:?}");

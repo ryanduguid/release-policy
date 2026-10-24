@@ -72,3 +72,7 @@ These are the only known behaviour differences. Each keeps the exit code.
 - A JSON `\u` escape for a lone UTF-16 surrogate is refused when read.
 - A TOML integer outside the 64-bit range or a float that overflows to
   infinity makes `pyproject.toml` invalid; `tomllib` accepted both.
+- A pattern passed to the library's `egress::scan_text` in place of the
+  default set, which `check-egress` always uses, ignores case by Unicode
+  simple case folding rather than `re.IGNORECASE`'s rules: an `i` there does
+  not also match U+0130 or U+0131.
