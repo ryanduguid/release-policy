@@ -114,6 +114,18 @@ class LayerBTests(unittest.TestCase):
                 self.assertEqual(code, 1, out)
                 self.assertIn("[B]", out)
 
+    def test_a_dotted_or_dotless_i_is_an_i_whatever_its_case(self) -> None:
+        # re.IGNORECASE takes U+0130 and U+0131 as i, so neither hides a host.
+        for text, label in (
+            ("box.İnternal", "internal hostname"),
+            ("box.ıntranet", "internal hostname"),
+            ("s3://bİcket", "object store uri"),
+        ):
+            with self.subTest(ascii(text)), candidate({"notes.md": text + "\n"}):
+                code, out, err = run([".", "--no-terms"])
+                self.assertEqual(code, 1, out + err)
+                self.assertIn(f"notes.md:1: [B] {label}: {text}\n", out)
+
     def test_ordinary_prose_does_not_trip_the_structural_layer(self) -> None:
         # Near-miss negatives for the patterns above: a public address, a
         # version number shaped like an address, and a sentence about an
