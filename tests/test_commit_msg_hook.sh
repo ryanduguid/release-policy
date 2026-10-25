@@ -229,5 +229,22 @@ git config --unset core.commentString
 git config --unset core.commentChar
 
 echo
+echo "--- no Python on PATH ---"
+# An inherited PY must not stand in for a missing interpreter: it would run as
+# the checker, so the hook must still refuse with its no-Python message.
+mkdir -p nopython
+printf 'Fix\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n' >msg.txt
+SH=$(command -v sh)
+if ! PY=true PATH="$WORK/nopython" "$SH" "$HOOK" msg.txt >/dev/null 2>err.txt &&
+	grep -q 'cannot check attribution' err.txt; then
+	pass=$((pass + 1))
+	echo "ok   block  an inherited PY does not replace a missing Python"
+else
+	fail=$((fail + 1))
+	echo "FAIL want=block  an inherited PY does not replace a missing Python"
+	sed 's/^/         /' err.txt | head -3
+fi
+
+echo
 echo "commit-msg hook: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
