@@ -151,6 +151,7 @@ enum Frame {
 pub fn loads_bytes(raw: &[u8]) -> Result<Json, DecodeError> {
     let unicode = |units: Vec<u32>| -> Result<String, DecodeError> {
         // shortcut: Python keeps lone surrogates ('surrogatepass'); they are refused.
+        // Use a surrogate-preserving string type if a real input carries one.
         units
             .into_iter()
             .map(|u| char::from_u32(u).ok_or_else(|| DecodeError("invalid code point".into())))
@@ -522,6 +523,7 @@ fn scanstring(s: &[char], end: usize) -> Result<(String, usize), DecodeError> {
             Some(ch) => out.push(ch),
             // shortcut: Python keeps a lone surrogate in the string, and the
             // builder could never write it out; it is refused at the escape.
+            // Use a surrogate-preserving string type if a real input carries one.
             None => {
                 return Err(decode_error(
                     "Unpaired surrogate in \\uXXXX escape",
