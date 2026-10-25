@@ -36,7 +36,7 @@ class CIDownloadTests(unittest.TestCase):
         commands = [shlex.split(line.strip()) for line in
                     (ROOT / ".github/workflows/ci.yml").read_text().splitlines()
                     if line.strip().startswith("curl ")]
-        self.assertEqual(2, len(commands))
+        self.assertEqual(3, len(commands))
         plain_requests = []
 
         class PlainHandler(BaseHTTPRequestHandler):

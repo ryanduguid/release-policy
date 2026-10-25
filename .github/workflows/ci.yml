@@ -58,13 +58,24 @@ jobs:
 
       # libFuzzer instrumentation needs a nightly compiler; the date is pinned.
       - name: Install the pinned fuzzer
+        env:
+          CARGO_FUZZ_VERSION: "0.13.2"
+          # install-action has no cargo-fuzz manifest, so the release asset is
+          # checked against GitHub's digest for it at pin time.
+          CARGO_FUZZ_SHA256: "b5b704018b63e0f151c17a057ac53b5111e1db545d1b9f72fee79f08a545931c"
         run: |
+          set -euo pipefail
           rustup toolchain install nightly-2026-10-15 --profile minimal
-          cargo install cargo-fuzz --locked --version 0.13.2
+          asset="cargo-fuzz-${CARGO_FUZZ_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          curl --proto '=https' --proto-redir '=https' -sSLO "https://github.com/rust-fuzz/cargo-fuzz/releases/download/${CARGO_FUZZ_VERSION}/$asset"
+          echo "${CARGO_FUZZ_SHA256}  $asset" | sha256sum --check
+          tar -xzf "$asset" -C "${CARGO_HOME:-$HOME/.cargo}/bin" cargo-fuzz
 
       - name: Fuzz pure policy parsers
+        # The release binary is built for musl and defaults to that target,
+        # where the address sanitiser cannot build; fuzz on glibc instead.
         run: >-
-          cargo +nightly-2026-10-15 fuzz run policy_parsers fuzz/corpus --
+          cargo +nightly-2026-10-15 fuzz run --target x86_64-unknown-linux-gnu policy_parsers fuzz/corpus --
           -max_total_time=60 -max_len=4096 -timeout=2 -rss_limit_mb=1024
 
   checks:
@@ -316,6 +327,18 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy,rustfmt,llvm-tools
 
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Pull requests read main's cache and never write their own.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install the pinned cargo-llvm-cov
+        if: matrix.os == 'ubuntu-latest'
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-llvm-cov@0.9.1
+          fallback: none
+
       - name: Check formatting
         run: cargo fmt --check
 
@@ -330,9 +353,7 @@ jobs:
       # 19 October 2026). Raise it with the tests, never lower it to pass.
       - name: Run the CLI tests with line coverage
         if: matrix.os == 'ubuntu-latest'
-        run: |
-          cargo install cargo-llvm-cov --locked --version 0.9.1
-          cargo llvm-cov --locked --lcov --output-path coverage-rust.lcov --fail-under-lines 92
+        run: cargo llvm-cov --locked --lcov --output-path coverage-rust.lcov --fail-under-lines 92
 
       - name: Keep the Rust coverage report for the Codecov upload
         if: matrix.os == 'ubuntu-latest'
@@ -342,7 +363,11 @@ jobs:
           path: coverage-rust.lcov
           retention-days: 1
 
+      # A second, release-profile compile that no CI step uses, so pull requests
+      # skip it; the tests already run the debug binary. Main, the weekly run
+      # and manual runs keep the documented release build compiling.
       - name: Build the release binary
+        if: github.event_name != 'pull_request'
         run: cargo build --locked --release --bin release-policy
 
   # The upload runs apart from the tests so the OIDC token is never available
