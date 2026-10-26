@@ -292,6 +292,7 @@ runs:
                 if explicit or (context and not product_words.search(local)):
                     bad.append("pull request title: trailing authorship credit")
             # ponytail: explicit credit grammar; ambiguous prose still needs review.
+            # Add a pattern for any attribution wording found to slip past.
             return bad
 
         def scan_pr(title, body):
