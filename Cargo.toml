@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.99"
 publish = false
 description = "Release and review policy command line tooling"
-license = "Apache-2.0"
+license = "FSL-1.1-ALv2"
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }

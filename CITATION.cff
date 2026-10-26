@@ -7,7 +7,7 @@ authors:
     given-names: Ryan
 abstract: "Reusable workflows for releases, provenance attestations and Python package checks."
 repository-code: "https://github.com/ryanduguid/release-policy"
-license: Apache-2.0
+license-url: "https://github.com/ryanduguid/release-policy/blob/main/LICENSE"
 keywords:
   - github-actions
   - packaging
