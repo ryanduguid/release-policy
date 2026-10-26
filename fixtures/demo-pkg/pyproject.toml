@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools==84.0.0"]
+requires = ["setuptools==84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,7 +12,7 @@ requires-python = ">=3.14"
 [project.optional-dependencies]
 # The release workflow builds from this locked extra without isolation, so it
 # carries the backend exactly as [build-system] requires it.
-dev = ["build==1.6.1", "setuptools==84.0.0"]
+dev = ["build==1.6.1", "setuptools==84.2.1"]
 
 [tool.setuptools.packages.find]
 include = ["demo_pkg*"]
