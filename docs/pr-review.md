@@ -130,7 +130,7 @@ PR-Agent's review prompt, token budget and output type are reused from commit
 `3be92e293fc55b24a54aa303595e9eaa32519954` of
 [PR-Agent](https://github.com/The-PR-Agent/pr-agent), the first commit with
 PyYAML 6.0.3 wheels for Python 3.14.
-The dependency lock is installed with uv 0.12.10, without cache reads. The
+The dependency lock is installed with uv 0.13.5, without cache reads. The
 workflow omits project installation and imports PR-Agent from the trusted pinned
 checkout through `PYTHONPATH`. Its lock has no other local or editable package.
 The runtime sync rejects source builds. The two source-only dependencies,
