@@ -49,7 +49,8 @@ becomes `release-policy python-release tag --tag v1.2.3 --tag-prefix v`.
 The PR-review scripts (`scripts/pr_review*.py`) stay in Python: they drive the
 PR-Agent engine in-process and share its virtual environment.
 `.github/ci/check_gates.py` stays Python because consumers copy it byte for
-byte. The shell scripts stay shell.
+byte. Each consumer's gate tests pin its digest (SHA-256 after CRLF to LF), so
+change it here first and copy it unchanged. The shell scripts stay shell.
 
 ## Differences from the scripts
 
