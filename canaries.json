@@ -17,17 +17,16 @@
     {
       "current_policy_sha": "0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c",
       "evidence": {
-        "head_sha": "f17bbb2f920e3c11dac9810060a533c64e0e3be8",
+        "head_sha": "829992ea908a4e327cb2c75c35c944e73d40f6e4",
         "policy_sha": "a601f1d8b143f92b0517f709216993660d21f480",
-        "ref": "aus-accounting-mcp/v0.6.0",
-        "run_id": 39316555896,
-        "started_at": "2026-10-19T20:06:39Z"
+        "ref": "v0.3.0",
+        "run_id": 38476443866,
+        "started_at": "2026-10-13T22:14:42Z"
       },
       "family": "python",
       "policy_workflow": ".github/workflows/release-python.yml",
-      "repository": "ryanduguid/australian-accounting",
-      "tag_prefix": "aus-accounting-mcp",
-      "workflow_path": ".github/workflows/release-aus-accounting-mcp.yml"
+      "repository": "ryanduguid/au-fpa-pack",
+      "workflow_path": ".github/workflows/release.yml"
     },
     {
       "current_policy_sha": "0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c",
