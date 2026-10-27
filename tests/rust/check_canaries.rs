@@ -2073,11 +2073,21 @@ fn main_live_audit_fails_each_family_github_will_not_answer() {
     );
     assert_eq!(out.code, 1, "{}", out.stderr);
     assert!(out.stderr.is_empty(), "{}", out.stderr);
+    // The manifest itself may warn about a pin without release evidence;
+    // every other line must be a failure.
     let lines = out.stdout.lines().collect::<Vec<_>>();
-    assert!(!lines.is_empty());
-    assert!(lines.iter().all(|l| l.starts_with("FAIL ")), "{lines:?}");
-    for family in ["archive", "python", "verify"] {
-        assert!(out.stdout.contains(family), "{family}: {}", out.stdout);
+    assert!(
+        lines
+            .iter()
+            .all(|l| l.starts_with("FAIL ") || l.starts_with("WARN ")),
+        "{lines:?}"
+    );
+    for family in ["archive", "python", "skills", "verify"] {
+        let prefix = format!("FAIL {family} (");
+        assert!(
+            lines.iter().any(|l| l.starts_with(&prefix)),
+            "{family}: {lines:?}"
+        );
     }
 }
 
