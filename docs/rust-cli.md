@@ -5,6 +5,13 @@ under `scripts/`. It is built and tested in CI next to them, but no reusable
 workflow calls it yet: the workflows keep running the Python scripts until a
 release of the binary is published and a reviewed change switches them over.
 
+A `v*` tag releases it through this repository's own binary family:
+`.github/workflows/release.yml` calls `release-binary.yml` at a merged commit,
+with `VERSION` and the `Cargo.toml` version equal to the tag.
+`canaries/disposable-binary-canary` is a throwaway crate for testing that
+family end to end under its own `disposable-binary-canary/v*` tags; delete its
+releases once checked.
+
 ## Build and check
 
 The toolchain is pinned in `rust-toolchain.toml`. Run what the `rust` job in

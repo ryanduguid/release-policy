@@ -1,0 +1,36 @@
+name: Release
+
+# Publishes the release-policy executable through this repository's own binary
+# release family, pinned to a merged commit like any consumer's call.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # A job that calls a reusable workflow accepts no timeout-minutes; every
+    # job in release-binary.yml sets its own.
+    permissions:
+      actions: read # Read this repository's own runs to require the mandatory checks.
+      attestations: write # Record provenance and SBOM attestations for release assets.
+      contents: write # Create the draft release, upload assets and publish it.
+      id-token: write # Obtain the OIDC identity required to sign attestations.
+    uses: ryanduguid/release-policy/.github/workflows/release-binary.yml@5094c69ebf14523e4787000e5ff3cdcb03c10f6e # binary release family (#222)
+    with:
+      artifact-stem: release-policy
+      # The job contexts branch protection requires. ci-gates and codeql-gates
+      # fail unless every job they cover succeeded; the separate CodeQL
+      # code-scanning context has no job to name here.
+      required-checks: |
+        .github/workflows/no-ai-attribution.yml: Attribution policy / Attribution policy runner
+        .github/workflows/ci.yml: ci-gates
+        .github/workflows/codeql.yml: codeql-gates

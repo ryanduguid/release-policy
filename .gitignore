@@ -4,6 +4,7 @@ __pycache__/
 .coverage
 coverage.xml
 /target/
+/canaries/disposable-binary-canary/target/
 /fuzz/target/
 /fuzz/artifacts/
 /fuzz/coverage/
