@@ -13,9 +13,10 @@ use crate::{Result, common::git, git_revision::resolve_commit, py};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const FAMILIES: [(&str, &str); 5] = [
+pub const FAMILIES: [(&str, &str); 6] = [
     ("release-python", ".github/workflows/release-python.yml"),
     ("release-archive", ".github/workflows/release-archive.yml"),
+    ("release-binary", ".github/workflows/release-binary.yml"),
     ("release-skills", ".github/workflows/release-skills.yml"),
     ("verify-skills", ".github/workflows/verify-skills.yml"),
     ("attribution", ".github/workflows/attribution-policy.yml"),

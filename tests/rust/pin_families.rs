@@ -212,8 +212,15 @@ fn release_only_changes_preserve_the_verifier_pin() {
 
 #[test]
 fn real_skill_families_share_the_verifier_inputs() {
-    let verifier = pin_families::inputs(FAMILIES[3].1, "HEAD", checkout()).unwrap();
-    let release = pin_families::inputs(FAMILIES[2].1, "HEAD", checkout()).unwrap();
+    let entry = |name: &str| {
+        FAMILIES
+            .iter()
+            .find(|(family, _)| *family == name)
+            .unwrap()
+            .1
+    };
+    let verifier = pin_families::inputs(entry("verify-skills"), "HEAD", checkout()).unwrap();
+    let release = pin_families::inputs(entry("release-skills"), "HEAD", checkout()).unwrap();
     assert_eq!(
         verifier,
         set(&[
