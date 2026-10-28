@@ -9,6 +9,7 @@ export FIXTURE
 family="${1:-archives}"
 case "$family" in
   archives) asset_names=(example-1.2.3.zip example-1.2.3.tar.gz example-1.2.3.spdx.json SHA256SUMS example-1.2.3.intoto.jsonl) ;;
+  binaries) asset_names=(example-1.2.3.zip example-1.2.3.tar.gz example-1.2.3.spdx.json example-1.2.3-x86_64-unknown-linux-musl.tar.gz example-1.2.3-x86_64-unknown-linux-musl.spdx.json example-1.2.3-x86_64-pc-windows-msvc.zip example-1.2.3-x86_64-pc-windows-msvc.spdx.json SHA256SUMS example-1.2.3.intoto.jsonl) ;;
   python) asset_names=(example-1.2.3-py3-none-any.whl example-1.2.3.tar.gz example-1.2.3.spdx.json release-manifest.json SHA256SUMS example-1.2.3.intoto.jsonl) ;;
   *) exit 64 ;;
 esac
@@ -83,9 +84,9 @@ gh() {
       local name="${endpoint#*name=}" expected_media
       name="${name%%&*}"
       case "$name" in
-        example-1.2.3.zip|example-1.2.3-py3-none-any.whl) expected_media=application/zip ;;
-        example-1.2.3.tar.gz) expected_media=application/gzip ;;
-        example-1.2.3.spdx.json) expected_media=application/spdx+json ;;
+        example-1.2.3.zip|example-1.2.3-py3-none-any.whl|example-1.2.3-x86_64-pc-windows-msvc.zip) expected_media=application/zip ;;
+        example-1.2.3.tar.gz|example-1.2.3-x86_64-unknown-linux-musl.tar.gz) expected_media=application/gzip ;;
+        example-1.2.3.spdx.json|example-1.2.3-x86_64-*.spdx.json) expected_media=application/spdx+json ;;
         release-manifest.json) expected_media=application/json ;;
         SHA256SUMS) expected_media=text/plain ;;
         example-1.2.3.intoto.jsonl) expected_media=application/jsonl ;;

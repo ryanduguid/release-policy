@@ -53,6 +53,7 @@ a full policy commit.
 - [Packaged Python](docs/python-consumers.md)
 - [PyPI hand-off and one-time setup](docs/pypi-publishing.md)
 - [Source archives](docs/archive-consumers.md)
+- [Rust binaries](docs/binary-consumers.md)
 - [Skill verification and releases](docs/skill-consumers.md)
 - [Attribution checks](docs/attribution-consumers.md)
 - [The egress check](docs/egress-check.md)

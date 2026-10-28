@@ -1,0 +1,592 @@
+name: Reusable Rust binary release
+
+# One tag, one publisher, one immutable release: the deterministic source
+# archives and a prebuilt executable for each fixed target. Consumer code
+# (tests and build scripts) runs only in the read-only build jobs. The
+# publisher holds the write, OIDC and attestation scopes, never runs Cargo or
+# consumer code, and treats every build artefact as untrusted input.
+
+on:
+  workflow_call:
+    inputs:
+      artifact-stem:
+        description: Lower-case hyphenated stem used for all release assets.
+        required: true
+        type: string
+      binary:
+        description: >-
+          Cargo binary target to ship: the package's own name or a declared
+          [[bin]]. Defaults to the artifact stem.
+        required: false
+        type: string
+        default: ""
+      source-directory:
+        description: Tracked crate directory containing Cargo.toml and VERSION.
+        required: false
+        type: string
+        default: .
+      tag-prefix:
+        description: Optional lower-case hyphenated namespace for the release tag.
+        required: false
+        type: string
+        default: ""
+      required-checks:
+        description: >-
+          Mandatory consumer checks, one per line as "<workflow path>: <job name>",
+          that must have succeeded in a push or dispatch run of main for the exact
+          release commit before anything is built. Fails closed when empty.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    timeout-minutes: 15
+    name: require the consumer's mandatory checks
+    # Pinned whilst ubuntu-latest moves to 26.04 (actions/runner-images#14748), so a
+    # release never changes image mid-run. Move every release family together.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read # Read this repository's own workflow runs for the release commit.
+    steps:
+      # This job never checks out or executes consumer code, so the Actions
+      # read scope the gate needs is not held by any job that runs it.
+      - name: Check out release-policy at the calling pin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ryanduguid/release-policy
+          ref: ${{ job.workflow_sha }}
+          path: policy
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Require an immutable policy pin
+        env:
+          MODULE_SHA: ${{ job.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
+          test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
+
+      # Head equality here, before any wait, means the run uses main's current
+      # caller workflow, policy pin and required checks. Later re-checks accept
+      # a merge that leaves the component and this caller untouched.
+      - name: Require the release commit to be main's head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          . policy/scripts/gates.sh
+          gate_main_matches "$GITHUB_SHA" "$GITHUB_REPOSITORY"
+
+      - name: Require the mandatory consumer checks for this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRED_CHECKS: ${{ inputs.required-checks }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$REQUIRED_CHECKS" \
+            | python policy/scripts/required_checks.py \
+                --repository "$GITHUB_REPOSITORY" \
+                --commit "$GITHUB_SHA" \
+                --wait-seconds 600
+
+  build:
+    timeout-minutes: 45
+    name: build, test and package ${{ matrix.target }}
+    needs: checks
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+    defaults:
+      run:
+        shell: bash
+    # gates.sh and build_binary.sh default to python3, which the Windows
+    # image may not provide.
+    env:
+      PYTHON: python
+    steps:
+      # The Windows image converts line endings on checkout; the packaged
+      # documents must be the tagged blobs, which the publisher compares.
+      - name: Check out files exactly as committed
+        run: git config --global core.autocrlf false
+
+      # Tests and build scripts execute consumer-controlled code. Keep them on
+      # this read-only runner; nothing here reaches the publisher except the
+      # uploaded artefact, which the publisher validates.
+      - name: Check out the tagged consumer source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          path: consumer
+          persist-credentials: false
+
+      - name: Check out release-policy at the calling pin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ryanduguid/release-policy
+          ref: ${{ job.workflow_sha }}
+          path: policy
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Require an immutable policy pin
+        env:
+          MODULE_SHA: ${{ job.workflow_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
+          test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
+
+      - name: Validate the component release inputs
+        id: inputs
+        env:
+          SOURCE_DIRECTORY: ${{ inputs.source-directory }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+        working-directory: consumer
+        run: |
+          set -euo pipefail
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
+          write_release_input_outputs "$SOURCE_DIRECTORY" "$TAG_PREFIX" consumer
+
+      - name: Read the release version and binary
+        id: release
+        env:
+          ARTIFACT_STEM: ${{ inputs.artifact-stem }}
+          BINARY: ${{ inputs.binary }}
+          SOURCE_DIRECTORY: ${{ steps.inputs.outputs.source-directory }}
+        working-directory: consumer
+        run: |
+          set -euo pipefail
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
+          { read -r stem; read -r version; } < <(
+            derive_archive_metadata "$ARTIFACT_STEM" VERSION "$SOURCE_DIRECTORY"
+          )
+          binary="${BINARY:-$stem}"
+          python "$GITHUB_WORKSPACE/policy/scripts/binary_release.py" cargo-package \
+            --manifest "$SOURCE_DIRECTORY/Cargo.toml" --version "$version" --binary "$binary"
+          epoch="$(git log -1 --format=%ct "$GITHUB_SHA")"
+          {
+            echo "stem=$stem"
+            echo "version=$version"
+            echo "binary=$binary"
+            echo "epoch=$epoch"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install the pinned cargo-auditable
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-auditable@0.7.7
+          fallback: none
+
+      - name: Install the musl C toolchain
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends musl-tools
+
+      # Set only in the Windows job, so the executable needs no C runtime DLL.
+      - name: Link the C runtime statically
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
+
+      - name: Test, build, package and check the executable
+        env:
+          TARGET: ${{ matrix.target }}
+          STEM: ${{ steps.release.outputs.stem }}
+          VERSION: ${{ steps.release.outputs.version }}
+          BINARY: ${{ steps.release.outputs.binary }}
+          SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
+          EPOCH: ${{ steps.release.outputs.epoch }}
+        run: >-
+          bash "$GITHUB_WORKSPACE/policy/scripts/build_binary.sh"
+          "$TARGET" "$STEM" "$VERSION" "$BINARY" "$SOURCE_PATH"
+          "$GITHUB_WORKSPACE/consumer" "$RUNNER_TEMP/binary" "$EPOCH"
+
+      - name: Hand the archive and its digest to the publisher
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: binary-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/binary/
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 3
+
+  publish:
+    needs: [checks, build]
+    timeout-minutes: 20
+    name: gate, attest and publish the binary release
+    runs-on: ubuntu-24.04
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    concurrency:
+      group: release-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Check out the tagged consumer source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          path: consumer
+          persist-credentials: false
+
+      - name: Check out release-policy at the calling pin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ryanduguid/release-policy
+          ref: ${{ job.workflow_sha }}
+          path: policy
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Require an immutable policy pin
+        env:
+          MODULE_SHA: ${{ job.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
+          test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
+
+      - name: Validate the component release inputs
+        id: inputs
+        env:
+          SOURCE_DIRECTORY: ${{ inputs.source-directory }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+        shell: bash
+        working-directory: consumer
+        run: |
+          set -euo pipefail
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
+          write_release_input_outputs "$SOURCE_DIRECTORY" "$TAG_PREFIX" consumer
+
+      - name: Require a release-ready tag, repository and archive contract
+        id: release
+        working-directory: consumer
+        env:
+          ARTIFACT_STEM: ${{ inputs.artifact-stem }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_DIRECTORY: ${{ steps.inputs.outputs.source-directory }}
+          TAG_PREFIX: ${{ steps.inputs.outputs.tag-prefix }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
+          run_archive_release_gates \
+            "$GITHUB_REF_NAME" \
+            "$GITHUB_SHA" \
+            "$GITHUB_REPOSITORY" \
+            "$ARTIFACT_STEM" \
+            VERSION \
+            "$SOURCE_DIRECTORY" \
+            "$TAG_PREFIX"
+
+      # Read as data with tomllib: Cargo never runs in this job.
+      - name: Require the Cargo package, binary and toolchain to match the release
+        id: binary
+        working-directory: consumer
+        env:
+          BINARY: ${{ inputs.binary }}
+          SOURCE_DIRECTORY: ${{ steps.release.outputs.source-directory }}
+          STEM: ${{ steps.release.outputs.stem }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="${BINARY:-$STEM}"
+          package="$(python "$GITHUB_WORKSPACE/policy/scripts/binary_release.py" cargo-package \
+            --manifest "$SOURCE_DIRECTORY/Cargo.toml" --version "$VERSION" --binary "$binary")"
+          python "$GITHUB_WORKSPACE/policy/scripts/binary_release.py" toolchain \
+            --source "$SOURCE_DIRECTORY" --root .
+          {
+            echo "binary=$binary"
+            echo "package=$package"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build deterministic source archives
+        working-directory: consumer
+        env:
+          TZ: UTC
+          COMMIT: ${{ steps.release.outputs.commit }}
+          PREFIX: ${{ steps.release.outputs.prefix }}
+          SOURCE_DIRECTORY: ${{ steps.inputs.outputs.source-directory }}
+          SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
+          STEM: ${{ steps.release.outputs.stem }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python "$GITHUB_WORKSPACE/policy/scripts/build_release_archives.py" \
+            --commit "$COMMIT" \
+            --prefix "$PREFIX" \
+            --source-directory "$SOURCE_DIRECTORY" \
+            --output-base "$SOURCE_PATH/dist/$STEM-$VERSION"
+
+      - name: Generate an SPDX SBOM for the source ZIP archive
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      # Exact names from this run, never a pattern, so another job's upload
+      # cannot be taken for a target's archive.
+      - name: Download the Linux build artefact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-${{ github.run_id }}-${{ github.run_attempt }}-x86_64-unknown-linux-musl
+          path: ${{ runner.temp }}/incoming/x86_64-unknown-linux-musl
+
+      - name: Download the Windows build artefact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-${{ github.run_id }}-${{ github.run_attempt }}-x86_64-pc-windows-msvc
+          path: ${{ runner.temp }}/incoming/x86_64-pc-windows-msvc
+
+      # The build jobs ran consumer code, so their artefacts are untrusted
+      # input: exact files, matching digest line, safe members, then admission.
+      - name: Validate and admit each target's archive
+        env:
+          BINARY: ${{ steps.binary.outputs.binary }}
+          SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
+          STEM: ${{ steps.release.outputs.stem }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in x86_64-unknown-linux-musl x86_64-pc-windows-msvc; do
+            python "$GITHUB_WORKSPACE/policy/scripts/binary_release.py" receive \
+              --incoming "$RUNNER_TEMP/incoming/$target" --stem "$STEM" --version "$VERSION" \
+              --binary "$BINARY" --target "$target" --dist "$SOURCE_PATH/dist" \
+              --extract-dir "$RUNNER_TEMP/extracted/$target" \
+              --source "$SOURCE_PATH" --root "$GITHUB_WORKSPACE/consumer"
+          done
+
+      - name: Require each admitted executable's linkage
+        env:
+          BINARY: ${{ steps.binary.outputs.binary }}
+        shell: bash
+        run: >-
+          bash "$GITHUB_WORKSPACE/policy/scripts/admitted_linkage.sh"
+          "$RUNNER_TEMP/extracted" "$BINARY"
+
+      # Syft reads the dependency list cargo-auditable embedded for the exact
+      # target. It runs from the workspace root, outside the consumer tree,
+      # so no consumer file configures it.
+      - name: Generate the Linux binary's SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: ${{ runner.temp }}/extracted/x86_64-unknown-linux-musl/${{ steps.binary.outputs.binary }}
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-unknown-linux-musl.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate the Windows binary's SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: ${{ runner.temp }}/extracted/x86_64-pc-windows-msvc/${{ steps.binary.outputs.binary }}.exe
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-pc-windows-msvc.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Require each binary SBOM to list the package
+        working-directory: ${{ steps.inputs.outputs.source-path }}
+        env:
+          PACKAGE: ${{ steps.binary.outputs.package }}
+          BASE: ${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in x86_64-unknown-linux-musl x86_64-pc-windows-msvc; do
+            python "$GITHUB_WORKSPACE/policy/scripts/binary_release.py" sbom-lists \
+              --sbom "dist/$BASE-$target.spdx.json" --package "$PACKAGE"
+          done
+
+      - name: Write and verify the exact release asset inventory
+        working-directory: ${{ steps.inputs.outputs.source-path }}
+        env:
+          BASE: ${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=(
+            "$BASE.zip" "$BASE.tar.gz" "$BASE.spdx.json"
+            "$BASE-x86_64-unknown-linux-musl.tar.gz" "$BASE-x86_64-unknown-linux-musl.spdx.json"
+            "$BASE-x86_64-pc-windows-msvc.zip" "$BASE-x86_64-pc-windows-msvc.spdx.json"
+          )
+          expected_before="$(printf '%s\n' "${assets[@]}" | LC_ALL=C sort)"
+          actual_before="$(find dist -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
+          test "$actual_before" = "$expected_before"
+          (
+            cd dist
+            sha256sum -- "${assets[@]}" > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+          expected_after="$(printf '%s\n' SHA256SUMS "${assets[@]}" | LC_ALL=C sort)"
+          actual_after="$(find dist -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
+          test "$actual_after" = "$expected_after"
+
+      - name: Attest release asset provenance
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-unknown-linux-musl.tar.gz
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-unknown-linux-musl.spdx.json
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-pc-windows-msvc.zip
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-pc-windows-msvc.spdx.json
+            ${{ steps.inputs.outputs.source-root }}/dist/SHA256SUMS
+
+      # The signed bundle becomes a release asset so a downloader can verify
+      # without the attestation API. SHA256SUMS cannot list it: the
+      # attestation covers that file and is created after it.
+      - name: Write the provenance bundle as a release asset
+        working-directory: ${{ steps.inputs.outputs.source-path }}
+        env:
+          BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}
+          BASE: ${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="dist/$BASE.intoto.jsonl"
+          test ! -e "$bundle"
+          cp -- "$BUNDLE_PATH" "$bundle"
+          # Exactly one Sigstore bundle on one JSON line.
+          jq -se 'length == 1' "$bundle" >/dev/null
+          test "$(wc -l < "$bundle")" -eq 1
+
+      - name: Attest the SPDX SBOM for both source archives
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
+          sbom-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+
+      - name: Attest the Linux binary's SPDX SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-unknown-linux-musl.tar.gz
+          sbom-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-unknown-linux-musl.spdx.json
+
+      - name: Attest the Windows binary's SPDX SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-pc-windows-msvc.zip
+          sbom-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-pc-windows-msvc.spdx.json
+
+      - name: Verify provenance and SBOM attestations before publication
+        working-directory: ${{ steps.inputs.outputs.source-path }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODULE_SHA: ${{ job.workflow_sha }}
+          BASE: ${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="dist/$BASE"
+          signer="ryanduguid/release-policy/.github/workflows/release-binary.yml"
+          linux="$base-x86_64-unknown-linux-musl"
+          windows="$base-x86_64-pc-windows-msvc"
+          assets=(
+            "$base.zip" "$base.tar.gz" "$base.spdx.json"
+            "$linux.tar.gz" "$linux.spdx.json" "$windows.zip" "$windows.spdx.json"
+            "dist/SHA256SUMS"
+          )
+          pins=(
+            --repo "$GITHUB_REPOSITORY"
+            --source-digest "$COMMIT"
+            --source-ref "refs/tags/$TAG"
+            --signer-workflow "$signer"
+            --signer-digest "$MODULE_SHA"
+          )
+          for file in "${assets[@]}"; do
+            gh attestation verify "$file" "${pins[@]}"
+            gh attestation verify "$file" --bundle "$base.intoto.jsonl" "${pins[@]}"
+          done
+          for archive in "$base.zip" "$base.tar.gz" "$linux.tar.gz" "$windows.zip"; do
+            gh attestation verify "$archive" "${pins[@]}" \
+              --predicate-type https://spdx.dev/Document/v2.3
+          done
+
+      - name: Re-check the remote tag, main and release absence
+        working-directory: consumer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          EXPECTED_COMMIT: ${{ steps.release.outputs.commit }}
+          SOURCE_DIRECTORY: ${{ steps.release.outputs.source-directory }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_tag_commit="$(git ls-remote \
+            "https://github.com/$GITHUB_REPOSITORY.git" \
+            "refs/tags/$TAG^{}" | cut -f1)"
+          test -n "$remote_tag_commit"
+          test "$remote_tag_commit" = "$EXPECTED_COMMIT"
+          test "$GITHUB_SHA" = "$EXPECTED_COMMIT"
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
+          gate_main_contains "$EXPECTED_COMMIT" "$GITHUB_REPOSITORY" "$SOURCE_DIRECTORY"
+          gate_no_existing_release "$TAG" "$GITHUB_REPOSITORY"
+
+      - name: Create, inspect and publish the immutable release
+        working-directory: consumer
+        env:
+          ARTIFACT_STEM: ${{ steps.release.outputs.stem }}
+          EXPECTED_COMMIT: ${{ steps.release.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_DIRECTORY: ${{ steps.release.outputs.source-directory }}
+          SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash "$GITHUB_WORKSPACE/policy/scripts/publish_binaries.sh" \
+            "$RELEASE_TAG" \
+            "$EXPECTED_COMMIT" \
+            "$ARTIFACT_STEM" \
+            "$RELEASE_VERSION" \
+            "$SOURCE_PATH" \
+            "$SOURCE_DIRECTORY"

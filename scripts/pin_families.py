@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FAMILIES = {
     "release-python": ".github/workflows/release-python.yml",
     "release-archive": ".github/workflows/release-archive.yml",
+    "release-binary": ".github/workflows/release-binary.yml",
     "release-skills": ".github/workflows/release-skills.yml",
     "verify-skills": ".github/workflows/verify-skills.yml",
     "attribution": ".github/workflows/attribution-policy.yml",
