@@ -425,8 +425,8 @@ pub fn referenced_policy_sha(run: &Json, canary: &Canary) -> Option<String> {
     (matches.len() == 1).then(|| matches[0].clone())
 }
 
-fn repr_pin(pin: &Option<String>) -> String {
-    pin.as_deref().map_or("None".into(), py::repr_str)
+fn repr_pin(pin: Option<&str>) -> String {
+    pin.map_or("None".into(), py::repr_str)
 }
 
 /// `str(value or "")`.
@@ -704,7 +704,7 @@ fn expired_verify_errors(
     if pin.as_deref() != Some(canary.current_policy_sha.as_str()) {
         errors.push(format!(
             "{prefix}: current success {shown} used policy pin {} != current {}",
-            repr_pin(&pin),
+            repr_pin(pin.as_deref()),
             canary.current_policy_sha
         ));
     }
@@ -829,7 +829,7 @@ pub fn check_live(
                 if observed.as_deref() != Some(canary.evidence.policy_sha.as_str()) {
                     errors.push(format!(
                         "{prefix}: evidence policy pin {} != {}",
-                        repr_pin(&observed),
+                        repr_pin(observed.as_deref()),
                         canary.evidence.policy_sha
                     ));
                 }
@@ -940,7 +940,7 @@ pub fn check_live(
                         errors.push(format!(
                             "{prefix}: latest successful run {} used policy pin {} != current {}",
                             repr(latest.get("id")),
-                            repr_pin(&observed),
+                            repr_pin(observed.as_deref()),
                             canary.current_policy_sha
                         ));
                     } else if run_expired {
@@ -1122,7 +1122,7 @@ impl Live for GhCli {
         if tag_sha.as_deref() != Some(canary.evidence.head_sha.as_str()) {
             return Err(Failure::Runtime(format!(
                 "tag {reference} points to {}, not {}",
-                repr_pin(&tag_sha),
+                repr_pin(tag_sha.as_deref()),
                 canary.evidence.head_sha
             )));
         }
