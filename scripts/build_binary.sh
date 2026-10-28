@@ -19,8 +19,8 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 release=("$PYTHON" "$here/binary_release.py")
 
 case "$target" in
-  x86_64-unknown-linux-musl) suffix="" ;;
-  x86_64-pc-windows-msvc) suffix=".exe" ;;
+  x86_64-unknown-linux-musl) suffix="" extension=".tar.gz" ;;
+  x86_64-pc-windows-msvc) suffix=".exe" extension=".zip" ;;
   *) echo "build_binary.sh: unsupported target $target" >&2; exit 64 ;;
 esac
 [[ "$epoch" =~ ^[0-9]+$ ]] || { echo "build_binary.sh: epoch must be a Unix time" >&2; exit 64; }
@@ -39,9 +39,13 @@ target_directory="$(cargo metadata --locked --format-version 1 --no-deps \
 executable="$target_directory/$target/release/$binary$suffix"
 
 mkdir -p "$output_dir"
-archive="$("${release[@]}" package --executable "$executable" --binary "$binary" \
+# Python prints a native path, with backslashes on Windows, so the name the
+# digest line records is built here rather than cut from that output.
+name="$stem-$version-$target$extension"
+"${release[@]}" package --executable "$executable" --binary "$binary" \
   --target "$target" --stem "$stem" --version "$version" --source . --root "$root" \
-  --output-dir "$output_dir" --epoch "$epoch" | tr -d '\r')"
+  --output-dir "$output_dir" --epoch "$epoch" >/dev/null
+archive="$output_dir/$name"
 
 # Check what ships: the packaged executable, extracted afresh, not the build output.
 check="$(mktemp -d)"
@@ -60,5 +64,5 @@ else
     --system-directory "${SYSTEMROOT:-C:\\Windows}\\System32"
 fi
 
-(cd "$output_dir" && sha256sum -- "${archive##*/}" > "${archive##*/}.sha256")
+(cd "$output_dir" && sha256sum -- "$name" > "$name.sha256")
 echo "$archive"
