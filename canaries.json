@@ -17,11 +17,11 @@
     {
       "current_policy_sha": "0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c",
       "evidence": {
-        "head_sha": "829992ea908a4e327cb2c75c35c944e73d40f6e4",
-        "policy_sha": "a601f1d8b143f92b0517f709216993660d21f480",
-        "ref": "v0.3.0",
-        "run_id": 38476443866,
-        "started_at": "2026-10-13T22:14:42Z"
+        "head_sha": "cdb9a9c0ed08ca57ce178e9124600456c3d26a8e",
+        "policy_sha": "0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c",
+        "ref": "v0.4.0",
+        "run_id": 40612457692,
+        "started_at": "2026-10-28T01:01:11Z"
       },
       "family": "python",
       "policy_workflow": ".github/workflows/release-python.yml",
