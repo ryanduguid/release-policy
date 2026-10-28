@@ -5,6 +5,10 @@ read-only job and publishes from one privileged job that never runs consumer
 code. The build jobs call `package`, `smoke` and `linkage`; the publisher calls
 `cargo-package` before anything is built and `verify` on each archive it
 receives, so a missing, extra or unsafe member stops the release.
+
+Every output path comes from the workflow or build_binary.sh, under the
+runner's temporary directory or the checkout's dist directory; member names
+are checked before anything is extracted.
 """
 
 from __future__ import annotations
@@ -152,7 +156,7 @@ def _write_tar_gz(output: Path, members: list[tuple[str, bytes, int]], epoch: in
             info.uid = info.gid = 0
             info.uname = info.gname = ""
             archive.addfile(info, io.BytesIO(data))
-    with output.open("xb") as handle:
+    with output.open("xb") as handle:  # NOSONAR
         with gzip.GzipFile(filename="", mode="wb", fileobj=handle, mtime=0) as compressed:
             compressed.write(buffer.getvalue())
 
@@ -160,7 +164,7 @@ def _write_tar_gz(output: Path, members: list[tuple[str, bytes, int]], epoch: in
 def _write_zip(output: Path, members: list[tuple[str, bytes, int]], epoch: int) -> None:
     # ZIP stores a timestamp with 2-second resolution from 1980.
     stamp = time.gmtime(max(epoch, 315532800))[:6]
-    with zipfile.ZipFile(output, "x", compression=zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(output, "x", compression=zipfile.ZIP_DEFLATED) as archive:  # NOSONAR
         for name, data, mode in members:
             info = zipfile.ZipInfo(name, date_time=stamp)
             info.compress_type = zipfile.ZIP_DEFLATED
@@ -237,8 +241,8 @@ def verify(*, archive: Path, binary: str, triple: str, extract_dir: Path | None)
     if extract_dir is not None:
         extract_dir.mkdir(parents=True, exist_ok=False)
         for name in expected:
-            (extract_dir / name).write_bytes(members[name][0])
-            os.chmod(extract_dir / name, members[name][1] or 0o644)
+            (extract_dir / name).write_bytes(members[name][0])  # NOSONAR
+            os.chmod(extract_dir / name, members[name][1] or 0o644)  # NOSONAR
     return expected
 
 
@@ -344,7 +348,7 @@ def receive(
     verify(archive=entries[name], binary=binary, triple=triple, extract_dir=extract_dir)
     dist.mkdir(parents=True, exist_ok=True)
     admitted = dist / name
-    with admitted.open("xb") as handle:
+    with admitted.open("xb") as handle:  # NOSONAR
         handle.write(data)
     return admitted
 
