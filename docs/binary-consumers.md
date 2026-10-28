@@ -46,19 +46,25 @@ names its TLS and DNS tests here; the release workflow cannot know them.
 2. `build` runs once per target with `contents: read` only:
    `x86_64-unknown-linux-musl` on `ubuntu-24.04` with `musl-tools`, and
    `x86_64-pc-windows-msvc` on `windows-2025` with a static C runtime. Each
-   runs `cargo test --locked --target <target>`, builds with the pinned
+   checks out the tag without line-ending conversion, runs
+   `cargo test --locked --target <target>`, builds with the pinned
    `cargo-auditable` so the executable carries its dependency list, packages
    it with `LICENSE`, `README.md` and `NOTICE` where present, extracts the
    archive again, smoke-tests `--version` and inspects linkage: no dynamic
-   libraries or interpreter on Linux, and only Windows system DLLs, never a
-   C runtime DLL, on Windows. The archive and its `.sha256` line go to the
-   publisher as a uniquely named artefact of the run.
+   libraries or interpreter on Linux, and on Windows only DLLs in a pinned
+   set of Windows system components, never a C runtime DLL. The archive and
+   its `.sha256` line go to the publisher as a uniquely named artefact of
+   the run.
 3. `publish` is the only job with write, OIDC and attestation scopes, and it
    never runs Cargo or consumer code. It runs the release gates, reads
    `Cargo.toml` and the toolchain file as data, builds the source archives and
    their SBOM, and admits each target's artefact only when it holds exactly
-   the archive and its digest line, the digest matches, and the members are
-   exactly the expected regular files within the size limits. Syft then
+   the archive and its digest line, the digest matches, the members are
+   exactly the expected regular files within the size limits, and each
+   document is byte for byte the tagged one. It checks the copy it keeps,
+   then repeats the linkage check on each admitted executable with
+   `llvm-readobj` from a toolchain the policy pins, because the build jobs
+   ran consumer code that could have replaced their archive. Syft then
    writes an SPDX SBOM for each extracted executable from its embedded
    dependency list, and the job requires each SBOM to list the package.
 

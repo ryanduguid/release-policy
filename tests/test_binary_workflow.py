@@ -100,6 +100,11 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
             "name: binary-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.target }}", upload)
         self.assertIn("overwrite: false", upload)
         self.assertIn("policy/scripts/build_binary.sh", build)
+        # The packaged documents must be the tagged blobs the publisher compares.
+        exact = self.step(build, "Check out files exactly as committed")
+        self.assertIn("git config --global core.autocrlf false", exact)
+        self.assertLess(build.index(exact),
+                        build.index(self.step(build, "Check out the tagged consumer source")))
 
     def test_publisher_never_runs_consumer_code_or_uploads_artefacts(self) -> None:
         publish = self.job("publish")
@@ -117,6 +122,11 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         publish = self.job("publish")
         receive = self.step(publish, "Validate and admit each target's archive")
         self.assertIn("binary_release.py\" receive", receive)
+        self.assertIn('--source "$SOURCE_PATH" --root "$GITHUB_WORKSPACE/consumer"', receive)
+        linkage = self.step(publish, "Require each admitted executable's linkage")
+        self.assertIn('"$GITHUB_WORKSPACE/policy/scripts/admitted_linkage.sh"', linkage)
+        self.assertLess(publish.index(receive), publish.index(linkage))
+        self.assertLess(publish.index(linkage), publish.index("Attest release asset provenance"))
         for target, label in ((LINUX, "Linux"), (WINDOWS, "Windows")):
             with self.subTest(target=target):
                 download = self.step(publish, f"Download the {label} build artefact")

@@ -64,6 +64,7 @@ MAX_ARCHIVE_BYTES = MAX_MEMBER_BYTES
 MAX_DECOMPRESSED_BYTES = MAX_MEMBER_BYTES + 64 * 1024
 _MAX_DIGEST_BYTES = 1024
 _ZIP_END = b"PK\x05\x06"
+_ZIP64_LOCATOR = b"PK\x06\x07"
 _ZIP_END_SEARCH = 22 + 0xFFFF
 _MAX_ZIP_DIRECTORY_BYTES = 64 * 1024
 _TOOLCHAIN_CHANNEL = re.compile(r"[1-9][0-9]*\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
@@ -78,6 +79,16 @@ REQUIRED_DOCUMENTS = frozenset({"LICENSE", "README.md"})
 _WINDOWS_RUNTIME = re.compile(r"(?:vcruntime|msvcp|msvcr|ucrtbase|api-ms-win-crt-).*", re.IGNORECASE)
 # A bare DLL file name: a path in an import would escape the System32 lookup.
 _DLL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.dll", re.IGNORECASE)
+# The DLLs an executable may import: Windows components every supported
+# Windows ships. Pinned here, not read from a System32 directory, so the
+# Linux publisher applies the same policy as the Windows build job. Add a
+# name only for a consumer that needs it.
+WINDOWS_SYSTEM_DLLS = frozenset({
+    "advapi32.dll", "bcrypt.dll", "bcryptprimitives.dll", "crypt32.dll", "dbghelp.dll",
+    "iphlpapi.dll", "kernel32.dll", "mswsock.dll", "ncrypt.dll", "ntdll.dll", "ole32.dll",
+    "oleaut32.dll", "psapi.dll", "rpcrt4.dll", "secur32.dll", "shell32.dll", "shlwapi.dll",
+    "user32.dll", "userenv.dll", "version.dll", "winhttp.dll", "ws2_32.dll",
+})
 # API set names, which Rust's standard library imports, are resolved by the
 # Windows loader and have no file of that name in System32.
 _API_SET = re.compile(r"(?:api|ext)-ms-win-[a-z0-9-]+\.dll", re.IGNORECASE)
@@ -238,6 +249,10 @@ def _zip_directory_is_small(archive: Path) -> None:
     end = tail.rfind(_ZIP_END)
     if end < 0 or len(tail) - end < 22:
         raise ValueError(f"{archive.name} has no ZIP end of central directory record")
+    # zipfile follows a ZIP64 locator just before this record, whose 64-bit
+    # counts and sizes would override the ones checked here.
+    if end >= 20 and tail[end - 20 : end - 16] == _ZIP64_LOCATOR:
+        raise ValueError(f"{archive.name} is a ZIP64 archive; release archives are not")
     _, _, on_disk, total, directory, _, _ = struct.unpack("<HHHHIIH", tail[end + 4 : end + 22])
     if on_disk != total or total > MAX_MEMBERS or directory > _MAX_ZIP_DIRECTORY_BYTES:
         raise ValueError(f"{archive.name} lists {total} members in a {directory}-byte directory")
@@ -321,7 +336,7 @@ def needed_libraries(readobj_output: str) -> tuple[str, ...]:
     return tuple(line.strip() for line in match.group("names").splitlines() if line.strip())
 
 
-def linkage(readobj_output: str, triple: str, system_directory: Path | None) -> tuple[str, ...]:
+def linkage(readobj_output: str, triple: str) -> tuple[str, ...]:
     target = _target(triple)
     lines = {line.strip() for line in readobj_output.splitlines()}
     if not {f"Format: {target.object_format}", "Arch: x86_64"} <= lines:
@@ -334,17 +349,15 @@ def linkage(readobj_output: str, triple: str, system_directory: Path | None) -> 
     runtime = [name for name in needed if _WINDOWS_RUNTIME.fullmatch(name)]
     if runtime:
         raise ValueError(f"imports C runtime DLLs: {runtime}")
-    if system_directory is None:
-        raise ValueError("a Windows linkage check needs --system-directory")
     unsafe = [name for name in needed if not _DLL_NAME.fullmatch(name)]
     if unsafe:
         raise ValueError(f"imports DLLs by path or with an unexpected name: {unsafe}")
     foreign = [
         name for name in needed
-        if not _API_SET.fullmatch(name) and not (system_directory / name).is_file()
+        if not _API_SET.fullmatch(name) and name.lower() not in WINDOWS_SYSTEM_DLLS
     ]
     if foreign:
-        raise ValueError(f"imports DLLs Windows does not ship: {foreign}")
+        raise ValueError(f"imports DLLs outside the pinned Windows system set: {foreign}")
     return needed
 
 
@@ -379,13 +392,16 @@ def toolchain(source: Path, root: Path) -> str:
 
 def receive(
     *, incoming: Path, stem: str, version: str, binary: str, triple: str,
-    dist: Path, extract_dir: Path,
+    dist: Path, extract_dir: Path, source: Path, root: Path,
 ) -> Path:
     """Admit one build job's artefact into the release, or refuse it.
 
     The artefact must hold exactly the archive and its digest line, the
     digest must match the bytes, and the archive must pass `verify`. The
-    digest only proves the transfer: the build job wrote both files.
+    digest only proves the transfer: the build job wrote both files. The
+    archive is copied into the release first, and the copy is what is
+    hashed, checked and kept. Its documents must be byte for byte the ones
+    in the tagged tree at `source` (else `root`).
     """
     name = asset_name(stem, version, triple)
     expected = {name, f"{name}.sha256"}
@@ -404,15 +420,26 @@ def receive(
     match = _DIGEST_LINE.match(line)
     if match is None or match.group("name") != name:
         raise ValueError(f"{name}.sha256 is not one sha256sum line for {name}")
-    with archive.open("rb") as handle:
-        digest = hashlib.file_digest(handle, "sha256").hexdigest()
-    if digest != match.group("digest"):
-        raise ValueError(f"{name} does not match its recorded digest")
-    verify(archive=archive, binary=binary, triple=triple, extract_dir=extract_dir)
+    documents = find_documents(source, root)
     dist.mkdir(parents=True, exist_ok=True)
     admitted = dist / name
-    with archive.open("rb") as source, admitted.open("xb") as handle:  # NOSONAR
-        shutil.copyfileobj(source, handle)
+    admitted.open("xb").close()  # NOSONAR: never replace an earlier admission
+    try:
+        with archive.open("rb") as incoming_archive, admitted.open("wb") as handle:
+            shutil.copyfileobj(incoming_archive, handle)
+        with admitted.open("rb") as handle:
+            digest = hashlib.file_digest(handle, "sha256").hexdigest()
+        if digest != match.group("digest"):
+            raise ValueError(f"{name} does not match its recorded digest")
+        names = verify(archive=admitted, binary=binary, triple=triple, extract_dir=extract_dir)
+        if set(names[1:]) != set(documents):
+            raise ValueError(f"{name} ships {sorted(names[1:])}, the tag has {sorted(documents)}")
+        for document in names[1:]:
+            if (extract_dir / document).read_bytes() != documents[document].read_bytes():
+                raise ValueError(f"{name}'s {document} differs from the tagged {document}")
+    except BaseException:
+        admitted.unlink()
+        raise
     return admitted
 
 
@@ -446,9 +473,9 @@ def _parser() -> argparse.ArgumentParser:
             paths=("--executable", "--source", "--root", "--output-dir"))
     command("verify", "--binary", "--target", paths=("--archive",), optional=("--extract-dir",))
     command("receive", "--stem", "--version", "--binary", "--target",
-            paths=("--incoming", "--dist", "--extract-dir"))
+            paths=("--incoming", "--dist", "--extract-dir", "--source", "--root"))
     command("smoke", "--version", paths=("--executable",))
-    command("linkage", "--target", paths=("--readobj-output",), optional=("--system-directory",))
+    command("linkage", "--target", paths=("--readobj-output",))
     command("sbom-lists", "--package", paths=("--sbom",))
     return parser
 
@@ -477,13 +504,13 @@ def _run(arguments: argparse.Namespace) -> str:
             return str(receive(
                 incoming=arguments.incoming, stem=arguments.stem, version=arguments.version,
                 binary=arguments.binary, triple=arguments.target, dist=arguments.dist,
-                extract_dir=arguments.extract_dir,
+                extract_dir=arguments.extract_dir, source=arguments.source, root=arguments.root,
             ))
         case "smoke":
             return smoke(arguments.executable, arguments.version)
         case "linkage":
             output = arguments.readobj_output.read_bytes().decode("utf-8")
-            return "\n".join(linkage(output, arguments.target, arguments.system_directory))
+            return "\n".join(linkage(output, arguments.target))
         case _:
             if not sbom_lists(arguments.sbom, arguments.package):
                 raise ValueError(f"{arguments.sbom} does not list the package {arguments.package}")

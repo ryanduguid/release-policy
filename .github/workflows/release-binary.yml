@@ -125,6 +125,11 @@ jobs:
     env:
       PYTHON: python
     steps:
+      # The Windows image converts line endings on checkout; the packaged
+      # documents must be the tagged blobs, which the publisher compares.
+      - name: Check out files exactly as committed
+        run: git config --global core.autocrlf false
+
       # Tests and build scripts execute consumer-controlled code. Keep them on
       # this read-only runner; nothing here reaches the publisher except the
       # uploaded artefact, which the publisher validates.
@@ -385,8 +390,17 @@ jobs:
             python "$GITHUB_WORKSPACE/policy/scripts/binary_release.py" receive \
               --incoming "$RUNNER_TEMP/incoming/$target" --stem "$STEM" --version "$VERSION" \
               --binary "$BINARY" --target "$target" --dist "$SOURCE_PATH/dist" \
-              --extract-dir "$RUNNER_TEMP/extracted/$target"
+              --extract-dir "$RUNNER_TEMP/extracted/$target" \
+              --source "$SOURCE_PATH" --root "$GITHUB_WORKSPACE/consumer"
           done
+
+      - name: Require each admitted executable's linkage
+        env:
+          BINARY: ${{ steps.binary.outputs.binary }}
+        shell: bash
+        run: >-
+          bash "$GITHUB_WORKSPACE/policy/scripts/admitted_linkage.sh"
+          "$RUNNER_TEMP/extracted" "$BINARY"
 
       # Syft reads the dependency list cargo-auditable embedded for the exact
       # target. It runs from the workspace root, outside the consumer tree,

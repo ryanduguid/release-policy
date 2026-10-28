@@ -203,6 +203,12 @@ class VerifyTests(Fixture):
             with self.assertRaisesRegex(ValueError, "-byte directory"):
                 binary_release.verify(archive=archive, binary="example", triple=WINDOWS,
                                       extract_dir=None)
+        data = archive.read_bytes()
+        zip64 = self.base / "zip64.zip"
+        zip64.write_bytes(data[:-22] + b"PK\x06\x07" + bytes(16) + data[-22:])
+        with self.assertRaisesRegex(ValueError, "is a ZIP64 archive"):
+            binary_release.verify(archive=zip64, binary="example", triple=WINDOWS,
+                                  extract_dir=None)
         truncated = self.base / "truncated.zip"
         truncated.write_bytes(archive.read_bytes()[:-10])
         with self.assertRaisesRegex(ValueError, "no ZIP end of central directory"):
@@ -314,6 +320,7 @@ class ReceiveTests(Fixture):
         return binary_release.receive(
             incoming=incoming, stem="example", version="1.2.3", binary="example",
             triple=triple, dist=self.base / "dist", extract_dir=self.base / "extracted",
+            source=self.source, root=self.root,
         )
 
     def test_a_matching_artefact_is_admitted_and_extracted(self) -> None:
@@ -326,7 +333,26 @@ class ReceiveTests(Fixture):
             binary_release.receive(
                 incoming=incoming, stem="example", version="1.2.3", binary="example",
                 triple=WINDOWS, dist=self.base / "dist", extract_dir=self.base / "again",
+                source=self.source, root=self.root,
             )
+        self.assertEqual(admitted.read_bytes(),
+                         (incoming / "example-1.2.3-x86_64-pc-windows-msvc.zip").read_bytes())
+
+    def test_documents_must_be_the_tagged_ones_and_a_refusal_keeps_nothing(self) -> None:
+        admitted = self.base / "dist" / "example-1.2.3-x86_64-unknown-linux-musl.tar.gz"
+        for message, change in (
+            ("'s LICENSE differs from the tagged LICENSE",
+             lambda: (self.root / "LICENSE").write_bytes(b"other licence\n")),
+            (r"ships \['LICENSE', 'README.md'\], the tag has \['LICENSE', 'NOTICE', 'README.md'\]",
+             lambda: (self.source / "NOTICE").write_bytes(b"notice\n")),
+        ):
+            incoming = self.artefact()
+            change()
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                self.receive(incoming)
+            self.assertFalse(admitted.exists())
+            shutil.rmtree(incoming)
+            shutil.rmtree(self.base / "extracted")
 
     def test_extra_missing_mismatched_or_malformed_inputs_are_refused(self) -> None:
         name = "example-1.2.3-x86_64-unknown-linux-musl.tar.gz"
@@ -348,6 +374,7 @@ class ReceiveTests(Fixture):
             damage(incoming)
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                 self.receive(incoming)
+            self.assertFalse((self.base / "dist" / name).exists())
             shutil.rmtree(incoming)
         incoming = self.artefact()
         (incoming / f"{name}.sha256").write_bytes(b"0" * 2048)
@@ -380,41 +407,38 @@ class CheckTests(Fixture):
     def test_a_static_musl_executable_needs_nothing(self) -> None:
         static = (ELF + "NeededLibraries [\n]\nProgramHeaders [\n  ProgramHeader {\n"
                   "    Type: PT_LOAD (0x1)\n  }\n]\n")
-        self.assertEqual(binary_release.linkage(static, LINUX, None), ())
+        self.assertEqual(binary_release.linkage(static, LINUX), ())
         for output in (static.replace("NeededLibraries [\n", "NeededLibraries [\n  libc.so\n"),
                        static.replace("PT_LOAD (0x1)", "PT_INTERP (0x3)")):
             with self.assertRaisesRegex(ValueError, "not a static executable"):
-                binary_release.linkage(output, LINUX, None)
+                binary_release.linkage(output, LINUX)
         with self.assertRaisesRegex(ValueError, "no NeededLibraries list"):
-            binary_release.linkage(ELF, LINUX, None)
+            binary_release.linkage(ELF, LINUX)
         for wrong in (static.replace("Arch: x86_64", "Arch: aarch64"), COFF + "NeededLibraries [\n]\n"):
             with self.assertRaisesRegex(ValueError, "not an x86-64 elf64-x86-64 executable"):
-                binary_release.linkage(wrong, LINUX, None)
+                binary_release.linkage(wrong, LINUX)
 
-    def test_windows_imports_only_system_dlls_and_no_c_runtime(self) -> None:
-        system = self.base / "System32"
-        system.mkdir()
-        for name in ("KERNEL32.dll", "ntdll.dll", "VCRUNTIME140.dll"):
-            (system / name).write_bytes(b"")
+    def test_windows_imports_only_pinned_system_dlls_and_no_c_runtime(self) -> None:
         # The imports of release-policy's own static-CRT build, 28 October 2026.
         listing = (COFF + "NeededLibraries [\r\n  KERNEL32.dll\r\n"
                    "  api-ms-win-core-synch-l1-2-0.dll\r\n  ntdll.dll\r\n]\r\n")
-        self.assertEqual(binary_release.linkage(listing, WINDOWS, system),
+        self.assertEqual(binary_release.linkage(listing, WINDOWS),
                          ("KERNEL32.dll", "api-ms-win-core-synch-l1-2-0.dll", "ntdll.dll"))
         with self.assertRaisesRegex(ValueError, "C runtime DLLs: \\['VCRUNTIME140.dll'"):
-            binary_release.linkage(listing.replace("ntdll", "VCRUNTIME140"), WINDOWS, system)
+            binary_release.linkage(listing.replace("ntdll", "VCRUNTIME140"), WINDOWS)
         with self.assertRaisesRegex(ValueError, "C runtime DLLs"):
             binary_release.linkage(listing.replace("ntdll", "api-ms-win-crt-heap-l1-1-0"),
-                                   WINDOWS, system)
+                                   WINDOWS)
         with self.assertRaisesRegex(ValueError, "C runtime DLLs: \\['msvcrt.dll'"):
-            binary_release.linkage(listing.replace("ntdll", "msvcrt"), WINDOWS, system)
+            binary_release.linkage(listing.replace("ntdll", "msvcrt"), WINDOWS)
         for path in ("..\\..\\Temp\\helper.dll", "C:\\Temp\\helper.dll", "sub/helper.dll"):
             with self.subTest(path=path), self.assertRaisesRegex(ValueError, "by path"):
-                binary_release.linkage(listing.replace("ntdll.dll", path), WINDOWS, system)
-        with self.assertRaisesRegex(ValueError, "does not ship: \\['example-helper.dll'"):
-            binary_release.linkage(listing.replace("ntdll", "example-helper"), WINDOWS, system)
-        with self.assertRaisesRegex(ValueError, "needs --system-directory"):
-            binary_release.linkage(listing, WINDOWS, None)
+                binary_release.linkage(listing.replace("ntdll.dll", path), WINDOWS)
+        # A real Windows DLL outside the pinned set is refused as well.
+        for name in ("example-helper", "d3d11"):
+            with self.subTest(name=name), self.assertRaisesRegex(
+                    ValueError, f"outside the pinned Windows system set: \\['{name}.dll'"):
+                binary_release.linkage(listing.replace("ntdll", name), WINDOWS)
 
     def test_the_sbom_must_list_the_package(self) -> None:
         sbom = self.base / "x.spdx.json"
@@ -468,7 +492,8 @@ class CommandTests(Fixture):
         code, out, _ = self.run_main(
             "receive", "--incoming", str(archive.parent), "--stem", "example", "--version",
             "1.2.3", "--binary", "example", "--target", LINUX, "--dist", str(self.base / "dist"),
-            "--extract-dir", str(self.base / "extracted"),
+            "--extract-dir", str(self.base / "extracted"), "--source", str(self.source),
+            "--root", str(self.root),
         )
         self.assertEqual((code, Path(out.strip()).parent), (0, self.base / "dist"))
         listing = self.base / "readobj.txt"

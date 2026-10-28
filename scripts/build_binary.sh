@@ -60,8 +60,7 @@ if [[ -z "$suffix" ]]; then
   "${release[@]}" linkage --readobj-output "$check/readobj.txt" --target "$target"
 else
   "$readobj.exe" --file-headers --needed-libs "$check/extracted/$binary.exe" > "$check/readobj.txt"
-  "${release[@]}" linkage --readobj-output "$check/readobj.txt" --target "$target" \
-    --system-directory "${SYSTEMROOT:-C:\\Windows}\\System32"
+  "${release[@]}" linkage --readobj-output "$check/readobj.txt" --target "$target"
 fi
 
 (cd "$output_dir" && sha256sum -- "$name" > "$name.sha256")

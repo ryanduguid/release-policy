@@ -392,6 +392,9 @@ jobs:
       CARGO_TERM_COLOR: never
       PYTHON: python
     steps:
+      - name: Check out files exactly as committed
+        run: git config --global core.autocrlf false
+
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -471,8 +474,11 @@ jobs:
             python scripts/binary_release.py receive \
               --incoming "$RUNNER_TEMP/incoming/$target" --stem release-policy --version "$version" \
               --binary release-policy --target "$target" --dist "$RUNNER_TEMP/dist" \
-              --extract-dir "$RUNNER_TEMP/extracted/$target"
+              --extract-dir "$RUNNER_TEMP/extracted/$target" --source . --root .
           done
+
+      - name: Require each admitted executable's linkage as the publisher does
+        run: bash scripts/admitted_linkage.sh "$RUNNER_TEMP/extracted" release-policy
 
       - name: Generate the Linux binary's SPDX SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
