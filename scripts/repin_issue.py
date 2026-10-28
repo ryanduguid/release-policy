@@ -114,11 +114,16 @@ def pin_is_current(root: Path, pin: str, target: str) -> bool:
 
 
 def unchanged_since(root: Path, target: str, current: str) -> bool:
-    """Whether `current` descends from `target` with the same action and workflow."""
+    """Whether `current` descends from `target` with the same action and patched files.
+
+    The patch edits the workflow and the baseline, so a later change to either,
+    even to a neighbouring digest line, could stop it applying.
+    """
     return (
         _ancestor(root, target, current)
         and _same(root, target, current, ACTION_DIRECTORY)
         and _same(root, target, current, WORKFLOW)
+        and _same(root, target, current, BASELINE)
     )
 
 

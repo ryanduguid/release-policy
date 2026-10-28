@@ -189,6 +189,13 @@ class PrepareTests(unittest.TestCase):
         self.assertFalse(repin_issue.unchanged_since(self.root, later, changed_action))
         changed_pin = self.commit("runs: scan v2\n", changed_action)
         self.assertFalse(repin_issue.unchanged_since(self.root, changed_action, changed_pin))
+        # A neighbouring digest line in the baseline is patch context too.
+        baseline_path = self.root / repin_issue.BASELINE
+        baseline_path.write_text(baseline_path.read_text(encoding="utf-8").replace("c" * 64, "d" * 64),
+                                 encoding="utf-8")
+        self.git("commit", "-q", "-am", "neighbouring digest")
+        self.assertFalse(repin_issue.unchanged_since(self.root, changed_pin,
+                                                     self.git("rev-parse", "HEAD")))
         patch = self.root.parent / "x.patch"
         patch.write_text("diff\n", encoding="utf-8")
         with redirect_stderr(io.StringIO()) as err:
