@@ -27,7 +27,7 @@ make_repo() {
   git init --quiet -b main
   git config user.name "Test" && git config user.email "test@example.invalid"
   git config tag.gpgSign false
-  printf '# v1.2.3\n\nNotes.\n' > RELEASE_NOTES.md
+  printf '# v1.2.3\n\nRehabilitated.\n' > RELEASE_NOTES.md
   git add -A && git commit --quiet -m "init"
 }
 
