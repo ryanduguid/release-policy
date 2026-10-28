@@ -1,0 +1,36 @@
+name: Disposable binary canary release
+
+# Runs the binary release family end to end on a throwaway crate, so real
+# signing, attestation verification and publication can be checked before a
+# real version is spent. See canaries/disposable-binary-canary/README.md.
+
+on:
+  push:
+    tags:
+      - "disposable-binary-canary/v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # A job that calls a reusable workflow accepts no timeout-minutes; every
+    # job in release-binary.yml sets its own.
+    permissions:
+      actions: read # Read this repository's own runs to require the mandatory checks.
+      attestations: write # Record provenance and SBOM attestations for release assets.
+      contents: write # Create the draft release, upload assets and publish it.
+      id-token: write # Obtain the OIDC identity required to sign attestations.
+    uses: ryanduguid/release-policy/.github/workflows/release-binary.yml@5094c69ebf14523e4787000e5ff3cdcb03c10f6e # binary release family (#222)
+    with:
+      artifact-stem: disposable-binary-canary
+      source-directory: canaries/disposable-binary-canary
+      tag-prefix: disposable-binary-canary
+      required-checks: |
+        .github/workflows/no-ai-attribution.yml: Attribution policy / Attribution policy runner
+        .github/workflows/ci.yml: ci-gates
+        .github/workflows/codeql.yml: codeql-gates

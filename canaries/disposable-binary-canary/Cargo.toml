@@ -1,0 +1,8 @@
+[package]
+name = "disposable-binary-canary"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+description = "Throwaway executable that exercises the binary release family end to end"
+license = "FSL-1.1-ALv2"
