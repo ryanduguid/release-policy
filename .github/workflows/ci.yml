@@ -249,9 +249,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # scripts/publish_common.sh writes fixed /tmp paths, so the two
+        # scripts/publish_common.sh writes fixed /tmp paths, so the
         # publication families cannot run concurrently on one runner.
-        part: [gates, archives, python]
+        part: [gates, archives, python, binaries]
     defaults:
       run:
         shell: bash
@@ -370,6 +370,149 @@ jobs:
         if: github.event_name != 'pull_request'
         run: cargo build --locked --release --bin release-policy
 
+  # The binary release family's build path, run on this repository's own CLI
+  # for both targets. It publishes nothing; binary-sbom-check then takes the
+  # artefacts as the publisher would.
+  binary-self-check:
+    timeout-minutes: 45
+    name: binary release self-check (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: never
+      PYTHON: python
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install the pinned cargo-auditable
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-auditable@0.7.7
+          fallback: none
+
+      - name: Install the musl C toolchain
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends musl-tools
+
+      - name: Link the C runtime statically
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
+
+      - name: Test, build, package and check the executable
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])' | tr -d '\r')"
+          bash scripts/build_binary.sh "$TARGET" release-policy "$version" release-policy \
+            "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/binary" \
+            "$(git log -1 --format=%ct)"
+
+      - name: Keep the archive for the SBOM check
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: binary-self-check-${{ matrix.target }}
+          path: ${{ runner.temp }}/binary/
+          if-no-files-found: error
+          retention-days: 1
+
+  binary-sbom-check:
+    timeout-minutes: 15
+    name: binary release SBOM check
+    needs: binary-self-check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Download the Linux archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-self-check-x86_64-unknown-linux-musl
+          path: ${{ runner.temp }}/incoming/x86_64-unknown-linux-musl
+
+      - name: Download the Windows archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-self-check-x86_64-pc-windows-msvc
+          path: ${{ runner.temp }}/incoming/x86_64-pc-windows-msvc
+
+      - name: Admit each archive as the publisher does
+        run: |
+          set -euo pipefail
+          version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
+          for target in x86_64-unknown-linux-musl x86_64-pc-windows-msvc; do
+            python scripts/binary_release.py receive \
+              --incoming "$RUNNER_TEMP/incoming/$target" --stem release-policy --version "$version" \
+              --binary release-policy --target "$target" --dist "$RUNNER_TEMP/dist" \
+              --extract-dir "$RUNNER_TEMP/extracted/$target"
+          done
+
+      - name: Generate the Linux binary's SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: ${{ runner.temp }}/extracted/x86_64-unknown-linux-musl/release-policy
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ runner.temp }}/linux.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate the Windows binary's SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: ${{ runner.temp }}/extracted/x86_64-pc-windows-msvc/release-policy.exe
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ runner.temp }}/windows.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      # cargo-auditable embeds the target's own dependency list: a direct and
+      # a transitive dependency on both, and each platform crate only on its
+      # platform.
+      - name: Require each SBOM to describe its own target's dependencies
+        run: |
+          set -euo pipefail
+          lists() { python scripts/binary_release.py sbom-lists --sbom "$RUNNER_TEMP/$1.spdx.json" --package "$2"; }
+          for sbom in linux windows; do
+            for package in release-policy regex regex-automata; do
+              lists "$sbom" "$package"
+            done
+          done
+          lists linux rustix
+          lists windows windows-sys
+          if lists linux windows-sys || lists windows rustix; then
+            echo "an SBOM lists another platform's crate" >&2
+            exit 1
+          fi
+
   # The upload runs apart from the tests so the OIDC token is never available
   # while test code runs. It is exempt from ci-gates: a Codecov outage must
   # not block merges.
@@ -404,7 +547,7 @@ jobs:
     # unless every job it needs succeeded, when a job in this file is missing
     # from needs, or when a pull request removes a job without adding a
     # "# removed-jobs: <job>" comment to this file.
-    needs: [checks, windows, rust]
+    needs: [checks, windows, rust, binary-self-check, binary-sbom-check]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
