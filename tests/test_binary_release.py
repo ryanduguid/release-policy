@@ -165,6 +165,50 @@ class VerifyTests(Fixture):
                 binary_release.verify(archive=self.tar([exe]), binary="example", triple=LINUX,
                                       extract_dir=None)
 
+    def test_oversized_archives_and_extension_metadata_are_refused_before_parsing(self) -> None:
+        exe = (self.info("example", 0o755), b"x")
+        docs = [(self.info("LICENSE"), b"l"), (self.info("README.md"), b"r")]
+        plain = self.tar([exe, *docs])
+        with mock.patch.object(binary_release, "MAX_ARCHIVE_BYTES", 0):
+            with self.assertRaisesRegex(ValueError, "exceeds the archive size limit"):
+                binary_release.verify(archive=plain, binary="example", triple=LINUX,
+                                      extract_dir=None)
+        # A header alone passes 512 decompressed bytes, so the stream stops early.
+        with mock.patch.object(binary_release, "MAX_DECOMPRESSED_BYTES", 100):
+            with self.assertRaisesRegex(ValueError, "decompresses beyond the size limit"):
+                binary_release.verify(archive=plain, binary="example", triple=LINUX,
+                                      extract_dir=None)
+        for name, kwargs in (("member", {}), ("global", {"pax_headers": {"comment": "x"}})):
+            path = self.base / f"pax-{name}.tar.gz"
+            with tarfile.open(path, mode="w:gz", format=tarfile.PAX_FORMAT, **kwargs) as archive:
+                for info, data in [exe, *docs]:
+                    info.size = len(data)
+                    if name == "member":
+                        info.pax_headers = {"comment": "x"}
+                    archive.addfile(info, io.BytesIO(data))
+            with self.subTest(pax=name), self.assertRaisesRegex(ValueError, "uses PAX headers"):
+                binary_release.verify(archive=path, binary="example", triple=LINUX,
+                                      extract_dir=None)
+
+    def test_a_zip_directory_is_bounded_before_zipfile_reads_it(self) -> None:
+        path = self.base / "many.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            for name in ("example.exe", "LICENSE", "README.md", "NOTICE", "extra"):
+                archive.writestr(name, b"x")
+        with self.assertRaisesRegex(ValueError, "lists 5 members"):
+            binary_release.verify(archive=path, binary="example", triple=WINDOWS,
+                                  extract_dir=None)
+        archive = self.build(WINDOWS)
+        with mock.patch.object(binary_release, "_MAX_ZIP_DIRECTORY_BYTES", 10):
+            with self.assertRaisesRegex(ValueError, "-byte directory"):
+                binary_release.verify(archive=archive, binary="example", triple=WINDOWS,
+                                      extract_dir=None)
+        truncated = self.base / "truncated.zip"
+        truncated.write_bytes(archive.read_bytes()[:-10])
+        with self.assertRaisesRegex(ValueError, "no ZIP end of central directory"):
+            binary_release.verify(archive=truncated, binary="example", triple=WINDOWS,
+                                  extract_dir=None)
+
     def test_zip_directories_links_and_duplicates_are_refused(self) -> None:
         def crafted(entries: list[tuple[str, int]]) -> Path:
             path = self.base / "crafted.zip"
@@ -306,6 +350,14 @@ class ReceiveTests(Fixture):
                 self.receive(incoming)
             shutil.rmtree(incoming)
         incoming = self.artefact()
+        (incoming / f"{name}.sha256").write_bytes(b"0" * 2048)
+        with self.assertRaisesRegex(ValueError, "not one sha256sum line"):
+            self.receive(incoming)
+        shutil.rmtree(incoming)
+        incoming = self.artefact()
+        with mock.patch.object(binary_release, "MAX_ARCHIVE_BYTES", 0):
+            with self.assertRaisesRegex(ValueError, "exceeds the archive size limit"):
+                self.receive(incoming)
         (incoming / f"{name}.sha256").unlink()
         with self.assertRaisesRegex(ValueError, "artefact holds"):
             self.receive(incoming)
@@ -354,6 +406,11 @@ class CheckTests(Fixture):
         with self.assertRaisesRegex(ValueError, "C runtime DLLs"):
             binary_release.linkage(listing.replace("ntdll", "api-ms-win-crt-heap-l1-1-0"),
                                    WINDOWS, system)
+        with self.assertRaisesRegex(ValueError, "C runtime DLLs: \\['msvcrt.dll'"):
+            binary_release.linkage(listing.replace("ntdll", "msvcrt"), WINDOWS, system)
+        for path in ("..\\..\\Temp\\helper.dll", "C:\\Temp\\helper.dll", "sub/helper.dll"):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "by path"):
+                binary_release.linkage(listing.replace("ntdll.dll", path), WINDOWS, system)
         with self.assertRaisesRegex(ValueError, "does not ship: \\['example-helper.dll'"):
             binary_release.linkage(listing.replace("ntdll", "example-helper"), WINDOWS, system)
         with self.assertRaisesRegex(ValueError, "needs --system-directory"):

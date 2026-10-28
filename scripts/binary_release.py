@@ -20,6 +20,8 @@ import io
 import json
 import os
 import re
+import shutil
+import struct
 import subprocess  # nosec B404: runs only the built executable's --version
 import sys
 import tarfile
@@ -51,11 +53,19 @@ TARGETS = {
         Target("x86_64-pc-windows-msvc", ".zip", ".exe", "COFF-x86-64"),
     )
 }
-# An archive holds at most the executable and 3 documents. The size bound is
-# far above any expected release and refuses a decompression bomb before it
-# is read into memory.
+# An archive holds at most the executable and 3 documents. The size bounds
+# are far above any expected release. They apply to the archive file, to
+# each member and to everything decompressed, so neither a member nor the
+# archive's own metadata (PAX headers, a ZIP central directory) can make
+# the publisher read without limit.
 MAX_MEMBERS = 4
 MAX_MEMBER_BYTES = 512 * 1024 * 1024
+MAX_ARCHIVE_BYTES = MAX_MEMBER_BYTES
+MAX_DECOMPRESSED_BYTES = MAX_MEMBER_BYTES + 64 * 1024
+_MAX_DIGEST_BYTES = 1024
+_ZIP_END = b"PK\x05\x06"
+_ZIP_END_SEARCH = 22 + 0xFFFF
+_MAX_ZIP_DIRECTORY_BYTES = 64 * 1024
 _TOOLCHAIN_CHANNEL = re.compile(r"[1-9][0-9]*\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
 _DIGEST_LINE = re.compile(r"(?P<digest>[0-9a-f]{64}) [ *](?P<name>[^\r\n]+)\r?\n\Z")
 # Documents copied beside the executable. LICENSE and README.md are required;
@@ -65,7 +75,9 @@ REQUIRED_DOCUMENTS = frozenset({"LICENSE", "README.md"})
 # A static musl executable names no shared library and no program interpreter.
 # A Windows executable built with the static C runtime must not import the
 # runtime DLLs it replaced, and may import only DLLs Windows itself ships.
-_WINDOWS_RUNTIME = re.compile(r"(?:vcruntime|msvcp|ucrtbase|api-ms-win-crt-).*", re.IGNORECASE)
+_WINDOWS_RUNTIME = re.compile(r"(?:vcruntime|msvcp|msvcr|ucrtbase|api-ms-win-crt-).*", re.IGNORECASE)
+# A bare DLL file name: a path in an import would escape the System32 lookup.
+_DLL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.dll", re.IGNORECASE)
 # API set names, which Rust's standard library imports, are resolved by the
 # Windows loader and have no file of that name in System32.
 _API_SET = re.compile(r"(?:api|ext)-ms-win-[a-z0-9-]+\.dll", re.IGNORECASE)
@@ -194,13 +206,49 @@ def package(
 def _admit(members: dict[str, tuple[bytes, int]], name: str, size: int) -> None:
     if name in members:
         raise ValueError(f"duplicate member {name}")
-    if len(members) >= MAX_MEMBERS or size > MAX_MEMBER_BYTES:
+    total = size + sum(len(data) for data, _ in members.values())
+    if len(members) >= MAX_MEMBERS or size > MAX_MEMBER_BYTES or total > MAX_DECOMPRESSED_BYTES:
         raise ValueError(f"{name} exceeds the archive's member count or size limit")
+
+
+class _Bounded(io.RawIOBase):
+    """A reader that fails once more than `limit` bytes have been read."""
+
+    def __init__(self, stream: io.BufferedIOBase, limit: int) -> None:
+        self._stream, self._left = stream, limit
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: memoryview) -> int:  # type: ignore[override]
+        data = self._stream.read(min(len(buffer), self._left + 1))
+        self._left -= len(data)
+        if self._left < 0:
+            raise ValueError("the archive decompresses beyond the size limit")
+        buffer[: len(data)] = data
+        return len(data)
+
+
+def _zip_directory_is_small(archive: Path) -> None:
+    """Refuse a ZIP whose central directory is large before zipfile parses it."""
+    size = archive.stat().st_size
+    with archive.open("rb") as handle:
+        handle.seek(max(0, size - _ZIP_END_SEARCH))
+        tail = handle.read()
+    end = tail.rfind(_ZIP_END)
+    if end < 0 or len(tail) - end < 22:
+        raise ValueError(f"{archive.name} has no ZIP end of central directory record")
+    _, _, on_disk, total, directory, _, _ = struct.unpack("<HHHHIIH", tail[end + 4 : end + 22])
+    if on_disk != total or total > MAX_MEMBERS or directory > _MAX_ZIP_DIRECTORY_BYTES:
+        raise ValueError(f"{archive.name} lists {total} members in a {directory}-byte directory")
 
 
 def _archive_members(archive: Path, target: Target) -> dict[str, tuple[bytes, int]]:
     members: dict[str, tuple[bytes, int]] = {}
+    if archive.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise ValueError(f"{archive.name} exceeds the archive size limit")
     if target.suffix == ".zip":
+        _zip_directory_is_small(archive)
         with zipfile.ZipFile(archive) as opened:
             for info in opened.infolist():
                 mode = (info.external_attr >> 16) & 0o177777
@@ -211,8 +259,14 @@ def _archive_members(archive: Path, target: Target) -> dict[str, tuple[bytes, in
                 # Reads stop at the declared size, and its CRC is checked.
                 members[info.filename] = (opened.read(info), mode & 0o7777)
         return members
-    with tarfile.open(archive, mode="r:gz") as packed:
+    # A stream read through a bound: tarfile reads PAX and GNU extension
+    # headers before yielding a member, so they count against the limit too.
+    with gzip.open(archive, "rb") as compressed, tarfile.open(
+        None, "r|", io.BufferedReader(_Bounded(compressed, MAX_DECOMPRESSED_BYTES))
+    ) as packed:
         for member in packed:
+            if member.pax_headers or packed.pax_headers:
+                raise ValueError(f"{member.name} uses PAX headers; release archives are USTAR")
             if not member.isreg():
                 raise ValueError(f"{member.name} is not a regular file")
             _admit(members, member.name, member.size)
@@ -282,6 +336,9 @@ def linkage(readobj_output: str, triple: str, system_directory: Path | None) -> 
         raise ValueError(f"imports C runtime DLLs: {runtime}")
     if system_directory is None:
         raise ValueError("a Windows linkage check needs --system-directory")
+    unsafe = [name for name in needed if not _DLL_NAME.fullmatch(name)]
+    if unsafe:
+        raise ValueError(f"imports DLLs by path or with an unexpected name: {unsafe}")
     foreign = [
         name for name in needed
         if not _API_SET.fullmatch(name) and not (system_directory / name).is_file()
@@ -338,18 +395,24 @@ def receive(
     for entry in entries.values():
         if entry.is_symlink() or not entry.is_file():
             raise ValueError(f"{entry.name} is not a regular file")
-    line = entries[f"{name}.sha256"].read_bytes().decode("utf-8", errors="replace")
+    digest_file, archive = entries[f"{name}.sha256"], entries[name]
+    if digest_file.stat().st_size > _MAX_DIGEST_BYTES:
+        raise ValueError(f"{name}.sha256 is not one sha256sum line for {name}")
+    if archive.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise ValueError(f"{name} exceeds the archive size limit")
+    line = digest_file.read_bytes().decode("utf-8", errors="replace")
     match = _DIGEST_LINE.match(line)
     if match is None or match.group("name") != name:
         raise ValueError(f"{name}.sha256 is not one sha256sum line for {name}")
-    data = entries[name].read_bytes()
-    if hashlib.sha256(data).hexdigest() != match.group("digest"):
+    with archive.open("rb") as handle:
+        digest = hashlib.file_digest(handle, "sha256").hexdigest()
+    if digest != match.group("digest"):
         raise ValueError(f"{name} does not match its recorded digest")
-    verify(archive=entries[name], binary=binary, triple=triple, extract_dir=extract_dir)
+    verify(archive=archive, binary=binary, triple=triple, extract_dir=extract_dir)
     dist.mkdir(parents=True, exist_ok=True)
     admitted = dist / name
-    with admitted.open("xb") as handle:  # NOSONAR
-        handle.write(data)
+    with archive.open("rb") as source, admitted.open("xb") as handle:  # NOSONAR
+        shutil.copyfileobj(source, handle)
     return admitted
 
 
