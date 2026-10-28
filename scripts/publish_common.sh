@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Shared publication core for publish_python.sh, publish_archives.sh and
-# publish_binaries.sh.
+# Shared publication core for publish_python.sh and publish_archives.sh.
 # Sourced, never executed on its own.
 #
 # Both publish paths must survive the same GitHub state, so the draft
