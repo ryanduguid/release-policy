@@ -1,0 +1,79 @@
+name: Attribution repin
+
+# A change to the no-ai-attribution action owes a second pull request that
+# repins attribution-policy.yml to the merge commit (CONTRIBUTING.md). Pushing
+# a workflow change needs workflow permission, which the job token never has,
+# so this files the exact patch as an issue for a person to apply. It runs on
+# main only, executes no pull request code and holds no credential beyond the
+# job token, which may read the source and write issues.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/actions/no-ai-attribution/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time, so 2 quick merges cannot both find no issue and open 2.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  repin:
+    name: file the attribution repin
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      # Main as it is now, not the triggering commit: a rerun of an older run
+      # then repins to the current action instead of replacing a newer patch.
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          # The pin check reads the pinned commit and origin/main.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Prepare the repin patch
+        id: prepare
+        run: |
+          target="$(git rev-parse HEAD)"
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          python scripts/repin_issue.py prepare --target "$target" --patch "$RUNNER_TEMP/repin.patch"
+          if [ -f "$RUNNER_TEMP/repin.patch" ]; then
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The same checks main's push CI runs, on the repinned tree, so a patch
+      # that would not turn main green is never filed.
+      - name: Check the repinned tree
+        if: steps.prepare.outputs.stale == 'true'
+        run: |
+          bash tests/test_repository_baseline.sh
+          python -m unittest discover -s tests -p test_attribution_pin.py -v
+
+      # Publication refuses if main has since changed the action or the
+      # workflow, so the issue never carries a patch main has overtaken.
+      - name: Open or refresh the repin issue
+        if: steps.prepare.outputs.stale == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ steps.prepare.outputs.target }}
+        run: |
+          git fetch --quiet --no-tags origin main
+          python scripts/repin_issue.py publish --repository "$GITHUB_REPOSITORY" \
+            --target "$TARGET" --current "$(git rev-parse FETCH_HEAD)" \
+            --patch "$RUNNER_TEMP/repin.patch"

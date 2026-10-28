@@ -43,6 +43,12 @@ uv pip compile requirements-ci.in --universal --python-version 3.14 --generate-h
 After a change to that action merges, open a second pull request that repins
 the workflow to the merge commit; `tests/test_attribution_pin.py` fails on
 push until it lands, and every consumer then moves to the new policy commit.
+The job token cannot push a workflow change, so the `Attribution repin`
+workflow (`attribution-repin.yml`) prepares that repin after the merge, checks
+that it turns the baseline and pin tests green, and files the patch as an issue
+titled 'Repin the attribution action'. It refreshes its own open issue rather
+than opening another. Apply the patch from a checkout whose credentials may
+push workflow changes.
 
 CI also runs pinned ShellCheck and actionlint over `scripts/*.sh`, `tests/*.sh`
 and the workflows. Changed lines in `scripts/*.py` need complete branch

@@ -46,6 +46,10 @@ bytes and file formats. Underscored names are accepted as aliases.
 For example, `python scripts/python_release.py tag --tag v1.2.3 --tag-prefix v`
 becomes `release-policy python-release tag --tag v1.2.3 --tag-prefix v`.
 
+`scripts/repin_issue.py` has no command yet. Only the `Attribution repin`
+workflow runs it, and like the release workflows it calls the scripts until
+the switch-over; port it then.
+
 The PR-review scripts (`scripts/pr_review*.py`) stay in Python: they drive the
 PR-Agent engine in-process and share its virtual environment.
 `.github/ci/check_gates.py` stays Python because consumers copy it byte for
