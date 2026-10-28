@@ -27,8 +27,9 @@ jobs:
     uses: ryanduguid/release-policy/.github/workflows/release-binary.yml@5094c69ebf14523e4787000e5ff3cdcb03c10f6e # binary release family (#222)
     with:
       artifact-stem: release-policy
-      # The three contexts branch protection requires. ci-gates and
-      # codeql-gates fail unless every job they cover succeeded.
+      # The job contexts branch protection requires. ci-gates and codeql-gates
+      # fail unless every job they cover succeeded; the separate CodeQL
+      # code-scanning context has no job to name here.
       required-checks: |
         .github/workflows/no-ai-attribution.yml: Attribution policy / Attribution policy runner
         .github/workflows/ci.yml: ci-gates

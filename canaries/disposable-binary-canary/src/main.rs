@@ -19,7 +19,11 @@ fn main() {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn version_line_ends_with_the_package_version() {
-        assert!(super::version_line().ends_with(" 0.0.1"));
+    fn version_line_is_the_name_then_the_package_version() {
+        let line = super::version_line();
+        assert_eq!(
+            line.split_once(' '),
+            Some(("disposable-binary-canary", env!("CARGO_PKG_VERSION")))
+        );
     }
 }

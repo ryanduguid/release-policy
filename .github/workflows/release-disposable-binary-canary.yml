@@ -7,7 +7,9 @@ name: Disposable binary canary release
 on:
   push:
     tags:
-      - "disposable-binary-canary/v*"
+      # One exact tag per reviewed run. Its release is deleted once checked, and
+      # an immutable release's tag cannot be reused, so the trigger then lapses.
+      - "disposable-binary-canary/v0.0.1"
 
 permissions:
   contents: read
