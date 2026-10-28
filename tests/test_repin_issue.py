@@ -15,7 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Sequence
 from unittest import mock
@@ -154,10 +154,49 @@ class PrepareTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exactly one live full-SHA action pin, found 2"):
             repin_issue.prepare(self.root, self.current, self.patch)
         self.git("checkout", "-q", "--", ".")
-        self.commit("runs: scan v2\n", self.first)
+        target = self.commit("runs: scan v2\n", self.first)
         (self.root / repin_issue.BASELINE).write_text("CANONICAL_SHA256 = {}\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "digest, found 0"):
-            repin_issue.prepare(self.root, self.current, self.patch)
+            repin_issue.prepare(self.root, target, self.patch)
+
+    def test_a_target_other_than_the_checkout_is_refused(self) -> None:
+        with self.assertRaisesRegex(ValueError, "not the checked-out commit"):
+            repin_issue.prepare(self.root, self.first, self.patch)
+
+    def test_a_pin_off_the_target_history_is_stale_even_with_the_same_action(self) -> None:
+        # A side-branch commit carrying identical action bytes, as the pin test rejects.
+        self.git("checkout", "-q", "-b", "side", self.first)
+        (self.root / "side.txt").write_text("side\n", encoding="utf-8")
+        side = self.commit("runs: scan v1\n", ZERO)
+        self.git("checkout", "-q", "-")
+        target = self.commit("runs: scan v1\n", side)
+        self.assertEqual(repin_issue.prepare(self.root, target, self.patch), side)
+
+    def test_a_changed_helper_beside_the_action_is_stale(self) -> None:
+        helper = self.root / repin_issue.ACTION_DIRECTORY / "scan.py"
+        helper.write_text("print('scan')\n", encoding="utf-8")
+        target = self.commit("runs: scan v1\n", self.first)
+        self.assertEqual(repin_issue.prepare(self.root, target, self.patch), self.first)
+
+    def test_publication_requires_main_unchanged_since_the_target(self) -> None:
+        unrelated = self.root / "docs.md"
+        unrelated.write_text("prose\n", encoding="utf-8")
+        later = self.commit("runs: scan v1\n", self.first)
+        self.assertTrue(repin_issue.unchanged_since(self.root, self.current, later))
+        self.assertTrue(repin_issue.unchanged_since(self.root, self.current, self.current))
+        self.assertFalse(repin_issue.unchanged_since(self.root, later, self.current))
+        changed_action = self.commit("runs: scan v2\n", self.first)
+        self.assertFalse(repin_issue.unchanged_since(self.root, later, changed_action))
+        changed_pin = self.commit("runs: scan v2\n", changed_action)
+        self.assertFalse(repin_issue.unchanged_since(self.root, changed_action, changed_pin))
+        patch = self.root.parent / "x.patch"
+        patch.write_text("diff\n", encoding="utf-8")
+        with redirect_stderr(io.StringIO()) as err:
+            code = repin_issue.main(["publish", "--repository", "owner/repo", "--target", later,
+                                     "--current", changed_action, "--patch", str(patch)],
+                                    root=self.root, gh=FakeGh([]))
+        self.assertEqual(code, 1)
+        self.assertIn(f"main no longer descends from {later}", err.getvalue())
 
     def test_a_failed_diff_is_reported(self) -> None:
         target = self.commit("runs: scan v2\n", self.first)
@@ -222,6 +261,17 @@ class PublishTests(unittest.TestCase):
                          "#9 already carries this patch")
         self.assertEqual(len(gh.calls), 1)
 
+    def test_the_workflow_issue_is_refreshed_whatever_a_person_opened_beside_it(self) -> None:
+        human = issue(5, repin_issue.TITLE, login="ryanduguid")
+        ours = issue(6, repin_issue.TITLE)
+        others = [issue(n, "other") for n in range(99)]
+        for pages in ([[human, ours]], [[ours, human]], [[human, *others], [ours]]):
+            gh = FakeGh(pages)
+            with self.subTest(pages=len(pages), first=pages[0][0]["number"]):
+                self.assertEqual(repin_issue.publish("owner/repo", self.target, self.patch, gh),
+                                 "updated #6")
+                self.assertEqual(gh.calls[-1][0][3], "repos/owner/repo/issues/6")
+
     def test_an_issue_a_person_opened_is_never_overwritten(self) -> None:
         for item in (issue(4, repin_issue.TITLE, login="ryanduguid"),
                      {"number": 4, "title": repin_issue.TITLE, "user": None}):
@@ -245,9 +295,12 @@ class PublishTests(unittest.TestCase):
             patch = Path(directory) / "repin.patch"
             patch.write_bytes(self.patch.encode("utf-8"))
             gh = FakeGh([[]])
-            with redirect_stdout(io.StringIO()) as out:
+            with redirect_stdout(io.StringIO()) as out, \
+                    mock.patch.object(repin_issue, "unchanged_since", return_value=True) as fresh:
                 code = repin_issue.main(["publish", "--repository", "owner/repo", "--target",
-                                         self.target, "--patch", str(patch)], gh=gh)
+                                         self.target, "--current", "c" * 40, "--patch",
+                                         str(patch)], gh=gh)
+            fresh.assert_called_once_with(repin_issue.ROOT, self.target, "c" * 40)
         self.assertEqual((code, out.getvalue()), (0, "opened #7\n"))
         self.assertEqual(json.loads(gh.calls[-1][1] or "")["body"], self.body())
 

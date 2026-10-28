@@ -32,9 +32,12 @@ jobs:
       contents: read
       issues: write
     steps:
-      - name: Check out source
+      # Main as it is now, not the triggering commit: a rerun of an older run
+      # then repins to the current action instead of replacing a newer patch.
+      - name: Check out main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: main
           # The pin check reads the pinned commit and origin/main.
           fetch-depth: 0
           persist-credentials: false
@@ -47,7 +50,9 @@ jobs:
       - name: Prepare the repin patch
         id: prepare
         run: |
-          python scripts/repin_issue.py prepare --target "$GITHUB_SHA" --patch "$RUNNER_TEMP/repin.patch"
+          target="$(git rev-parse HEAD)"
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          python scripts/repin_issue.py prepare --target "$target" --patch "$RUNNER_TEMP/repin.patch"
           if [ -f "$RUNNER_TEMP/repin.patch" ]; then
             echo "stale=true" >> "$GITHUB_OUTPUT"
           fi
@@ -60,10 +65,15 @@ jobs:
           bash tests/test_repository_baseline.sh
           python -m unittest discover -s tests -p test_attribution_pin.py -v
 
+      # Publication refuses if main has since changed the action or the
+      # workflow, so the issue never carries a patch main has overtaken.
       - name: Open or refresh the repin issue
         if: steps.prepare.outputs.stale == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          python scripts/repin_issue.py publish --repository "$GITHUB_REPOSITORY"
-          --target "$GITHUB_SHA" --patch "$RUNNER_TEMP/repin.patch"
+          TARGET: ${{ steps.prepare.outputs.target }}
+        run: |
+          git fetch --quiet --no-tags origin main
+          python scripts/repin_issue.py publish --repository "$GITHUB_REPOSITORY" \
+            --target "$TARGET" --current "$(git rev-parse FETCH_HEAD)" \
+            --patch "$RUNNER_TEMP/repin.patch"
