@@ -11,7 +11,7 @@ import io
 import json
 import re
 import runpy
-import subprocess
+import subprocess  # nosec B404: the tests run git with fixed argument lists
 import sys
 import tempfile
 import unittest
@@ -98,7 +98,8 @@ class PrepareTests(unittest.TestCase):
         self.current = self.commit("runs: scan v1\n", self.first)
 
     def git(self, *args: str) -> str:
-        return subprocess.run(["git", *args], cwd=self.root, capture_output=True, text=True,
+        return subprocess.run(["git", *args], cwd=self.root,  # nosec B603, B607  # nosemgrep
+                              capture_output=True, text=True,
                               check=True).stdout.strip()
 
     def commit(self, action: str, pin: str) -> str:
@@ -211,7 +212,7 @@ class PrepareTests(unittest.TestCase):
 
         def failing_diff(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
             if arguments[0] == "diff":
-                return subprocess.CompletedProcess(arguments, 128, "", "fatal: broken\n")
+                return subprocess.CompletedProcess(arguments, 128, "", "fatal: broken\n")  # nosemgrep
             return real(root, *arguments)
 
         with mock.patch.object(repin_issue, "_git", failing_diff):
@@ -315,9 +316,9 @@ class PublishTests(unittest.TestCase):
 class GhTests(unittest.TestCase):
     def test_gh_passes_stdin_and_raises_on_failure(self) -> None:
         results = [
-            subprocess.CompletedProcess([], 0, "{}", ""),
-            subprocess.CompletedProcess([], 1, "", "HTTP 403\n"),
-            subprocess.CompletedProcess([], 1, "", ""),
+            subprocess.CompletedProcess([], 0, "{}", ""),  # nosemgrep
+            subprocess.CompletedProcess([], 1, "", "HTTP 403\n"),  # nosemgrep
+            subprocess.CompletedProcess([], 1, "", ""),  # nosemgrep
         ]
         with mock.patch.object(repin_issue.subprocess, "run", side_effect=results) as run:
             self.assertEqual(repin_issue._gh(["api", "x"], "in"), "{}")
