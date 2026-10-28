@@ -20,7 +20,7 @@ import argparse
 import hashlib
 import json
 import re
-import subprocess
+import subprocess  # nosec B404: runs git and gh with fixed argument lists
 import sys
 from pathlib import Path
 from typing import Callable, Sequence
@@ -66,7 +66,7 @@ def _lf(text: str) -> str:
 
 
 def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # NOSONAR
+    return subprocess.run(  # NOSONAR  # nosec B603, B607: git from PATH, fixed arguments
         ["git", "-C", str(root), *arguments],
         capture_output=True,
         text=True,
@@ -154,7 +154,8 @@ def prepare(root: Path, target: str, patch: Path) -> str | None:
     diff = _git(root, "diff", "--no-color", "--no-ext-diff", "--", WORKFLOW, BASELINE)
     if diff.returncode != 0:
         raise ValueError(f"git diff failed: {diff.stderr.strip()}")
-    patch.write_bytes(diff.stdout.encode("utf-8"))
+    # The workflow names a fixed path under RUNNER_TEMP; no other caller exists.
+    patch.write_bytes(diff.stdout.encode("utf-8"))  # NOSONAR
     return pin.group("sha")
 
 
@@ -178,7 +179,7 @@ def issue_body(target: str, patch_text: str) -> str:
 
 
 def _gh(arguments: Sequence[str], stdin: str | None) -> str:
-    result = subprocess.run(  # NOSONAR
+    result = subprocess.run(  # NOSONAR  # nosec B603, B607: gh from PATH, fixed arguments
         ["gh", *arguments],
         input=stdin,
         capture_output=True,
