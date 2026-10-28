@@ -209,6 +209,18 @@ class VerifyTests(Fixture):
         with self.assertRaisesRegex(ValueError, "is a ZIP64 archive"):
             binary_release.verify(archive=zip64, binary="example", triple=WINDOWS,
                                   extract_dir=None)
+        # A maximum-length comment puts the record at the start of a
+        # 65,557-byte search window, and its locator just before it.
+        commented = self.base / "commented.zip"
+        with zipfile.ZipFile(commented, "w") as writer:
+            writer.writestr("example.exe", b"x")
+            writer.comment = b"c" * 0xFFFF
+        data = commented.read_bytes()
+        record = len(data) - 22 - 0xFFFF
+        commented.write_bytes(data[:record] + b"PK\x06\x07" + bytes(16) + data[record:])
+        with self.assertRaisesRegex(ValueError, "is a ZIP64 archive"):
+            binary_release.verify(archive=commented, binary="example", triple=WINDOWS,
+                                  extract_dir=None)
         truncated = self.base / "truncated.zip"
         truncated.write_bytes(archive.read_bytes()[:-10])
         with self.assertRaisesRegex(ValueError, "no ZIP end of central directory"):

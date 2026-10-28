@@ -244,13 +244,16 @@ def _zip_directory_is_small(archive: Path) -> None:
     """Refuse a ZIP whose central directory is large before zipfile parses it."""
     size = archive.stat().st_size
     with archive.open("rb") as handle:
-        handle.seek(max(0, size - _ZIP_END_SEARCH))
+        # 20 more bytes, so a ZIP64 locator before a record that ends a
+        # maximum-length comment is still read.
+        handle.seek(max(0, size - _ZIP_END_SEARCH - 20))
         tail = handle.read()
     end = tail.rfind(_ZIP_END)
     if end < 0 or len(tail) - end < 22:
         raise ValueError(f"{archive.name} has no ZIP end of central directory record")
     # zipfile follows a ZIP64 locator just before this record, whose 64-bit
-    # counts and sizes would override the ones checked here.
+    # counts and sizes would override the ones checked here. With end < 20
+    # the record is within 20 bytes of the file's start, leaving no room.
     if end >= 20 and tail[end - 20 : end - 16] == _ZIP64_LOCATOR:
         raise ValueError(f"{archive.name} is a ZIP64 archive; release archives are not")
     _, _, on_disk, total, directory, _, _ = struct.unpack("<HHHHIIH", tail[end + 4 : end + 22])
