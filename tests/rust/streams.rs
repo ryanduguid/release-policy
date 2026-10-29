@@ -37,6 +37,10 @@ fn closed_pipe() -> Stdio {
 
 /// Exit code and the text on the stream that still works.
 fn run(args: &[&str], broken_stdout: bool, unbuffered: bool) -> (i32, String) {
+    run_with(args, closed_pipe(), broken_stdout, unbuffered)
+}
+
+fn run_with(args: &[&str], broken: Stdio, broken_stdout: bool, unbuffered: bool) -> (i32, String) {
     let dir = support::tempdir();
     let mut command = Command::new(env!("CARGO_BIN_EXE_release-policy"));
     command
@@ -47,9 +51,9 @@ fn run(args: &[&str], broken_stdout: bool, unbuffered: bool) -> (i32, String) {
         command.env("PYTHONUNBUFFERED", "1");
     }
     let output = if broken_stdout {
-        command.stdout(closed_pipe()).stderr(Stdio::piped())
+        command.stdout(broken).stderr(Stdio::piped())
     } else {
-        command.stdout(Stdio::piped()).stderr(closed_pipe())
+        command.stdout(Stdio::piped()).stderr(broken)
     }
     .output()
     .unwrap();
@@ -100,4 +104,35 @@ fn an_unwritable_diagnostic_loses_the_original_code() {
     // argparse ignored the failed usage message and kept its exit status 2.
     assert_eq!(run(&["--bogus"], false, false), (120, String::new()));
     assert_eq!(run(&["--bogus"], false, true), (2, String::new()));
+}
+
+/// A handle opened only for reading: Windows refuses the write as access
+/// denied, which the scripts' C runtime reported as EBADF. (Rust's stdio on
+/// Unix ignores EBADF, so this is Windows only.)
+#[cfg(windows)]
+#[test]
+fn a_read_only_stdout_is_a_bad_file_descriptor() {
+    let dir = support::tempdir();
+    let path = dir.path().join("stdout");
+    std::fs::write(&path, "").unwrap();
+    let read_only = || Stdio::from(std::fs::File::open(&path).unwrap());
+    assert_eq!(
+        run_with(&["--help"], read_only(), true, false),
+        (
+            120,
+            "Exception ignored while flushing sys.stdout:
+OSError: [Errno 9] Bad file descriptor
+"
+            .into()
+        )
+    );
+    assert_eq!(
+        run_with(INPUTS, read_only(), true, true),
+        (
+            1,
+            "release-policy: [Errno 9] Bad file descriptor
+"
+            .into()
+        )
+    );
 }

@@ -307,7 +307,7 @@ fn main() {
 
 /// Help, version or a usage error, written as argparse wrote its messages:
 /// through the buffered streams, ignoring write errors. A terminal keeps
-/// clap's colours.
+/// clap's colours, and a write clap fails there stays pending as argparse's did.
 fn print_clap(usage: &clap::Error) -> i32 {
     use std::io::IsTerminal;
     let terminal = if usage.use_stderr() {
@@ -316,7 +316,9 @@ fn print_clap(usage: &clap::Error) -> i32 {
         std::io::stdout().is_terminal()
     };
     if terminal {
-        let _ = usage.print();
+        if let Err(error) = usage.print() {
+            usage_failed(error, usage.use_stderr());
+        }
     } else {
         print_usage(&usage.render().to_string(), usage.use_stderr());
     }
