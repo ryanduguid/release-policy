@@ -134,3 +134,36 @@ OSError: [Errno 9] Bad file descriptor
         )
     );
 }
+
+/// A closed stdout: CPython's `sys.stdout` was None, so print wrote nothing.
+#[cfg(unix)]
+#[test]
+fn a_closed_stdout_prints_nothing() {
+    for unbuffered in [false, true] {
+        for args in [&["--help"][..], INPUTS] {
+            let dir = support::tempdir();
+            let mut command = Command::new("sh");
+            command
+                .args([
+                    "-c",
+                    r#"exec "$0" "$@" >&-"#,
+                    env!("CARGO_BIN_EXE_release-policy"),
+                ])
+                .args(args)
+                .current_dir(dir.path())
+                .env_remove("PYTHONUNBUFFERED");
+            if unbuffered {
+                command.env("PYTHONUNBUFFERED", "1");
+            }
+            let output = command.stderr(Stdio::piped()).output().unwrap();
+            assert_eq!(
+                (
+                    output.status.code(),
+                    String::from_utf8(output.stderr).unwrap()
+                ),
+                (Some(0), String::new()),
+                "{args:?}, unbuffered {unbuffered}"
+            );
+        }
+    }
+}

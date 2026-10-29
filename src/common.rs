@@ -104,44 +104,55 @@ fn python_unbuffered() -> bool {
 
 /// stdout as the scripts had it: written straight to the handle with
 /// `PYTHONUNBUFFERED`, line-buffered on a terminal, and otherwise held in a
-/// 128 KiB buffer (CPython 3.15's `io.DEFAULT_BUFFER_SIZE`) until it fills or
-/// the process exits.
+/// `BUFFER_SIZE` buffer until it fills or the process exits.
+#[cfg(unix)]
+fn python_stdout(unbuffered: bool) -> Box<dyn Write + Send> {
+    use std::io::IsTerminal;
+    let stdout = std::io::stdout();
+    // Rust's stdout treats EBADF as success, so a read-only descriptor would
+    // print nothing; CPython reported it. A duplicate reports it.
+    let Ok(fd) = std::os::fd::AsFd::as_fd(&stdout).try_clone_to_owned() else {
+        // stdout is closed: CPython printed nothing, as Rust's stdout does.
+        return Box::new(stdout);
+    };
+    let file = std::fs::File::from(fd);
+    match (unbuffered, stdout.is_terminal()) {
+        (true, _) => Box::new(file),
+        (false, true) => Box::new(std::io::LineWriter::new(file)),
+        (false, false) => Box::new(std::io::BufWriter::with_capacity(BUFFER_SIZE, file)),
+    }
+}
+
+/// The Windows `python_stdout`, which keeps Rust's stdout for a console.
+#[cfg(windows)]
 fn python_stdout(unbuffered: bool) -> Box<dyn Write + Send> {
     use std::io::IsTerminal;
     let stdout = std::io::stdout();
     let terminal = stdout.is_terminal();
-    // Rust's stdout on Unix treats EBADF as success, so a read-only descriptor
-    // would print nothing; CPython reported it. A duplicate reports it. The
-    // duplicate fails only when stdout is closed, where CPython printed nothing.
-    #[cfg(unix)]
-    if let Ok(fd) = std::os::fd::AsFd::as_fd(&stdout).try_clone_to_owned() {
-        let file = std::fs::File::from(fd);
-        return match (unbuffered, terminal) {
-            (true, _) => Box::new(file),
-            (false, true) => Box::new(std::io::LineWriter::new(file)),
-            (false, false) => Box::new(std::io::BufWriter::with_capacity(128 * 1024, file)),
-        };
-    }
     if unbuffered && terminal {
-        // Rust's stdout keeps a Windows console's UTF-16 writes; a raw handle would not.
+        // Rust's stdout keeps a console's UTF-16 writes; a raw handle would not.
         return Box::new(Unbuffered(stdout));
     }
     if terminal {
         return Box::new(std::io::LineWriter::new(stdout));
     }
-    #[cfg(windows)]
     if unbuffered {
         let handle = std::os::windows::io::AsHandle::as_handle(&stdout).try_clone_to_owned();
         if let Ok(handle) = handle {
             return Box::new(std::fs::File::from(handle));
         }
     }
-    Box::new(std::io::BufWriter::with_capacity(128 * 1024, stdout))
+    Box::new(std::io::BufWriter::with_capacity(BUFFER_SIZE, stdout))
 }
 
+/// CPython 3.15's `io.DEFAULT_BUFFER_SIZE`.
+const BUFFER_SIZE: usize = 128 * 1024;
+
 /// Flushes each write, so it reaches the handle before the write returns.
+#[cfg(windows)]
 struct Unbuffered(std::io::Stdout);
 
+#[cfg(windows)]
 impl Write for Unbuffered {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let written = self.0.write(buf)?;
