@@ -288,7 +288,10 @@ fn main() {
     // destroy it on the same explicitly sized stack on Windows and Linux.
     let result = std::thread::Builder::new()
         .stack_size(32 * 1024 * 1024)
-        .spawn(|| execute(Cli::parse()))
+        .spawn(|| match Cli::try_parse() {
+            Ok(cli) => execute(cli),
+            Err(usage) => Ok(print_clap(&usage)),
+        })
         .unwrap()
         .join();
     let code = match result {
@@ -299,5 +302,25 @@ fn main() {
         }
         Err(_) => 1,
     };
-    std::process::exit(code);
+    std::process::exit(shutdown(code));
+}
+
+/// Help, version or a usage error, written as argparse wrote its messages:
+/// through the buffered streams, ignoring write errors. A terminal keeps
+/// clap's colours, and a write clap fails there stays pending as argparse's did.
+fn print_clap(usage: &clap::Error) -> i32 {
+    use std::io::IsTerminal;
+    let terminal = if usage.use_stderr() {
+        std::io::stderr().is_terminal()
+    } else {
+        std::io::stdout().is_terminal()
+    };
+    if terminal {
+        if let Err(error) = usage.print() {
+            usage_failed(error, usage.use_stderr());
+        }
+    } else {
+        print_usage(&usage.render().to_string(), usage.use_stderr());
+    }
+    usage.exit_code()
 }
