@@ -77,6 +77,10 @@ name = "entry_points"
 path = "tests/rust/entry_points.rs"
 
 [[test]]
+name = "streams"
+path = "tests/rust/streams.rs"
+
+[[test]]
 name = "git_revision"
 path = "tests/rust/git_revision.rs"
 

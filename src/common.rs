@@ -1,6 +1,8 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 
 use regex::Regex;
 use sha2::{Digest, Sha256};
@@ -80,13 +82,204 @@ pub fn text_bytes(text: &str) -> Vec<u8> {
     }
 }
 
+static UNBUFFERED: LazyLock<bool> = LazyLock::new(python_unbuffered);
+static STDOUT: LazyLock<Mutex<Box<dyn Write + Send>>> =
+    LazyLock::new(|| Mutex::new(python_stdout(*UNBUFFERED)));
+/// A write to stderr failed. Buffered, its bytes stayed pending in Python's
+/// stderr and failed again at exit.
+static STDERR_FAILED: AtomicBool = AtomicBool::new(false);
+/// A terminal write that clap failed (`usage_failed`), still pending at exit.
+static STDOUT_PENDING: Mutex<Option<std::io::Error>> = Mutex::new(None);
+
+/// `PYTHONUNBUFFERED` as CPython reads it: set and not an integer equal to 0.
+fn python_unbuffered() -> bool {
+    std::env::var("PYTHONUNBUFFERED").is_ok_and(|value| {
+        !value.is_empty()
+            && value
+                .trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r'])
+                .parse::<i32>()
+                != Ok(0)
+    })
+}
+
+/// stdout as the scripts had it: written straight to the handle with
+/// `PYTHONUNBUFFERED`, line-buffered on a terminal, and otherwise held in a
+/// `BUFFER_SIZE` buffer until it fills or the process exits.
+#[cfg(unix)]
+fn python_stdout(unbuffered: bool) -> Box<dyn Write + Send> {
+    use std::io::IsTerminal;
+    let stdout = std::io::stdout();
+    // Rust's stdout treats EBADF as success, so a read-only descriptor would
+    // print nothing; CPython reported it. A duplicate reports it.
+    let Ok(fd) = std::os::fd::AsFd::as_fd(&stdout).try_clone_to_owned() else {
+        // stdout is closed: CPython printed nothing, as Rust's stdout does.
+        return Box::new(stdout);
+    };
+    let file = std::fs::File::from(fd);
+    match (unbuffered, stdout.is_terminal()) {
+        (true, _) => Box::new(file),
+        (false, true) => Box::new(std::io::LineWriter::new(file)),
+        (false, false) => Box::new(std::io::BufWriter::with_capacity(BUFFER_SIZE, file)),
+    }
+}
+
+/// The Windows `python_stdout`, which keeps Rust's stdout for a console.
+#[cfg(windows)]
+fn python_stdout(unbuffered: bool) -> Box<dyn Write + Send> {
+    use std::io::IsTerminal;
+    let stdout = std::io::stdout();
+    let terminal = stdout.is_terminal();
+    if unbuffered && terminal {
+        // Rust's stdout keeps a console's UTF-16 writes; a raw handle would not.
+        return Box::new(Unbuffered(stdout));
+    }
+    if terminal {
+        return Box::new(std::io::LineWriter::new(stdout));
+    }
+    if unbuffered {
+        let handle = std::os::windows::io::AsHandle::as_handle(&stdout).try_clone_to_owned();
+        if let Ok(handle) = handle {
+            return Box::new(std::fs::File::from(handle));
+        }
+    }
+    Box::new(std::io::BufWriter::with_capacity(BUFFER_SIZE, stdout))
+}
+
+/// CPython 3.15's `io.DEFAULT_BUFFER_SIZE`.
+const BUFFER_SIZE: usize = 128 * 1024;
+
+/// Flushes each write, so it reaches the handle before the write returns.
+#[cfg(windows)]
+struct Unbuffered(std::io::Stdout);
+
+#[cfg(windows)]
+impl Write for Unbuffered {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let written = self.0.write(buf)?;
+        self.0.flush()?;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+fn stdout() -> MutexGuard<'static, Box<dyn Write + Send>> {
+    STDOUT.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn write_stderr(raw: &[u8]) -> std::io::Result<()> {
+    std::io::stderr()
+        .lock()
+        .write_all(raw)
+        .inspect_err(|_| STDERR_FAILED.store(true, Ordering::SeqCst))
+}
+
+/// `(type(exc).__name__, str(exc))` for a failed write to a standard stream:
+/// `OSError: [Errno 22] Invalid argument` for a closed pipe on Windows,
+/// `BrokenPipeError: [Errno 32] Broken pipe` elsewhere.
+fn stream_error(error: &std::io::Error) -> (&'static str, String) {
+    let mut text = error.to_string();
+    if let Some(at) = text.rfind(" (os error ") {
+        text.truncate(at);
+    }
+    match error.raw_os_error() {
+        Some(code) if cfg!(windows) => crt_error(code),
+        Some(32) => ("BrokenPipeError", format!("[Errno 32] {text}")),
+        Some(code) => ("OSError", format!("[Errno {code}] {text}")),
+        None => ("OSError", text),
+    }
+}
+
+/// The exception for a Windows error code. CPython wrote through the C
+/// runtime's `_write`, which reports ERROR_ACCESS_DENIED as EBADF and maps the
+/// rest as `__acrt_errno_from_os_error` does (UCRT misc/errno.cpp), worded
+/// from `_sys_errlist`. A pipe with no reader (ERROR_NO_DATA) is EINVAL.
+fn crt_error(code: i32) -> (&'static str, String) {
+    let (errno, kind, message) = match code {
+        5 | 6 | 114 | 130 => (9, "OSError", "Bad file descriptor"),
+        2 | 3 | 15 | 18 | 53 | 67 | 161 | 206 => {
+            (2, "FileNotFoundError", "No such file or directory")
+        }
+        4 => (24, "OSError", "Too many open files"),
+        7..=9 | 1816 => (12, "OSError", "Not enough space"),
+        10 => (7, "OSError", "Arg list too long"),
+        11 | 188..=202 => (8, "OSError", "Exec format error"),
+        16 | 19..=36 | 65 | 82 | 83 | 108 | 132 | 158 | 167 => {
+            (13, "PermissionError", "Permission denied")
+        }
+        17 => (18, "OSError", "Improper link"),
+        80 | 183 => (17, "FileExistsError", "File exists"),
+        89 | 164 | 215 => (11, "BlockingIOError", "Resource temporarily unavailable"),
+        109 => (32, "BrokenPipeError", "Broken pipe"),
+        112 => (28, "OSError", "No space left on device"),
+        128 | 129 => (10, "ChildProcessError", "No child processes"),
+        145 => (41, "OSError", "Directory not empty"),
+        1113 => (42, "OSError", "Illegal byte sequence"),
+        _ => (22, "OSError", "Invalid argument"),
+    };
+    (kind, format!("[Errno {errno}] {message}"))
+}
+
+/// `print` to stdout, or to stderr when `error`. No script caught the OSError
+/// a failed print raised: it ends the process as an uncaught exception does
+/// (docs/rust-cli.md).
 pub fn print(text: &str, error: bool) {
     let raw = text_bytes(text);
-    if error {
-        let _ = std::io::stderr().lock().write_all(&raw);
+    let written = if error {
+        write_stderr(&raw)
     } else {
-        let _ = std::io::stdout().lock().write_all(&raw);
+        stdout().write_all(&raw)
+    };
+    if let Err(failure) = written {
+        let message = format!("release-policy: {}\n", stream_error(&failure).1);
+        let _ = write_stderr(&text_bytes(&message));
+        std::process::exit(shutdown(1));
     }
+}
+
+/// argparse's help or usage message: argparse ignored its own write errors.
+pub fn print_usage(text: &str, error: bool) {
+    let raw = text_bytes(text);
+    let _ = if error {
+        write_stderr(&raw)
+    } else {
+        stdout().write_all(&raw)
+    };
+}
+
+/// A help or usage message clap could not write to a terminal. argparse
+/// ignored the error, but with buffering its bytes stayed pending and failed
+/// again at exit.
+pub fn usage_failed(error: std::io::Error, stderr: bool) {
+    if stderr {
+        STDERR_FAILED.store(true, Ordering::SeqCst);
+    } else if !*UNBUFFERED {
+        *STDOUT_PENDING
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(error);
+    }
+}
+
+/// Interpreter shutdown: flush stdout, then stderr. Output still pending in
+/// either fails there with exit status 120.
+pub fn shutdown(code: i32) -> i32 {
+    let mut code = code;
+    let pending = STDOUT_PENDING
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    if let Err(error) = pending.map_or_else(|| stdout().flush(), Err) {
+        let (kind, message) = stream_error(&error);
+        let text = format!("Exception ignored while flushing sys.stdout:\n{kind}: {message}\n");
+        let _ = write_stderr(&text_bytes(&text));
+        code = 120;
+    }
+    if STDERR_FAILED.load(Ordering::SeqCst) && !*UNBUFFERED {
+        code = 120;
+    }
+    code
 }
 
 pub fn symlink(path: &Path) -> bool {
@@ -223,6 +416,48 @@ pub fn read_utf8(path: &Path, label: &str) -> Result<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn windows_errors_read_as_the_c_runtime_reported_them() {
+        assert_eq!(
+            crt_error(232),
+            ("OSError", "[Errno 22] Invalid argument".into())
+        );
+        assert_eq!(
+            crt_error(5),
+            ("OSError", "[Errno 9] Bad file descriptor".into())
+        );
+        assert_eq!(
+            crt_error(33),
+            ("PermissionError", "[Errno 13] Permission denied".into())
+        );
+        assert_eq!(
+            crt_error(132),
+            ("PermissionError", "[Errno 13] Permission denied".into())
+        );
+        assert_eq!(
+            crt_error(39),
+            ("OSError", "[Errno 22] Invalid argument".into())
+        );
+        assert_eq!(
+            crt_error(109),
+            ("BrokenPipeError", "[Errno 32] Broken pipe".into())
+        );
+        assert_eq!(
+            crt_error(112),
+            ("OSError", "[Errno 28] No space left on device".into())
+        );
+        assert_eq!(
+            crt_error(1816),
+            ("OSError", "[Errno 12] Not enough space".into())
+        );
+    }
+
+    #[test]
+    fn a_failed_terminal_usage_message_fails_again_at_exit() {
+        usage_failed(std::io::Error::from_raw_os_error(232), false);
+        assert_eq!(shutdown(2), if *UNBUFFERED { 2 } else { 120 });
+    }
 
     #[test]
     fn run_reports_spawn_failures() {
