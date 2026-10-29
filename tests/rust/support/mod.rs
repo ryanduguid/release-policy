@@ -139,11 +139,14 @@ impl FakeGh {
         let dir = tempfile::tempdir().unwrap();
         let name = format!("{program}{}", std::env::consts::EXE_SUFFIX);
         std::fs::create_dir(dir.path().join("bin")).unwrap();
-        std::fs::copy(
-            env!("CARGO_BIN_EXE_fake-gh"),
-            dir.path().join("bin").join(name),
-        )
-        .unwrap();
+        let path = dir.path().join("bin").join(name);
+        std::fs::copy(env!("CARGO_BIN_EXE_fake-gh"), &path).unwrap();
+        // `fs::copy` opens the destination for writing. Another test's fork
+        // can inherit that descriptor and keep it until the child reaches
+        // exec, and Linux then refuses the new file with ETXTBSY. Wait until
+        // an exec succeeds so callers observe this double's status, not that race.
+        #[cfg(unix)]
+        wait_until_executable(&path);
         let fake = FakeGh { dir };
         fake.set_rules(rules);
         fake
@@ -196,6 +199,25 @@ impl FakeGh {
             .collect::<Vec<_>>();
         cli_env(cwd, args, stdin, &env)
     }
+}
+
+/// Block until `path` can be executed.
+///
+/// The busy window is the gap between another test's fork and that child's
+/// exec. One second is far longer than that gap; a later failure is reported
+/// here instead of as a mismatched status string.
+#[cfg(unix)]
+fn wait_until_executable(path: &Path) {
+    for _ in 0..1_000 {
+        match Command::new(path).env_remove("FAKE_GH_SCENARIO").output() {
+            Ok(_) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(error) => panic!("the fake executable did not start: {error}"),
+        }
+    }
+    panic!("the fake executable stayed busy");
 }
 
 /// One fake `gh` answer.
