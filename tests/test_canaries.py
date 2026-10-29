@@ -495,7 +495,7 @@ class CanaryManifestTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "canonical"):
                 check_canaries.load_manifest(path)
 
-    def test_ci_validates_manifest_and_runs_live_audit_only_on_schedule(self) -> None:
+    def test_ci_live_audit_runs_on_schedule_or_explicit_manual_selection(self) -> None:
         workflow = (
             Path(__file__).resolve().parents[1]
             / ".github"
@@ -505,8 +505,20 @@ class CanaryManifestTests(unittest.TestCase):
 
         self.assertIn("schedule:", workflow)
         self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn(
+            "live-canary-audit:\n"
+            "        description: Audit current consumer pins and live release evidence\n"
+            "        type: boolean\n"
+            "        default: false",
+            workflow,
+        )
         self.assertIn("python scripts/check_canaries.py", workflow)
-        self.assertIn("if: github.event_name == 'schedule'", workflow)
+        self.assertIn(
+            "(github.event_name == 'schedule' ||\n"
+            "          (github.event_name == 'workflow_dispatch' && inputs.live-canary-audit)) &&\n"
+            "          matrix.python == '3.14'",
+            workflow,
+        )
         self.assertIn("python scripts/check_canaries.py --live --require-current-evidence", workflow)
         group = next(
             line.strip().removeprefix("group: ")
