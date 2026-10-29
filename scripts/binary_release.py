@@ -9,7 +9,9 @@ receives, so a missing, extra or unsafe member stops the release.
 Every output path comes from the workflow or build_binary.sh, under the
 runner's temporary directory or the checkout's dist directory; member names
 are checked before anything is extracted. A path argument that resolves
-outside the working, workspace and temporary directories is refused.
+outside the working, workspace and temporary directories (or Cargo's
+CARGO_TARGET_DIR) is refused, so outside a runner set GITHUB_WORKSPACE to the
+checkout. A Cargo config target-dir outside those directories is unsupported.
 """
 
 from __future__ import annotations
@@ -97,7 +99,8 @@ _API_SET = re.compile(r"(?:api|ext)-ms-win-[a-z0-9-]+\.dll", re.IGNORECASE)
 _NEEDED = re.compile(r"NeededLibraries \[\n(?P<names>(?:[^\]\n]*\n)*?)\]", re.MULTILINE)
 # A runner's checkout and its temporary directory: the workflows pass paths
 # under both, and build_binary.sh passes the checkout above its own directory.
-_RUNNER_DIRECTORIES = ("GITHUB_WORKSPACE", "RUNNER_TEMP")
+# A consumer may also build into a CARGO_TARGET_DIR outside both.
+_RUNNER_DIRECTORIES = ("GITHUB_WORKSPACE", "RUNNER_TEMP", "CARGO_TARGET_DIR")
 
 
 def _target(triple: str) -> Target:

@@ -564,7 +564,7 @@ class PathArgumentTests(Fixture):
         self.addCleanup(os.chdir, Path.cwd())
         os.chdir(self.trusted)
         environment = {name: value for name, value in os.environ.items()
-                       if name not in ("GITHUB_WORKSPACE", "RUNNER_TEMP")}
+                       if name not in binary_release._RUNNER_DIRECTORIES}
         for patcher in (
             mock.patch.dict(os.environ, environment, clear=True),
             mock.patch.object(tempfile, "gettempdir", return_value=str(self.trusted)),
@@ -595,8 +595,9 @@ class PathArgumentTests(Fixture):
         sbom = ("sbom-lists", "--sbom", str(self.trusted / ".." / "outside" / "x.spdx.json"),
                 "--package", "example")
         self.assertEqual(self.run_main(*sbom)[0], 1)
-        with mock.patch.dict(os.environ, {"RUNNER_TEMP": str(self.outside)}):
-            self.assertEqual(self.run_main(*sbom), (0, "x.spdx.json lists example\n", ""))
+        for name in ("RUNNER_TEMP", "CARGO_TARGET_DIR"):
+            with self.subTest(base=name), mock.patch.dict(os.environ, {name: str(self.outside)}):
+                self.assertEqual(self.run_main(*sbom), (0, "x.spdx.json lists example\n", ""))
         with mock.patch.object(binary_release, "verify", return_value=("example",)) as verify:
             self.run_main("verify", "--archive", "a.tar.gz", "--binary", "example", "--target",
                           LINUX, "--extract-dir", "out")
