@@ -195,7 +195,7 @@ fn crt_error(code: i32) -> (&'static str, String) {
         7..=9 | 1816 => (12, "OSError", "Not enough space"),
         10 => (7, "OSError", "Arg list too long"),
         11 | 188..=202 => (8, "OSError", "Exec format error"),
-        16 | 19..=36 | 65 | 82 | 83 | 108 | 158 | 167 => {
+        16 | 19..=36 | 65 | 82 | 83 | 108 | 132 | 158 | 167 => {
             (13, "PermissionError", "Permission denied")
         }
         17 => (18, "OSError", "Improper link"),
@@ -418,6 +418,10 @@ mod tests {
         );
         assert_eq!(
             crt_error(33),
+            ("PermissionError", "[Errno 13] Permission denied".into())
+        );
+        assert_eq!(
+            crt_error(132),
             ("PermissionError", "[Errno 13] Permission denied".into())
         );
         assert_eq!(
