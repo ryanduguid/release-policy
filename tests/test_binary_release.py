@@ -11,6 +11,7 @@ import gzip
 import hashlib
 import io
 import json
+import os
 import runpy
 import shutil
 import sys
@@ -507,7 +508,7 @@ class CommandTests(Fixture):
             "--extract-dir", str(self.base / "extracted"), "--source", str(self.source),
             "--root", str(self.root),
         )
-        self.assertEqual((code, Path(out.strip()).parent), (0, self.base / "dist"))
+        self.assertEqual((code, Path(out.strip()).parent), (0, (self.base / "dist").resolve()))
         listing = self.base / "readobj.txt"
         listing.write_text(ELF + "NeededLibraries [\n]\n", encoding="utf-8")
         self.assertEqual(self.run_main("linkage", "--readobj-output", str(listing), "--target",
@@ -535,6 +536,80 @@ class CommandTests(Fixture):
                 runpy.run_path(str(ROOT / "scripts" / "binary_release.py"), run_name="__main__")
         self.assertEqual(raised.exception.code, 0)
         self.assertIn("cargo-package", out.getvalue())
+
+
+class PathArgumentTests(Fixture):
+    # Each command's other arguments, then its path arguments.
+    COMMANDS = {
+        "cargo-package": (("--version", "1.2.3", "--binary", "example"), ("--manifest",)),
+        "toolchain": ((), ("--source", "--root")),
+        "package": (("--binary", "example", "--target", LINUX, "--stem", "example",
+                     "--version", "1.2.3", "--epoch", str(EPOCH)),
+                    ("--executable", "--source", "--root", "--output-dir")),
+        "verify": (("--binary", "example", "--target", LINUX), ("--archive", "--extract-dir")),
+        "receive": (("--stem", "example", "--version", "1.2.3", "--binary", "example",
+                     "--target", LINUX),
+                    ("--incoming", "--dist", "--extract-dir", "--source", "--root")),
+        "smoke": (("--version", "1.2.3"), ("--executable",)),
+        "linkage": (("--target", LINUX), ("--readobj-output",)),
+        "sbom-lists": (("--package", "example"), ("--sbom",)),
+    }
+    run_main = CommandTests.run_main
+
+    def setUp(self) -> None:
+        super().setUp()
+        # The working and temporary directory is `trusted`; `outside` is its sibling.
+        self.trusted, self.outside = self.base / "trusted", self.base / "outside"
+        self.trusted.mkdir()
+        self.addCleanup(os.chdir, Path.cwd())
+        os.chdir(self.trusted)
+        environment = {name: value for name, value in os.environ.items()
+                       if name not in ("GITHUB_WORKSPACE", "RUNNER_TEMP")}
+        for patcher in (
+            mock.patch.dict(os.environ, environment, clear=True),
+            mock.patch.object(tempfile, "gettempdir", return_value=str(self.trusted)),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_every_path_argument_that_escapes_is_refused_before_use(self) -> None:
+        escape = str(self.trusted / ".." / "outside" / "x")
+        for command, (others, paths) in self.COMMANDS.items():
+            for refused in paths:
+                argv = [command, *others]
+                for option in paths:
+                    argv += [option, escape if option == refused else "inside"]
+                with self.subTest(command=command, option=refused):
+                    self.assertEqual(self.run_main(*argv), (1, "", (
+                        f"binary_release: {escape} is outside the working, workspace and "
+                        "temporary directories\n")))
+        self.assertFalse(self.outside.exists())
+
+    def test_paths_inside_the_working_or_runner_directories_are_used_resolved(self) -> None:
+        (self.trusted / "Cargo.toml").write_text(PACKAGE, encoding="utf-8")
+        self.assertEqual(self.run_main("cargo-package", "--manifest", "Cargo.toml", "--version",
+                                       "1.2.3", "--binary", "example"), (0, "example\n", ""))
+        self.outside.mkdir()
+        (self.outside / "x.spdx.json").write_text('{"packages": [{"name": "example"}]}',
+                                                  encoding="utf-8")
+        sbom = ("sbom-lists", "--sbom", str(self.trusted / ".." / "outside" / "x.spdx.json"),
+                "--package", "example")
+        self.assertEqual(self.run_main(*sbom)[0], 1)
+        with mock.patch.dict(os.environ, {"RUNNER_TEMP": str(self.outside)}):
+            self.assertEqual(self.run_main(*sbom), (0, "x.spdx.json lists example\n", ""))
+        with mock.patch.object(binary_release, "verify", return_value=("example",)) as verify:
+            self.run_main("verify", "--archive", "a.tar.gz", "--binary", "example", "--target",
+                          LINUX, "--extract-dir", "out")
+        self.assertEqual(verify.call_args.kwargs["archive"], self.trusted.resolve() / "a.tar.gz")
+        self.assertEqual(verify.call_args.kwargs["extract_dir"], self.trusted.resolve() / "out")
+
+    def test_a_linked_path_argument_is_refused_before_it_is_resolved(self) -> None:
+        with mock.patch.object(Path, "is_symlink", return_value=True):
+            self.assertEqual(
+                self.run_main("cargo-package", "--manifest", "Cargo.toml", "--version", "1.2.3",
+                              "--binary", "example"),
+                (1, "", "binary_release: Cargo.toml must not be a symbolic link\n"),
+            )
 
 
 if __name__ == "__main__":

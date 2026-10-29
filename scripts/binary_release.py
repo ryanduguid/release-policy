@@ -8,7 +8,8 @@ receives, so a missing, extra or unsafe member stops the release.
 
 Every output path comes from the workflow or build_binary.sh, under the
 runner's temporary directory or the checkout's dist directory; member names
-are checked before anything is extracted.
+are checked before anything is extracted. A path argument that resolves
+outside the working, workspace and temporary directories is refused.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ import struct
 import subprocess  # nosec B404: runs only the built executable's --version
 import sys
 import tarfile
+import tempfile
 import time
 import tomllib
 import zipfile
@@ -93,6 +95,9 @@ WINDOWS_SYSTEM_DLLS = frozenset({
 # Windows loader and have no file of that name in System32.
 _API_SET = re.compile(r"(?:api|ext)-ms-win-[a-z0-9-]+\.dll", re.IGNORECASE)
 _NEEDED = re.compile(r"NeededLibraries \[\n(?P<names>(?:[^\]\n]*\n)*?)\]", re.MULTILINE)
+# A runner's checkout and its temporary directory: the workflows pass paths
+# under both, and build_binary.sh passes the checkout above its own directory.
+_RUNNER_DIRECTORIES = ("GITHUB_WORKSPACE", "RUNNER_TEMP")
 
 
 def _target(triple: str) -> Target:
@@ -454,6 +459,26 @@ def sbom_lists(sbom: Path, package_name: str) -> bool:
     )
 
 
+def _trusted_bases() -> list[Path]:
+    bases = [Path.cwd(), Path(tempfile.gettempdir())]
+    bases += [Path(os.environ[name]) for name in _RUNNER_DIRECTORIES if os.environ.get(name)]
+    return [base.resolve() for base in bases]
+
+
+def _confined(path: Path) -> Path:
+    """The resolved path argument, once it is inside a trusted directory.
+
+    Resolving follows `..` and symbolic links, so a link that is itself the
+    argument is refused first; the commands' own link checks would otherwise
+    see only its target.
+    """
+    if path.is_symlink():
+        raise ValueError(f"{path} must not be a symbolic link")
+    resolved = path.resolve()
+    for base in _trusted_bases():
+        if resolved.is_relative_to(base):
+            return resolved
+    raise ValueError(f"{path} is outside the working, workspace and temporary directories")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -486,36 +511,40 @@ def _parser() -> argparse.ArgumentParser:
 def _run(arguments: argparse.Namespace) -> str:
     match arguments.command:
         case "cargo-package":
-            return cargo_package(arguments.manifest, arguments.version, arguments.binary)
+            return cargo_package(_confined(arguments.manifest), arguments.version,
+                                 arguments.binary)
         case "toolchain":
-            return toolchain(arguments.source, arguments.root)
+            return toolchain(_confined(arguments.source), _confined(arguments.root))
         case "package":
             if not arguments.epoch.isdigit():
                 raise ValueError(f"epoch is not a Unix time: {arguments.epoch!r}")
             return str(package(
-                executable=arguments.executable, binary=arguments.binary,
+                executable=_confined(arguments.executable), binary=arguments.binary,
                 triple=arguments.target, stem=arguments.stem, version=arguments.version,
-                source=arguments.source, root=arguments.root, epoch=int(arguments.epoch),
-                output_dir=arguments.output_dir,
+                source=_confined(arguments.source), root=_confined(arguments.root),
+                epoch=int(arguments.epoch), output_dir=_confined(arguments.output_dir),
             ))
         case "verify":
+            extract_dir = arguments.extract_dir
             return "\n".join(verify(
-                archive=arguments.archive, binary=arguments.binary, triple=arguments.target,
-                extract_dir=arguments.extract_dir,
+                archive=_confined(arguments.archive), binary=arguments.binary,
+                triple=arguments.target,
+                extract_dir=None if extract_dir is None else _confined(extract_dir),
             ))
         case "receive":
             return str(receive(
-                incoming=arguments.incoming, stem=arguments.stem, version=arguments.version,
-                binary=arguments.binary, triple=arguments.target, dist=arguments.dist,
-                extract_dir=arguments.extract_dir, source=arguments.source, root=arguments.root,
+                incoming=_confined(arguments.incoming), stem=arguments.stem,
+                version=arguments.version, binary=arguments.binary, triple=arguments.target,
+                dist=_confined(arguments.dist), extract_dir=_confined(arguments.extract_dir),
+                source=_confined(arguments.source), root=_confined(arguments.root),
             ))
         case "smoke":
-            return smoke(arguments.executable, arguments.version)
+            return smoke(_confined(arguments.executable), arguments.version)
         case "linkage":
-            output = arguments.readobj_output.read_bytes().decode("utf-8")
+            output = _confined(arguments.readobj_output).read_bytes().decode("utf-8")
             return "\n".join(linkage(output, arguments.target))
         case _:
-            if not sbom_lists(arguments.sbom, arguments.package):
+            if not sbom_lists(_confined(arguments.sbom), arguments.package):
                 raise ValueError(f"{arguments.sbom} does not list the package {arguments.package}")
             return f"{arguments.sbom.name} lists {arguments.package}"
 
