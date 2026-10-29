@@ -110,6 +110,18 @@ fn python_stdout(unbuffered: bool) -> Box<dyn Write + Send> {
     use std::io::IsTerminal;
     let stdout = std::io::stdout();
     let terminal = stdout.is_terminal();
+    // Rust's stdout on Unix treats EBADF as success, so a read-only descriptor
+    // would print nothing; CPython reported it. A duplicate reports it. The
+    // duplicate fails only when stdout is closed, where CPython printed nothing.
+    #[cfg(unix)]
+    if let Ok(fd) = std::os::fd::AsFd::as_fd(&stdout).try_clone_to_owned() {
+        let file = std::fs::File::from(fd);
+        return match (unbuffered, terminal) {
+            (true, _) => Box::new(file),
+            (false, true) => Box::new(std::io::LineWriter::new(file)),
+            (false, false) => Box::new(std::io::BufWriter::with_capacity(128 * 1024, file)),
+        };
+    }
     if unbuffered && terminal {
         // Rust's stdout keeps a Windows console's UTF-16 writes; a raw handle would not.
         return Box::new(Unbuffered(stdout));
@@ -117,17 +129,11 @@ fn python_stdout(unbuffered: bool) -> Box<dyn Write + Send> {
     if terminal {
         return Box::new(std::io::LineWriter::new(stdout));
     }
+    #[cfg(windows)]
     if unbuffered {
-        #[cfg(unix)]
-        let handle = std::os::fd::AsFd::as_fd(&stdout)
-            .try_clone_to_owned()
-            .map(std::fs::File::from);
-        #[cfg(windows)]
-        let handle = std::os::windows::io::AsHandle::as_handle(&stdout)
-            .try_clone_to_owned()
-            .map(std::fs::File::from);
-        if let Ok(file) = handle {
-            return Box::new(file);
+        let handle = std::os::windows::io::AsHandle::as_handle(&stdout).try_clone_to_owned();
+        if let Ok(handle) = handle {
+            return Box::new(std::fs::File::from(handle));
         }
     }
     Box::new(std::io::BufWriter::with_capacity(128 * 1024, stdout))

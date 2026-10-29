@@ -106,10 +106,8 @@ fn an_unwritable_diagnostic_loses_the_original_code() {
     assert_eq!(run(&["--bogus"], false, true), (2, String::new()));
 }
 
-/// A handle opened only for reading: Windows refuses the write as access
-/// denied, which the scripts' C runtime reported as EBADF. (Rust's stdio on
-/// Unix ignores EBADF, so this is Windows only.)
-#[cfg(windows)]
+/// A handle opened only for reading: Unix refuses the write as EBADF, and
+/// Windows as access denied, which the scripts' C runtime reported as EBADF.
 #[test]
 fn a_read_only_stdout_is_a_bad_file_descriptor() {
     let dir = support::tempdir();
