@@ -87,3 +87,6 @@ path = "tests/rust/verify_skills.rs"
 [profile.release]
 codegen-units = 1
 lto = true
+
+[lints.clippy]
+ref_option = "warn"
