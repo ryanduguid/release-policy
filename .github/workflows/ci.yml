@@ -2,6 +2,11 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      live-canary-audit:
+        description: Audit current consumer pins and live release evidence
+        type: boolean
+        default: false
   schedule:
     - cron: "17 7 * * 2"
   push:
@@ -173,7 +178,10 @@ jobs:
         run: python scripts/check_canaries.py
 
       - name: Audit live canary pins and successful-run evidence
-        if: github.event_name == 'schedule' && matrix.python == '3.14'
+        if: >-
+          (github.event_name == 'schedule' ||
+          (github.event_name == 'workflow_dispatch' && inputs.live-canary-audit)) &&
+          matrix.python == '3.14'
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/check_canaries.py --live --require-current-evidence
