@@ -76,6 +76,159 @@ def run_payload(
     }
 
 
+class TagProtectionTests(unittest.TestCase):
+    PREFIX = "python (ryanduguid/example)"
+
+    def protection(self, canary_fields: dict[str, object] | None = None, *rulesets, fetch=None):
+        return check_canaries._tag_protection(
+            check_canaries.parse_manifest(manifest(**(canary_fields or {})))[0],
+            fetch or with_rulesets(lambda endpoint: self.fail(endpoint), *rulesets),
+            self.PREFIX,
+        )
+
+    def errors(self, canary_fields: dict[str, object] | None = None, *rulesets, fetch=None):
+        return self.protection(canary_fields, *rulesets, fetch=fetch)[0]
+
+    def test_visible_bypass_actors_fail_and_an_unseen_list_is_only_a_notice(self) -> None:
+        missing = [
+            f"{self.PREFIX}: no recognised active tag ruleset without bypass actors "
+            "blocks update and deletion of refs/tags/v*"
+        ]
+        actor = {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}
+        for actors in ([actor], "unexpected"):
+            with self.subTest(actors=actors):
+                self.assertEqual(
+                    self.protection(None, protected_ruleset(bypass_actors=actors)), (missing, [])
+                )
+        self.assertEqual(self.protection(None, protected_ruleset()), ([], []))
+        unseen = (
+            [],
+            [
+                f"{self.PREFIX}: this token cannot see the bypass list of tag ruleset 7, "
+                "so its bypass actors were not checked"
+            ],
+        )
+        self.assertEqual(self.protection(None, protected_ruleset(bypass_actors=None)), unseen)
+        hidden = protected_ruleset()
+        del hidden["bypass_actors"]
+        self.assertEqual(self.protection(None, hidden), unseen)
+
+    def test_a_ruleset_blocking_update_and_deletion_of_version_tags_passes(self) -> None:
+        self.assertEqual(self.errors(), [])
+        everything = {"ref_name": {"include": ["~ALL"], "exclude": []}}
+        self.assertEqual(self.errors(None, protected_ruleset(conditions=everything)), [])
+        extra = [{"type": "update"}, {"type": "deletion"}, {"type": "creation"}]
+        self.assertEqual(self.errors(None, protected_ruleset(rules=extra)), [])
+
+    def test_a_namespaced_family_needs_its_own_namespace_covered(self) -> None:
+        namespaced = {"ref": "tool/v1.2.3", "tag_prefix": "tool"}
+        self.assertEqual(
+            self.errors(namespaced),
+            [
+                f"{self.PREFIX}: no recognised active tag ruleset without bypass actors "
+                "blocks update and deletion of refs/tags/tool/v*"
+            ],
+        )
+        covered = {"ref_name": {"include": ["refs/tags/tool/v*"], "exclude": []}}
+        self.assertEqual(self.errors(namespaced, protected_ruleset(conditions=covered)), [])
+
+    def test_a_ruleset_that_does_not_protect_the_tags_fails(self) -> None:
+        missing = [
+            f"{self.PREFIX}: no recognised active tag ruleset without bypass actors "
+            "blocks update and deletion of refs/tags/v*"
+        ]
+        ref_name = lambda **fields: {"ref_name": fields}  # noqa: E731
+        for name, ruleset in {
+            "disabled": protected_ruleset(enforcement="disabled"),
+            "evaluate": protected_ruleset(enforcement="evaluate"),
+            "branch target": protected_ruleset(target="branch"),
+            "update allowed": protected_ruleset(rules=[{"type": "deletion"}]),
+            "deletion allowed": protected_ruleset(rules=[{"type": "update"}]),
+            "other pattern": protected_ruleset(conditions=ref_name(include=["refs/tags/*"], exclude=[])),
+            "exclusion": protected_ruleset(conditions=ref_name(include=["~ALL"], exclude=["refs/tags/v0*"])),
+            "no exclude": protected_ruleset(conditions=ref_name(include=["~ALL"])),
+            "no include": protected_ruleset(conditions=ref_name(exclude=[])),
+            "no conditions": protected_ruleset(conditions=None),
+            "no rules": protected_ruleset(rules=None),
+        }.items():
+            with self.subTest(name):
+                self.assertEqual(self.errors(None, ruleset), missing)
+        self.assertEqual(self.errors(fetch=lambda _: []), missing)
+        # A later ruleset can satisfy the check.
+        self.assertEqual(
+            self.errors(None, protected_ruleset(id=1, rules=[]), protected_ruleset(id=2)), []
+        )
+
+    def test_unreadable_rulesets_fail_and_never_pass(self) -> None:
+        def denied(endpoint: str) -> object:
+            raise check_canaries.GitHubError("forbidden", status=403)
+
+        self.assertEqual(
+            self.errors(fetch=denied), [f"{self.PREFIX}: could not read tag rulesets: forbidden"]
+        )
+
+        def detail_denied(endpoint: str) -> object:
+            if "?" in endpoint:
+                return [{"id": 7, "enforcement": "active"}]
+            raise check_canaries.GitHubError("forbidden", status=403)
+
+        self.assertEqual(
+            self.errors(fetch=detail_denied),
+            [f"{self.PREFIX}: could not read tag rulesets: forbidden"],
+        )
+        self.assertEqual(
+            self.errors(fetch=lambda _: {}), [f"{self.PREFIX}: tag ruleset listing is not a list"]
+        )
+        self.assertEqual(
+            self.errors(fetch=lambda _: [None, {"enforcement": "disabled"}]),
+            [
+                f"{self.PREFIX}: no recognised active tag ruleset without bypass actors "
+                "blocks update and deletion of refs/tags/v*"
+            ],
+        )
+        self.assertEqual(
+            self.errors(fetch=lambda e: [{"id": 7, "enforcement": "active"}] if "?" in e else None),
+            [
+                f"{self.PREFIX}: no recognised active tag ruleset without bypass actors "
+                "blocks update and deletion of refs/tags/v*"
+            ],
+        )
+
+    def test_the_live_audit_reads_rulesets_only_for_release_families_with_evidence(self) -> None:
+        def run(family: str, verifier) -> list[str]:
+            ref = "main" if family == "verify" else "v1.2.3"
+            requests: list[str] = []
+
+            def fetch(endpoint: str) -> object:
+                requests.append(endpoint)
+                if "/rulesets" in endpoint:
+                    return []
+                if "/compare/" in endpoint:
+                    return {"status": "behind"}
+                if "/releases?" in endpoint:
+                    return [release(ref, "2026-08-27T00:05:00Z")]
+                if "/workflows/" in endpoint:
+                    return {"workflow_runs": [run_payload(family=family, ref=ref)]}
+                return run_payload(family=family, ref=ref)
+
+            result = check_canaries.check_live(
+                check_canaries.parse_manifest(manifest(family=family, ref=ref)),
+                fetch_json=fetch,
+                fetch_text=lambda _: (VERIFY_PIN if family == "verify" else RELEASE_PIN),
+                verify_provenance=verifier,
+                now=BEFORE_EXPIRY,
+            )
+            self.assertEqual(
+                any("/rulesets" in endpoint for endpoint in requests),
+                family != "verify" and verifier is not None,
+            )
+            return [error for error in result.errors if "tag ruleset" in error]
+
+        self.assertEqual(len(run("python", accept)), 1)
+        self.assertEqual(run("python", None), [])
+        self.assertEqual(run("verify", accept), [])
+
+
 class CanaryManifestTests(unittest.TestCase):
     def test_root_tags_remain_valid_with_an_omitted_or_empty_prefix(self) -> None:
         for family in ("archive", "python", "skills", "verify"):
@@ -635,11 +788,44 @@ def expired_fetch(
     return fetch_json
 
 
+def protected_ruleset(**overrides: object) -> dict[str, object]:
+    return {
+        "id": 7,
+        "target": "tag",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
+        "rules": [{"type": "update"}, {"type": "deletion"}],
+        "bypass_actors": [],
+        **overrides,
+    }
+
+
+def with_rulesets(fetch_json, *rulesets: dict[str, object]):
+    """Answer ruleset reads with rulesets, a protected one unless others are given."""
+    held = rulesets or (protected_ruleset(),)
+
+    def fetch(endpoint: str) -> object:
+        if "/rulesets?" in endpoint:
+            return [{"id": item["id"], "enforcement": item["enforcement"]} for item in held]
+        if "/rulesets/" in endpoint:
+            return next(item for item in held if endpoint.endswith(f"/{item['id']}"))
+        return fetch_json(endpoint)
+
+    return fetch
+
+
 def audit(document: dict[str, object], fetch_json, *, pin: str = RELEASE_PIN,
           verifier=None, now=AFTER_EXPIRY) -> check_canaries.CheckResult:
     return check_canaries.check_live(
         check_canaries.parse_manifest(document),
-        fetch_json=fetch_json,
+        fetch_json=(
+            with_rulesets(
+                fetch_json,
+                protected_ruleset(conditions={"ref_name": {"include": ["~ALL"], "exclude": []}}),
+            )
+            if verifier is not None
+            else fetch_json
+        ),
         fetch_text=lambda _: pin,
         verify_provenance=verifier,
         now=now,
