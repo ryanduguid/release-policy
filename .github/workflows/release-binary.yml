@@ -438,6 +438,24 @@ jobs:
               --sbom "dist/$BASE-$target.spdx.json" --package "$PACKAGE"
           done
 
+      # cargo-audit reads the same embedded dependency lists. The policy pins
+      # the tool and fetches a fresh advisory database, and the script runs it
+      # outside the consumer tree, so no consumer file can waive an advisory.
+      - name: Install the pinned cargo-audit
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
+
+      - name: Refuse any RustSec advisory against an admitted executable
+        env:
+          BINARY: ${{ steps.binary.outputs.binary }}
+        shell: bash
+        run: >-
+          bash "$GITHUB_WORKSPACE/policy/scripts/audit_binaries.sh" "$RUNNER_TEMP/advisory-db"
+          "$RUNNER_TEMP/extracted/x86_64-unknown-linux-musl/$BINARY"
+          "$RUNNER_TEMP/extracted/x86_64-pc-windows-msvc/$BINARY.exe"
+
       - name: Write and verify the exact release asset inventory
         working-directory: ${{ steps.inputs.outputs.source-path }}
         env:

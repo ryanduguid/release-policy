@@ -67,6 +67,12 @@ names its TLS and DNS tests here; the release workflow cannot know them.
    ran consumer code that could have replaced their archive. Syft then
    writes an SPDX SBOM for each extracted executable from its embedded
    dependency list, and the job requires each SBOM to list the package.
+   `cargo-audit`, at a version the policy pins, then checks the same embedded
+   lists against a freshly fetched RustSec advisory database, from an empty
+   directory outside the consumer tree. Any advisory refuses the release,
+   informational ones such as an unmaintained crate included, as does a
+   failed fetch or an executable whose list it cannot read. There is no
+   ignore list or waiver: update or replace the dependency, then release.
 
 The release holds 9 assets, for `<stem>-<version>`:
 

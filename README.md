@@ -64,7 +64,7 @@ a full policy commit.
 - [Guarantees and canary evidence](docs/guarantees-and-evidence.md)
 - [Shared-policy decision](docs/adr/0001-shared-release-policy.md)
 
-Run the existing offline manifest check with `python scripts/check_canaries.py`. Scheduled CI adds the live audit, which checks each consumer's pin, confirms the pin is still reachable from this repository's `main`, and compares the recorded evidence with the latest successful run. A release family must record the latest success itself; the verification consumer, which runs on every push to its default branch, instead has to show that its newest success runs the pin it declares today.
+Run the existing offline manifest check with `python scripts/check_canaries.py`. Scheduled CI adds the live audit, which checks each consumer's pin, confirms the pin is still reachable from this repository's `main`, and compares the recorded evidence with the latest successful run. A release family must record the latest success itself; the verification consumer, which runs on every push to its default branch, instead has to show that its newest success runs the pin it declares today. The same run audits the executables in this repository's latest release against a fresh RustSec advisory database, as the binary publisher does, so an advisory published after the release fails it. Consumers' binary releases are audited only at publication.
 
 To run that audit on demand, dispatch CI with `live-canary-audit` selected. The input defaults to false; an ordinary manual dispatch performs the offline manifest check. A successful audit verifies the recorded evidence; it changes nothing and does not authorise a release or consumer migration.
 

@@ -7,9 +7,12 @@ never runs Cargo, and publishes a fixed asset set under one signer identity.
 
 from __future__ import annotations
 
+import os
 import re
-import subprocess  # nosec B404: runs this file's own entry point
+import shutil
+import subprocess  # nosec B404: runs this file's own entry point and the audit script
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -20,6 +23,8 @@ from tests.test_skill_workflows import YamlContractAssertions  # noqa: E402
 WORKFLOWS = ROOT / ".github" / "workflows"
 LINUX = "x86_64-unknown-linux-musl"
 WINDOWS = "x86_64-pc-windows-msvc"
+AUDIT = ROOT / "scripts" / "audit_binaries.sh"
+CARGO_AUDIT = "0.22.2"
 INPUTS = ("artifact-stem", "binary", "source-directory", "tag-prefix", "required-checks")
 # Every release asset, as publish_binaries.sh uploads it.
 ASSETS = (
@@ -109,12 +114,15 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
     def test_publisher_never_runs_consumer_code_or_uploads_artefacts(self) -> None:
         publish = self.job("publish")
         for forbidden in (
-            "cargo ", "rustup", "build_binary.sh", "install-action", "actions/upload-artifact@",
+            "cargo ", "rustup", "build_binary.sh", "actions/upload-artifact@",
             "pip install", "unittest discover", "pattern:", "merge-multiple", "./scripts/",
             "gh release upload", "secrets: inherit",
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, publish)
+        # The one tool the publisher installs is the policy's pinned auditor.
+        self.assertEqual(1, publish.count("install-action"))
+        self.assertIn("install-action", self.step(publish, "Install the pinned cargo-audit"))
         self.assertIn("group: release-${{ github.repository }}-${{ github.ref }}", publish)
         self.assertIn("cancel-in-progress: false", publish)
 
@@ -141,6 +149,67 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
                 self.assertLess(publish.index(receive), publish.index(sbom))
         lists = self.step(publish, "Require each binary SBOM to list the package")
         self.assertLess(publish.index(lists), publish.index("Attest release asset provenance"))
+
+    def assert_pinned_cargo_audit(self, install: str) -> None:
+        self.assertRegex(install, r"uses: taiki-e/install-action@[0-9a-f]{40} # v2\.\d+\.\d+\n")
+        self.assertIn(f"tool: cargo-audit@{CARGO_AUDIT}\n", install)
+        self.assertIn("fallback: none\n", install)
+
+    def test_publisher_refuses_any_advisory_against_the_admitted_executables(self) -> None:
+        publish = self.job("publish")
+        install = self.step(publish, "Install the pinned cargo-audit")
+        self.assert_pinned_cargo_audit(install)
+        audit = self.step(publish, "Refuse any RustSec advisory against an admitted executable")
+        self.assertIn(
+            'bash "$GITHUB_WORKSPACE/policy/scripts/audit_binaries.sh" "$RUNNER_TEMP/advisory-db"\n'
+            f'          "$RUNNER_TEMP/extracted/{LINUX}/$BINARY"\n'
+            f'          "$RUNNER_TEMP/extracted/{WINDOWS}/$BINARY.exe"\n',
+            audit)
+        self.assertNotIn("working-directory:", audit)
+        order = (
+            "Require each admitted executable's linkage",
+            "Require each binary SBOM to list the package",
+            "Install the pinned cargo-audit",
+            "Refuse any RustSec advisory against an admitted executable",
+            "Write and verify the exact release asset inventory",
+            "Attest release asset provenance",
+            "Create, inspect and publish the immutable release",
+        )
+        positions = [publish.index(self.step(publish, name)) for name in order]
+        self.assertEqual(sorted(positions), positions)
+
+    def test_scheduled_ci_audits_the_latest_release_executables(self) -> None:
+        ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+        checks = self.mapping_block(self.mapping_block(ci, "jobs", indent=0), "checks", indent=2)
+        live = self.step(checks, "Audit live canary pins and successful-run evidence")
+        install = self.step(checks, "Install the pinned cargo-audit")
+        audit = self.step(checks, "Audit the latest release's executables against RustSec")
+        condition = live.split("        if: ", 1)[1].split("        env:", 1)[0]
+        self.assertIn("github.event_name == 'schedule'", condition)
+        for step in (install, audit):
+            with self.subTest(step=step.splitlines()[0]):
+                self.assertIn(f"        if: {condition}", step)
+        self.assert_pinned_cargo_audit(install)
+        self.assertLess(checks.index(live), checks.index(install))
+        self.assertLess(checks.index(install), checks.index(audit))
+        self.assertIn('gh release download --repo "$GITHUB_REPOSITORY" --dir "$latest"', audit)
+        self.assertIn(
+            'bash scripts/audit_binaries.sh "$RUNNER_TEMP/advisory-db" \\\n'
+            '            "$latest/release-policy" "$latest/release-policy.exe"\n',
+            audit)
+        self.assertEqual(1, ci.count("audit_binaries.sh"))
+
+    def test_audit_script_fails_closed_without_an_ignore_list(self) -> None:
+        script = AUDIT.read_text(encoding="utf-8")
+        self.assertIn(
+            'work="$(mktemp -d)"\ncd "$work"\n'
+            'cargo-audit audit --db "$db" --no-yanked --deny warnings bin "$@" 2>&1 | tee audit.log\n',
+            script)
+        self.assertIn("set -euo pipefail\n", script)
+        for text in (script, self.workflow, (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")):
+            for waiver in ("--ignore", "--no-fetch", "--stale", "--file", "--url"):
+                with self.subTest(waiver=waiver):
+                    self.assertNotIn(waiver, text)
 
     def test_publisher_gates_attests_and_publishes_the_fixed_assets(self) -> None:
         publish = self.job("publish")
@@ -185,6 +254,96 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         )
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("usage:", result.stdout)
+
+
+# Stands in for cargo-audit: records where and how it ran, then behaves as the
+# real tool does for the case under test. As in the real tool, an advisory is
+# reported after every binary's data was found.
+FAKE_CARGO_AUDIT = """#!/usr/bin/env bash
+{ printf '%s\\n' "$@"; printf -- '--listing\\n'; ls -A; } > "$FAKE_LOG"
+mkdir -p "$3"
+if [ "$FAKE_CASE" = fetch-fails ]; then
+  echo "error: couldn't fetch advisory database" >&2
+  exit 1
+fi
+shift 7
+for binary in "$@"; do
+  if [ "$FAKE_CASE" != no-data ] || [ "$binary" != "${!#}" ]; then
+    echo "       Found 'cargo auditable' data in $binary (2 dependencies)" >&2
+  fi
+done
+if [ "$FAKE_CASE" = advisory ]; then
+  echo "error: 1 vulnerability found" >&2
+  exit 1
+fi
+"""
+
+
+@unittest.skipUnless(shutil.which("bash"), "bash required")
+class AuditScriptTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        fake_bin = self.root / "bin"
+        fake_bin.mkdir()
+        fake = fake_bin / "cargo-audit"
+        fake.write_text(FAKE_CARGO_AUDIT, encoding="utf-8", newline="\n")
+        fake.chmod(0o755)
+        # The caller's directory holds a project audit config the script must not read.
+        self.caller = self.root / "caller"
+        (self.caller / ".cargo").mkdir(parents=True)
+        (self.caller / ".cargo" / "audit.toml").write_text(
+            "[advisories]\nignore = []\n", encoding="utf-8")
+        self.cargo_home = self.root / "cargo-home"
+        self.cargo_home.mkdir()
+        self.log = self.root / "calls"
+        self.db = str(self.root / "advisory-db")
+        self.binaries = [str(self.root / "tool"), str(self.root / "tool.exe")]
+        self.env = {
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "CARGO_HOME": str(self.cargo_home),
+            "FAKE_LOG": str(self.log),
+        }
+
+    def audit(self, case: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # nosec B603 B607  # nosemgrep
+            ["bash", str(AUDIT), *arguments], cwd=self.caller, env={**self.env, "FAKE_CASE": case},
+            check=False, capture_output=True, text=True,
+        )
+
+    def test_clean_audit_of_every_binary_passes_from_an_empty_directory(self) -> None:
+        result = self.audit("clean", self.db, *self.binaries)
+        self.assertEqual(0, result.returncode, result.stderr)
+        arguments, listing = self.log.read_text(encoding="utf-8").split("--listing\n")
+        self.assertEqual(
+            ["audit", "--db", self.db, "--no-yanked", "--deny", "warnings", "bin", *self.binaries],
+            arguments.splitlines())
+        self.assertLessEqual(set(listing.split()), {"audit.log"})
+
+    def test_each_failure_fails_closed(self) -> None:
+        for case, message in (
+            ("advisory", "1 vulnerability found"),
+            ("fetch-fails", "couldn't fetch advisory database"),
+            ("no-data", f"read no embedded dependency list from {self.binaries[-1]}"),
+        ):
+            with self.subTest(case=case):
+                shutil.rmtree(self.db, ignore_errors=True)
+                result = self.audit(case, self.db, *self.binaries)
+                self.assertEqual(1, result.returncode)
+                self.assertIn(message, result.stdout + result.stderr)
+
+    def test_refuses_before_auditing(self) -> None:
+        self.assertEqual(64, self.audit("clean", self.db).returncode)
+        Path(self.db).mkdir()
+        self.assertIn("must be fetched fresh", self.audit("clean", self.db, *self.binaries).stderr)
+        Path(self.db).rmdir()
+        (self.cargo_home / "audit.toml").write_text("", encoding="utf-8")
+        refused = self.audit("clean", self.db, *self.binaries)
+        self.assertEqual(1, refused.returncode)
+        self.assertIn("refusing to audit with", refused.stderr)
+        self.assertFalse(self.log.exists())
 
 
 if __name__ == "__main__":
