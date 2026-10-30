@@ -145,13 +145,177 @@ fn audit_with(
 ) -> CheckResult {
     let canaries = parse(document).unwrap();
     let release_evidence = verifier.is_some();
+    let mut json = json;
     let mut fake = Fake {
-        json,
+        json: move |endpoint: &str| {
+            if endpoint.contains("/rulesets?") {
+                body(json!([{"id": 7, "enforcement": "active"}]))
+            } else if endpoint.contains("/rulesets/") {
+                body(ruleset(json!({"include": ["~ALL"], "exclude": []})))
+            } else {
+                json(endpoint)
+            }
+        },
         pin: pin.into(),
         verifier,
         requests: Vec::new(),
     };
     cc::check_live(&canaries, &mut fake, release_evidence, now).unwrap()
+}
+
+/// An active tag ruleset blocking update and deletion for these ref conditions.
+fn ruleset(ref_name: Value) -> Value {
+    json!({"id": 7, "target": "tag", "enforcement": "active",
+           "conditions": {"ref_name": ref_name},
+           "rules": [{"type": "update"}, {"type": "deletion"}]})
+}
+
+/// The tag ruleset errors of a release-evidence audit, with the rulesets answered by `json`.
+fn ruleset_errors(document: &Value, json: impl FnMut(&str) -> Reply) -> Vec<String> {
+    let mut fake = Fake {
+        json,
+        pin: pin("python"),
+        verifier: accept(),
+        requests: Vec::new(),
+    };
+    cc::check_live(&parse(document).unwrap(), &mut fake, true, before_expiry())
+        .unwrap()
+        .errors
+        .into_iter()
+        .filter(|error| error.contains("tag ruleset"))
+        .collect()
+}
+
+/// Answer the listing with one active ruleset, and its read with `detail`.
+fn one_ruleset(detail: Value) -> impl FnMut(&str) -> Reply {
+    let mut other = standard("identical", run("v1.2.3"), vec![run("v1.2.3")]);
+    move |endpoint| {
+        if endpoint.contains("/rulesets?") {
+            body(json!([{"id": 7, "enforcement": "active"}]))
+        } else if endpoint.ends_with("/rulesets/7") {
+            body(detail.clone())
+        } else {
+            other(endpoint)
+        }
+    }
+}
+
+const NO_RULESET: &str =
+    "python (ryanduguid/example): no active tag ruleset blocks update and deletion of refs/tags/v*";
+
+#[test]
+fn a_ruleset_blocking_update_and_deletion_of_version_tags_passes() {
+    for include in ["refs/tags/v*", "~ALL"] {
+        let detail = ruleset(json!({"include": [include], "exclude": []}));
+        assert_eq!(
+            ruleset_errors(&python(), one_ruleset(detail)),
+            Vec::<String>::new()
+        );
+    }
+}
+
+#[test]
+fn a_namespaced_family_needs_its_own_namespace_covered() {
+    let document = manifest("python", "tool/v1.2.3", json!({"tag_prefix": "tool"}));
+    let root_only = ruleset(json!({"include": ["refs/tags/v*"], "exclude": []}));
+    assert_eq!(
+        ruleset_errors(&document, one_ruleset(root_only)),
+        [
+            "python (ryanduguid/example): no active tag ruleset blocks update and deletion of refs/tags/tool/v*"
+        ]
+    );
+    let covered = ruleset(json!({"include": ["refs/tags/tool/v*"], "exclude": []}));
+    assert_eq!(
+        ruleset_errors(&document, one_ruleset(covered)),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn a_ruleset_that_does_not_protect_the_tags_fails() {
+    let good = || ruleset(json!({"include": ["refs/tags/v*"], "exclude": []}));
+    let with = |key: &str, value: Value| {
+        let mut detail = good();
+        detail[key] = value;
+        detail
+    };
+    let ref_name = |value: Value| json!({"ref_name": value});
+    for detail in [
+        with("enforcement", json!("disabled")),
+        with("target", json!("branch")),
+        with("rules", json!([{"type": "deletion"}])),
+        with("rules", json!([{"type": "update"}])),
+        with("rules", Value::Null),
+        with("conditions", Value::Null),
+        with(
+            "conditions",
+            ref_name(json!({"include": ["refs/tags/*"], "exclude": []})),
+        ),
+        with(
+            "conditions",
+            ref_name(json!({"include": ["~ALL"], "exclude": ["refs/tags/v0*"]})),
+        ),
+        with("conditions", ref_name(json!({"include": ["~ALL"]}))),
+        with("conditions", ref_name(json!({"exclude": []}))),
+    ] {
+        assert_eq!(
+            ruleset_errors(&python(), one_ruleset(detail.clone())),
+            [NO_RULESET],
+            "{detail}"
+        );
+    }
+    // No ruleset, and one the listing does not call active.
+    for listed in [
+        json!([]),
+        json!([null, {"id": 7, "enforcement": "disabled"}]),
+    ] {
+        let mut other = standard("identical", run("v1.2.3"), vec![run("v1.2.3")]);
+        let errors = ruleset_errors(&python(), move |endpoint| {
+            if endpoint.contains("/rulesets?") {
+                body(listed.clone())
+            } else {
+                other(endpoint)
+            }
+        });
+        assert_eq!(errors, [NO_RULESET]);
+    }
+}
+
+#[test]
+fn unreadable_rulesets_fail_and_never_pass() {
+    let denied = "python (ryanduguid/example): could not read tag rulesets: forbidden";
+    let mut other = standard("identical", run("v1.2.3"), vec![run("v1.2.3")]);
+    let listing_denied = ruleset_errors(&python(), move |endpoint| {
+        if endpoint.contains("/rulesets") {
+            Reply::Fail("forbidden", Some(403))
+        } else {
+            other(endpoint)
+        }
+    });
+    assert_eq!(listing_denied, [denied]);
+    let mut other = standard("identical", run("v1.2.3"), vec![run("v1.2.3")]);
+    let detail_denied = ruleset_errors(&python(), move |endpoint| {
+        if endpoint.contains("/rulesets?") {
+            body(json!([{"id": 7, "enforcement": "active"}]))
+        } else if endpoint.contains("/rulesets/") {
+            Reply::Fail("forbidden", Some(403))
+        } else {
+            other(endpoint)
+        }
+    });
+    assert_eq!(detail_denied, [denied]);
+    let mut other = standard("identical", run("v1.2.3"), vec![run("v1.2.3")]);
+    let not_a_list = ruleset_errors(&python(), move |endpoint| {
+        if endpoint.contains("/rulesets?") {
+            body(json!({}))
+        } else {
+            other(endpoint)
+        }
+    });
+    assert_eq!(
+        not_a_list,
+        ["python (ryanduguid/example): tag ruleset listing is not a list"]
+    );
 }
 
 /// `check_live` with no verifier, at the default clock of the earlier tests.

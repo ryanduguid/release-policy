@@ -7,6 +7,11 @@ requires a separately reviewed authentication and attestation contract.
 
 - Annotated tags only; the human-created annotated tag is the release
   approval act. The module never creates tags.
+- An active tag ruleset with update and deletion rules, including exactly
+  `refs/tags/v*` (or `refs/tags/<tag-prefix>/v*` for a namespaced component) or
+  `~ALL`, and no exclusions. SLSA v1.2 requires tags that cannot be moved or
+  deleted at source level 2 and above. The release gates do not read rulesets; the live canary audit
+  checks them for each release family in `canaries.json` and fails without one.
 - `RELEASE_NOTES.md` whose first line is `# vX.Y.Z` for the tag.
 - `uv.lock` committed; the workflow runs `uv run --locked`.
 - `pyproject.toml` with a static `[project] version`; or a safe relative,

@@ -92,6 +92,9 @@ audit instead requires the newest success to be running the pin the consumer
 declares today. The recorded run stays the reviewed example either way, and is
 checked against GitHub the same way for every family.
 
+Each live audit also requires an active tag ruleset blocking update and deletion
+of each release family's version tags, and fails if it cannot read the rulesets.
+
 Each live audit also verifies the recorded release's signed SLSA provenance for
 the three release families. It reads the release by tag and requires it to be
 published and immutable, requires the tag to resolve to the recorded commit,

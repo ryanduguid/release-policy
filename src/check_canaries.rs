@@ -629,6 +629,80 @@ fn release_freshness_errors(
     Ok(Vec::new())
 }
 
+/// Whether an active tag ruleset stops tags under `pattern` moving or being deleted.
+///
+/// Only the exact pattern or ~ALL counts, and any exclusion disqualifies the
+/// ruleset: a form this cannot read fails the audit rather than passing it.
+fn ruleset_protects(ruleset: &Json, pattern: &str) -> bool {
+    if !eq(ruleset.get("target"), &Json::str_obj("tag"))
+        || !eq(ruleset.get("enforcement"), &Json::str_obj("active"))
+    {
+        return false;
+    }
+    let ref_name = ruleset
+        .get("conditions")
+        .and_then(|conditions| conditions.get("ref_name"));
+    let (Some(Json::Array(rules)), Some(ref_name)) = (ruleset.get("rules"), ref_name) else {
+        return false;
+    };
+    let blocks = |kind: &str| {
+        rules
+            .iter()
+            .any(|rule| eq(rule.get("type"), &Json::str_obj(kind)))
+    };
+    let unexcluded =
+        matches!(ref_name.get("exclude"), Some(Json::Array(items)) if items.is_empty());
+    let included = matches!(ref_name.get("include"), Some(Json::Array(items)) if items
+        .iter()
+        .any(|item| item.as_str() == Some(pattern) || item.as_str() == Some("~ALL")));
+    blocks("update") && blocks("deletion") && unexcluded && included
+}
+
+/// Require a ruleset that stops the family's version tags moving or being deleted.
+///
+/// SLSA v1.2 source track level 2 and above requires this of tags. The listing
+/// omits a ruleset's rules and conditions, so each active one is read in full.
+fn tag_protection_errors(
+    canary: &Canary,
+    live: &mut dyn Live,
+    prefix: &str,
+) -> Result<Vec<String>, String> {
+    let pattern = if canary.tag_prefix.is_empty() {
+        "refs/tags/v*".to_owned()
+    } else {
+        format!("refs/tags/{}/v*", canary.tag_prefix)
+    };
+    let endpoint = format!("repos/{}/rulesets", canary.repository);
+    let unreadable = |error: GitHubError| {
+        vec![format!(
+            "{prefix}: could not read tag rulesets: {}",
+            error.message
+        )]
+    };
+    let listing = match handled(live.fetch_json(&format!("{endpoint}?targets=tag&per_page=100")))? {
+        Ok(listing) => listing,
+        Err(error) => return Ok(unreadable(error)),
+    };
+    let Json::Array(items) = listing else {
+        return Ok(vec![format!("{prefix}: tag ruleset listing is not a list")]);
+    };
+    for item in &items {
+        if !eq(item.get("enforcement"), &Json::str_obj("active")) {
+            continue;
+        }
+        // str(id) as the Python f-string writes it.
+        let detail = format!("{endpoint}/{}", repr(item.get("id")));
+        match handled(live.fetch_json(&detail))? {
+            Ok(ruleset) if ruleset_protects(&ruleset, &pattern) => return Ok(Vec::new()),
+            Ok(_) => {}
+            Err(error) => return Ok(unreadable(error)),
+        }
+    }
+    Ok(vec![format!(
+        "{prefix}: no active tag ruleset blocks update and deletion of {pattern}"
+    )])
+}
+
 /// Require a later, readable verification success once the recorded one expired.
 ///
 /// The expired record stays a reviewed pointer; current verification is shown by
@@ -859,6 +933,9 @@ pub fn check_live(
         if release_family && (run_expired || release_evidence) {
             let freshness = release_freshness_errors(canary, live, &prefix)?;
             errors.extend(freshness);
+        }
+        if release_family && release_evidence {
+            errors.extend(tag_protection_errors(canary, live, &prefix)?);
         }
         if run_expired && release_family {
             if !release_evidence {

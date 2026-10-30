@@ -45,3 +45,5 @@ updates:
     directory: /fixtures/demo-pkg
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 7

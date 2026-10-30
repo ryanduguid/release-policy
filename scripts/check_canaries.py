@@ -369,6 +369,60 @@ def _release_freshness_errors(
     return []
 
 
+def _ruleset_protects(ruleset: object, pattern: str) -> bool:
+    """Whether an active tag ruleset stops tags under pattern moving or being deleted.
+
+    Only the exact pattern or ~ALL counts, and any exclusion disqualifies the
+    ruleset: a form this cannot read fails the audit rather than passing it.
+    """
+    if (
+        not isinstance(ruleset, dict)
+        or ruleset.get("target") != "tag"
+        or ruleset.get("enforcement") != "active"
+    ):
+        return False
+    rules = ruleset.get("rules")
+    conditions = ruleset.get("conditions")
+    ref_name = conditions.get("ref_name") if isinstance(conditions, dict) else None
+    if not isinstance(rules, list) or not isinstance(ref_name, dict):
+        return False
+    types = {rule.get("type") for rule in rules if isinstance(rule, dict)}
+    include = ref_name.get("include")
+    return (
+        {"update", "deletion"} <= types
+        and ref_name.get("exclude") == []
+        and isinstance(include, list)
+        and (pattern in include or "~ALL" in include)
+    )
+
+
+def _tag_protection_errors(
+    canary: Canary, fetch_json: Callable[[str], object], prefix: str
+) -> list[str]:
+    """Require a ruleset that stops the family's version tags moving or being deleted.
+
+    SLSA v1.2 source track level 2 and above requires this of tags. The listing
+    omits a ruleset's rules and conditions, so each active one is read in full.
+    """
+    namespace = f"{canary.tag_prefix}/" if canary.tag_prefix else ""
+    pattern = f"refs/tags/{namespace}v*"
+    endpoint = f"repos/{canary.repository}/rulesets"
+    try:
+        listing = fetch_json(f"{endpoint}?targets=tag&per_page=100")
+        if not isinstance(listing, list):
+            return [f"{prefix}: tag ruleset listing is not a list"]
+        for item in listing:
+            if (
+                isinstance(item, dict)
+                and item.get("enforcement") == "active"
+                and _ruleset_protects(fetch_json(f"{endpoint}/{item.get('id')}"), pattern)
+            ):
+                return []
+    except RuntimeError as error:
+        return [f"{prefix}: could not read tag rulesets: {error}"]
+    return [f"{prefix}: no active tag ruleset blocks update and deletion of {pattern}"]
+
+
 def _expired_verify_errors(
     canary: Canary,
     latest: dict[str, object],
@@ -540,6 +594,8 @@ def check_live(
             run_expired or verify_provenance is not None
         ):
             errors.extend(_release_freshness_errors(canary, fetch_json, prefix))
+        if canary.family in _RELEASE_FAMILIES and verify_provenance is not None:
+            errors.extend(_tag_protection_errors(canary, fetch_json, prefix))
         if run_expired and canary.family in _RELEASE_FAMILIES:
             if verify_provenance is None:
                 errors.append(
