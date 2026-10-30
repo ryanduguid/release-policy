@@ -79,12 +79,39 @@ def run_payload(
 class TagProtectionTests(unittest.TestCase):
     PREFIX = "python (ryanduguid/example)"
 
-    def errors(self, canary_fields: dict[str, object] | None = None, *rulesets, fetch=None):
-        return check_canaries._tag_protection_errors(
+    def protection(self, canary_fields: dict[str, object] | None = None, *rulesets, fetch=None):
+        return check_canaries._tag_protection(
             check_canaries.parse_manifest(manifest(**(canary_fields or {})))[0],
             fetch or with_rulesets(lambda endpoint: self.fail(endpoint), *rulesets),
             self.PREFIX,
         )
+
+    def errors(self, canary_fields: dict[str, object] | None = None, *rulesets, fetch=None):
+        return self.protection(canary_fields, *rulesets, fetch=fetch)[0]
+
+    def test_visible_bypass_actors_fail_and_an_unseen_list_is_only_a_notice(self) -> None:
+        missing = [
+            f"{self.PREFIX}: no recognised active tag ruleset without bypass actors "
+            "blocks update and deletion of refs/tags/v*"
+        ]
+        actor = {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}
+        for actors in ([actor], "unexpected"):
+            with self.subTest(actors=actors):
+                self.assertEqual(
+                    self.protection(None, protected_ruleset(bypass_actors=actors)), (missing, [])
+                )
+        self.assertEqual(self.protection(None, protected_ruleset()), ([], []))
+        unseen = (
+            [],
+            [
+                f"{self.PREFIX}: this token cannot see the bypass list of tag ruleset 7, "
+                "so its bypass actors were not checked"
+            ],
+        )
+        self.assertEqual(self.protection(None, protected_ruleset(bypass_actors=None)), unseen)
+        hidden = protected_ruleset()
+        del hidden["bypass_actors"]
+        self.assertEqual(self.protection(None, hidden), unseen)
 
     def test_a_ruleset_blocking_update_and_deletion_of_version_tags_passes(self) -> None:
         self.assertEqual(self.errors(), [])
@@ -97,13 +124,19 @@ class TagProtectionTests(unittest.TestCase):
         namespaced = {"ref": "tool/v1.2.3", "tag_prefix": "tool"}
         self.assertEqual(
             self.errors(namespaced),
-            [f"{self.PREFIX}: no active tag ruleset blocks update and deletion of refs/tags/tool/v*"],
+            [
+                f"{self.PREFIX}: no recognised active tag ruleset without bypass actors "
+                "blocks update and deletion of refs/tags/tool/v*"
+            ],
         )
         covered = {"ref_name": {"include": ["refs/tags/tool/v*"], "exclude": []}}
         self.assertEqual(self.errors(namespaced, protected_ruleset(conditions=covered)), [])
 
     def test_a_ruleset_that_does_not_protect_the_tags_fails(self) -> None:
-        missing = [f"{self.PREFIX}: no active tag ruleset blocks update and deletion of refs/tags/v*"]
+        missing = [
+            f"{self.PREFIX}: no recognised active tag ruleset without bypass actors "
+            "blocks update and deletion of refs/tags/v*"
+        ]
         ref_name = lambda **fields: {"ref_name": fields}  # noqa: E731
         for name, ruleset in {
             "disabled": protected_ruleset(enforcement="disabled"),
@@ -148,11 +181,17 @@ class TagProtectionTests(unittest.TestCase):
         )
         self.assertEqual(
             self.errors(fetch=lambda _: [None, {"enforcement": "disabled"}]),
-            [f"{self.PREFIX}: no active tag ruleset blocks update and deletion of refs/tags/v*"],
+            [
+                f"{self.PREFIX}: no recognised active tag ruleset without bypass actors "
+                "blocks update and deletion of refs/tags/v*"
+            ],
         )
         self.assertEqual(
             self.errors(fetch=lambda e: [{"id": 7, "enforcement": "active"}] if "?" in e else None),
-            [f"{self.PREFIX}: no active tag ruleset blocks update and deletion of refs/tags/v*"],
+            [
+                f"{self.PREFIX}: no recognised active tag ruleset without bypass actors "
+                "blocks update and deletion of refs/tags/v*"
+            ],
         )
 
     def test_the_live_audit_reads_rulesets_only_for_release_families_with_evidence(self) -> None:
@@ -756,6 +795,7 @@ def protected_ruleset(**overrides: object) -> dict[str, object]:
         "enforcement": "active",
         "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
         "rules": [{"type": "update"}, {"type": "deletion"}],
+        "bypass_actors": [],
         **overrides,
     }
 

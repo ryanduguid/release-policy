@@ -167,7 +167,7 @@ fn audit_with(
 fn ruleset(ref_name: Value) -> Value {
     json!({"id": 7, "target": "tag", "enforcement": "active",
            "conditions": {"ref_name": ref_name},
-           "rules": [{"type": "update"}, {"type": "deletion"}]})
+           "rules": [{"type": "update"}, {"type": "deletion"}], "bypass_actors": []})
 }
 
 /// The tag ruleset errors of a release-evidence audit, with the rulesets answered by `json`.
@@ -200,8 +200,44 @@ fn one_ruleset(detail: Value) -> impl FnMut(&str) -> Reply {
     }
 }
 
-const NO_RULESET: &str =
-    "python (ryanduguid/example): no active tag ruleset blocks update and deletion of refs/tags/v*";
+const NO_RULESET: &str = "python (ryanduguid/example): no recognised active tag ruleset without bypass actors blocks update and deletion of refs/tags/v*";
+
+#[test]
+fn visible_bypass_actors_fail_and_an_unseen_list_is_only_a_notice() {
+    let good = || ruleset(json!({"include": ["refs/tags/v*"], "exclude": []}));
+    for actors in [
+        json!([{"actor_id": 5, "bypass_mode": "always"}]),
+        json!("unexpected"),
+    ] {
+        let mut detail = good();
+        detail["bypass_actors"] = actors;
+        assert_eq!(ruleset_errors(&python(), one_ruleset(detail)), [NO_RULESET]);
+    }
+    let notices = |detail: Value| {
+        let mut fake = Fake {
+            json: one_ruleset(detail),
+            pin: pin("python"),
+            verifier: accept(),
+            requests: Vec::new(),
+        };
+        let result =
+            cc::check_live(&parse(&python()).unwrap(), &mut fake, true, before_expiry()).unwrap();
+        assert!(!has(&result.errors, "tag ruleset"), "{:?}", result.errors);
+        result
+            .notices
+            .into_iter()
+            .filter(|notice| notice.contains("bypass"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(notices(good()), Vec::<String>::new());
+    let unseen = "python (ryanduguid/example): this token cannot see the bypass list of tag ruleset 7, so its bypass actors were not checked";
+    let mut null = good();
+    null["bypass_actors"] = Value::Null;
+    assert_eq!(notices(null), [unseen]);
+    let mut hidden = good();
+    hidden.as_object_mut().unwrap().remove("bypass_actors");
+    assert_eq!(notices(hidden), [unseen]);
+}
 
 #[test]
 fn a_ruleset_blocking_update_and_deletion_of_version_tags_passes() {
@@ -221,7 +257,7 @@ fn a_namespaced_family_needs_its_own_namespace_covered() {
     assert_eq!(
         ruleset_errors(&document, one_ruleset(root_only)),
         [
-            "python (ryanduguid/example): no active tag ruleset blocks update and deletion of refs/tags/tool/v*"
+            "python (ryanduguid/example): no recognised active tag ruleset without bypass actors blocks update and deletion of refs/tags/tool/v*"
         ]
     );
     let covered = ruleset(json!({"include": ["refs/tags/tool/v*"], "exclude": []}));

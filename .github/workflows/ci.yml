@@ -599,8 +599,10 @@ jobs:
       # Without advanced security a finding fails this job and no write permission
       # is needed. .github/zizmor.yml records each accepted finding. Informational
       # findings are 34 low-confidence template expansions of earlier steps'
-      # outputs in release-python.yml and publish-archives.yml; a user-controlled
-      # context would report at a higher severity and still fail here.
+      # outputs in release-python.yml and publish-archives.yml. At 1.31.1 a step
+      # output reports informational whatever it holds, so this does not check what
+      # those outputs carry; pull_request.title, head_ref and inputs report high and
+      # fail here.
       - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
         with:
           version: 1.31.1

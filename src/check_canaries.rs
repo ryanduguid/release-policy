@@ -631,11 +631,18 @@ fn release_freshness_errors(
 
 /// Whether an active tag ruleset stops tags under `pattern` moving or being deleted.
 ///
-/// Only the exact pattern or ~ALL counts, and any exclusion disqualifies the
-/// ruleset: a form this cannot read fails the audit rather than passing it.
+/// Only the exact pattern or ~ALL counts, and any exclusion or visible bypass actor
+/// disqualifies the ruleset: a form this cannot read fails the audit rather than
+/// passing it.
 fn ruleset_protects(ruleset: &Json, pattern: &str) -> bool {
+    let no_bypass = match ruleset.get("bypass_actors") {
+        None | Some(Json::Null) => true,
+        Some(Json::Array(actors)) => actors.is_empty(),
+        Some(_) => false,
+    };
     if !eq(ruleset.get("target"), &Json::str_obj("tag"))
         || !eq(ruleset.get("enforcement"), &Json::str_obj("active"))
+        || !no_bypass
     {
         return false;
     }
@@ -658,15 +665,18 @@ fn ruleset_protects(ruleset: &Json, pattern: &str) -> bool {
     blocks("update") && blocks("deletion") && unexcluded && included
 }
 
-/// Require a ruleset that stops the family's version tags moving or being deleted.
+/// The errors and notices for the family's version tag protection.
 ///
-/// SLSA v1.2 source track level 2 and above requires this of tags. The listing
-/// omits a ruleset's rules and conditions, so each active one is read in full.
-fn tag_protection_errors(
+/// SLSA v1.2 source track level 2 and above requires tags that cannot be moved or
+/// deleted. The listing omits a ruleset's rules and conditions, so each active one
+/// is read in full. GitHub returns bypass_actors only to a caller with write access
+/// to the ruleset, which the audit's token lacks on a consumer. Requiring the list
+/// would fail every consumer, so a list it cannot see is a notice, not a pass claim.
+fn tag_protection(
     canary: &Canary,
     live: &mut dyn Live,
     prefix: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<(Vec<String>, Vec<String>), String> {
     let pattern = if canary.tag_prefix.is_empty() {
         "refs/tags/v*".to_owned()
     } else {
@@ -681,10 +691,13 @@ fn tag_protection_errors(
     };
     let listing = match handled(live.fetch_json(&format!("{endpoint}?targets=tag&per_page=100")))? {
         Ok(listing) => listing,
-        Err(error) => return Ok(unreadable(error)),
+        Err(error) => return Ok((unreadable(error), Vec::new())),
     };
     let Json::Array(items) = listing else {
-        return Ok(vec![format!("{prefix}: tag ruleset listing is not a list")]);
+        return Ok((
+            vec![format!("{prefix}: tag ruleset listing is not a list")],
+            Vec::new(),
+        ));
     };
     for item in &items {
         if !eq(item.get("enforcement"), &Json::str_obj("active")) {
@@ -693,14 +706,28 @@ fn tag_protection_errors(
         // str(id) as the Python f-string writes it.
         let detail = format!("{endpoint}/{}", repr(item.get("id")));
         match handled(live.fetch_json(&detail))? {
-            Ok(ruleset) if ruleset_protects(&ruleset, &pattern) => return Ok(Vec::new()),
+            Ok(ruleset) if ruleset_protects(&ruleset, &pattern) => {
+                let unseen = matches!(ruleset.get("bypass_actors"), None | Some(Json::Null));
+                let notices = if unseen {
+                    vec![format!(
+                        "{prefix}: this token cannot see the bypass list of tag ruleset {}, so its bypass actors were not checked",
+                        repr(item.get("id"))
+                    )]
+                } else {
+                    Vec::new()
+                };
+                return Ok((Vec::new(), notices));
+            }
             Ok(_) => {}
-            Err(error) => return Ok(unreadable(error)),
+            Err(error) => return Ok((unreadable(error), Vec::new())),
         }
     }
-    Ok(vec![format!(
-        "{prefix}: no active tag ruleset blocks update and deletion of {pattern}"
-    )])
+    Ok((
+        vec![format!(
+            "{prefix}: no recognised active tag ruleset without bypass actors blocks update and deletion of {pattern}"
+        )],
+        Vec::new(),
+    ))
 }
 
 /// Require a later, readable verification success once the recorded one expired.
@@ -935,7 +962,9 @@ pub fn check_live(
             errors.extend(freshness);
         }
         if release_family && release_evidence {
-            errors.extend(tag_protection_errors(canary, live, &prefix)?);
+            let (tag_errors, tag_notices) = tag_protection(canary, live, &prefix)?;
+            errors.extend(tag_errors);
+            result.notices.extend(tag_notices);
         }
         if run_expired && release_family {
             if !release_evidence {

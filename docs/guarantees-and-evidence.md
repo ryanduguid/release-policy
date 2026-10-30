@@ -94,6 +94,8 @@ checked against GitHub the same way for every family.
 
 Each live audit also requires an active tag ruleset blocking update and deletion
 of each release family's version tags, and fails if it cannot read the rulesets.
+Bypass actors are checked only when the token can see them; otherwise the audit
+reports a notice that they were not checked.
 
 Each live audit also verifies the recorded release's signed SLSA provenance for
 the three release families. It reads the release by tag and requires it to be

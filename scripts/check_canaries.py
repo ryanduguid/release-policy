@@ -372,13 +372,15 @@ def _release_freshness_errors(
 def _ruleset_protects(ruleset: object, pattern: str) -> bool:
     """Whether an active tag ruleset stops tags under pattern moving or being deleted.
 
-    Only the exact pattern or ~ALL counts, and any exclusion disqualifies the
-    ruleset: a form this cannot read fails the audit rather than passing it.
+    Only the exact pattern or ~ALL counts, and any exclusion or visible bypass actor
+    disqualifies the ruleset: a form this cannot read fails the audit rather than
+    passing it.
     """
     if (
         not isinstance(ruleset, dict)
         or ruleset.get("target") != "tag"
         or ruleset.get("enforcement") != "active"
+        or ruleset.get("bypass_actors") not in (None, [])
     ):
         return False
     rules = ruleset.get("rules")
@@ -396,13 +398,16 @@ def _ruleset_protects(ruleset: object, pattern: str) -> bool:
     )
 
 
-def _tag_protection_errors(
+def _tag_protection(
     canary: Canary, fetch_json: Callable[[str], object], prefix: str
-) -> list[str]:
-    """Require a ruleset that stops the family's version tags moving or being deleted.
+) -> tuple[list[str], list[str]]:
+    """Return errors and notices for the family's version tag protection.
 
-    SLSA v1.2 source track level 2 and above requires this of tags. The listing
-    omits a ruleset's rules and conditions, so each active one is read in full.
+    SLSA v1.2 source track level 2 and above requires tags that cannot be moved or
+    deleted. The listing omits a ruleset's rules and conditions, so each active one
+    is read in full. GitHub returns bypass_actors only to a caller with write access
+    to the ruleset, which the audit's token lacks on a consumer. Requiring the list
+    would fail every consumer, so a list it cannot see is a notice, not a pass claim.
     """
     namespace = f"{canary.tag_prefix}/" if canary.tag_prefix else ""
     pattern = f"refs/tags/{namespace}v*"
@@ -410,17 +415,21 @@ def _tag_protection_errors(
     try:
         listing = fetch_json(f"{endpoint}?targets=tag&per_page=100")
         if not isinstance(listing, list):
-            return [f"{prefix}: tag ruleset listing is not a list"]
+            return [f"{prefix}: tag ruleset listing is not a list"], []
         for item in listing:
-            if (
-                isinstance(item, dict)
-                and item.get("enforcement") == "active"
-                and _ruleset_protects(fetch_json(f"{endpoint}/{item.get('id')}"), pattern)
-            ):
-                return []
+            if not isinstance(item, dict) or item.get("enforcement") != "active":
+                continue
+            ruleset = fetch_json(f"{endpoint}/{item.get('id')}")
+            if _ruleset_protects(ruleset, pattern):
+                if isinstance(ruleset, dict) and ruleset.get("bypass_actors") is None:
+                    return [], [
+                        f"{prefix}: this token cannot see the bypass list of tag ruleset "
+                        f"{item.get('id')}, so its bypass actors were not checked"
+                    ]
+                return [], []
     except RuntimeError as error:
-        return [f"{prefix}: could not read tag rulesets: {error}"]
-    return [f"{prefix}: no active tag ruleset blocks update and deletion of {pattern}"]
+        return [f"{prefix}: could not read tag rulesets: {error}"], []
+    return [f"{prefix}: no recognised active tag ruleset without bypass actors blocks update and deletion of {pattern}"], []
 
 
 def _expired_verify_errors(
@@ -595,7 +604,9 @@ def check_live(
         ):
             errors.extend(_release_freshness_errors(canary, fetch_json, prefix))
         if canary.family in _RELEASE_FAMILIES and verify_provenance is not None:
-            errors.extend(_tag_protection_errors(canary, fetch_json, prefix))
+            tag_errors, tag_notices = _tag_protection(canary, fetch_json, prefix)
+            errors.extend(tag_errors)
+            notices.extend(tag_notices)
         if run_expired and canary.family in _RELEASE_FAMILIES:
             if verify_provenance is None:
                 errors.append(
