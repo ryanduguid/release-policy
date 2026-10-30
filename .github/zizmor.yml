@@ -1,0 +1,32 @@
+# Accepted zizmor findings, each with its reason. An entry names a file and line,
+# so moving the line fails CI and brings the reason back for review.
+rules:
+  dangerous-triggers:
+    ignore:
+      # Runs only the attribution policy from the trusted base branch, never pull
+      # request code.
+      - no-ai-attribution.yml:13
+      # Both triggers call the reviewer pinned by full commit. The job accepts only
+      # the owner's pull requests or a Dependabot bridge run, and the reviewer checks
+      # out its own policy commit, not pull request code.
+      - pr-review-consumer.yml:4
+      - pr-review-consumer.yml:6
+  bot-conditions:
+    ignore:
+      # The job runs `true` with no permissions. scripts/pr_review.py checks the
+      # pull request's author and head commit before the bridge run is reviewed.
+      - pr-review-trigger.yml:11
+  artipacked:
+    ignore:
+      # Fixing this needs a change to the action and then a repin of
+      # attribution-policy.yml in a second pull request (CONTRIBUTING.md). Its caller
+      # uploads no artefact, so the persisted credential does not leave the job.
+      - action.yml:15
+  self-repository:
+    ignore:
+      # The suggested $/ syntax is rejected by the pinned actionlint 1.7.12, and the
+      # pin family tests require these relative calls.
+      - no-ai-attribution.yml:40
+      - release-archive.yml:172
+      - release-skills.yml:94
+      - release-skills.yml:105
