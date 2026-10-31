@@ -40,7 +40,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/scorecard.yml": "0cfb357dd0c38ab298a1c761f83f8c087997b05b6038a838ee27655a9199780c",
     ".github/workflows/snyk.yml": "c200650b001ac55bec2e87059d7a223b374191a9b253a53e064364dd283fa0af",
     ".github/workflows/no-ai-attribution.yml": "2c517d6f7eda8667c8a2eba186ef15d9e27b4c91d4617a39083b0a31f26f2834",
-    ".github/workflows/attribution-policy.yml": "82061e085c15dbe527c02294940d9966d4916b5d4f627f112b8b6ed092fd95b0",
+    ".github/workflows/attribution-policy.yml": "88fdde7976aadeff975f910c529ebf7b11881e2c8790eb8dadb50783fce451e9",
     ".github/workflows/attribution-repin.yml": "310f3c875f502ce59a1ca9258fbc3275db44c16b16838cb02a1161c4247cf139",
     ".github/workflows/publish-archives.yml": "e84d2f2b0bc4593d4f3f1e43645504fac9ccf3a8459b3e89d83b118e77dc757f",
     ".github/workflows/release-archive.yml": "21dee8370a36f36d406a83197c2d42ce98d929eb87ce8bd086d740eca5faaac4",
