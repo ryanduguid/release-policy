@@ -1,9 +1,13 @@
 # Verify a release
 
-A repository that releases through these workflows shows an 'SLSA 3' badge and
-attaches signed build provenance to every release. These steps check a
+A repository that releases through these workflows attaches signed build
+provenance to every release; some show an 'SLSA 3' badge. These steps check a
 downloaded asset with a current [GitHub CLI](https://cli.github.com/). They
 prove where and how the asset was built, not that its contents are correct.
+
+The commands assume a POSIX shell with GNU `sha256sum`, such as Linux, WSL or
+Git Bash. Elsewhere, put each `gh` command on one line without the trailing
+`\`; step 4 checks each asset's digest without `sha256sum`.
 
 ## 1. Download the asset, its checksums and its provenance
 
