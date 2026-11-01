@@ -62,6 +62,7 @@ a full policy commit.
 - [Prerequisites](docs/consumer-prerequisites.md)
 - [Re-pinning consumers](docs/re-pinning.md)
 - [Guarantees and canary evidence](docs/guarantees-and-evidence.md)
+- [Verify a downloaded release](docs/verify-a-release.md)
 - [Shared-policy decision](docs/adr/0001-shared-release-policy.md)
 
 Run the existing offline manifest check with `python scripts/check_canaries.py`. Scheduled CI adds the live audit, which checks each consumer's pin, confirms the pin is still reachable from this repository's `main`, and compares the recorded evidence with the latest successful run. A release family must record the latest success itself; the verification consumer, which runs on every push to its default branch, instead has to show that its newest success runs the pin it declares today. The same run audits the executables in this repository's latest release against a fresh RustSec advisory database, as the binary publisher does, so an advisory published after the release fails it. Consumers' binary releases are audited only at publication.
