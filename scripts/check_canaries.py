@@ -11,7 +11,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Callable, Sequence, TypeGuard
 
 _FULL_SHA = re.compile(r"[0-9a-f]{40}\Z")
 _REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
@@ -452,6 +452,52 @@ def _tree_sha(commit: object) -> object:
     return tree.get("sha") if isinstance(tree, dict) else None
 
 
+def _full_sha(value: object) -> TypeGuard[str]:
+    return isinstance(value, str) and _FULL_SHA.fullmatch(value) is not None
+
+
+class _Refusal(Exception):
+    """Why no locked release tag admits a pin off main."""
+
+
+def _admitting_tag(pin: str, fetch_json: Callable[[str], object]) -> str:
+    """Return the first release tag whose commit is the pin or descends from it."""
+    tags = fetch_json(f"repos/{_POLICY_REPOSITORY}/tags?per_page=100")
+    if not isinstance(tags, list):
+        raise _Refusal("release-policy tag listing is not a list")
+    for tag in tags:
+        name = tag.get("name") if isinstance(tag, dict) else None
+        commit = tag.get("commit") if isinstance(tag, dict) else None
+        tag_sha = commit.get("sha") if isinstance(commit, dict) else None
+        if not _matches_release_tag(name, "") or not _full_sha(tag_sha):
+            continue
+        comparison = fetch_json(f"repos/{_POLICY_REPOSITORY}/compare/{tag_sha}...{pin}")
+        status = comparison.get("status") if isinstance(comparison, dict) else None
+        if isinstance(status, str) and status in _REACHABLE_STATUSES:
+            return str(name)
+    raise _Refusal("no release tag reaches it")
+
+
+def _main_carrier(tree: str, fetch_json: Callable[[str], object]) -> str:
+    """Return the first commit in main's searched history that carries tree."""
+    for page in range(1, MAX_HISTORY_PAGES + 1):
+        history = fetch_json(
+            f"repos/{_POLICY_REPOSITORY}/commits?sha=main&per_page=100&page={page}"
+        )
+        if not isinstance(history, list):
+            raise _Refusal("a page of main's history is not a list")
+        for entry in history:
+            carrier = entry.get("sha") if isinstance(entry, dict) else None
+            carried = _tree_sha(entry.get("commit") if isinstance(entry, dict) else None)
+            if not (_full_sha(carrier) and _full_sha(carried)):
+                raise _Refusal("main's history holds a malformed commit record")
+            if carried == tree:
+                return carrier
+        if len(history) < 100:
+            break
+    raise _Refusal(f"no commit in the main history searched carries its tree {tree}")
+
+
 def _locked_tag_admission(
     pin: str, fetch_json: Callable[[str], object], prefix: str
 ) -> tuple[str | None, list[str]]:
@@ -465,56 +511,22 @@ def _locked_tag_admission(
     )
     if tag_errors:
         return tag_errors[0], []
-    endpoint = f"repos/{_POLICY_REPOSITORY}"
     try:
-        tags = fetch_json(f"{endpoint}/tags?per_page=100")
-        if not isinstance(tags, list):
-            return "release-policy tag listing is not a list", []
-        admitting = None
-        for tag in tags:
-            name = tag.get("name") if isinstance(tag, dict) else None
-            commit = tag.get("commit") if isinstance(tag, dict) else None
-            tag_sha = commit.get("sha") if isinstance(commit, dict) else None
-            if (
-                not _matches_release_tag(name, "")
-                or not isinstance(tag_sha, str)
-                or _FULL_SHA.fullmatch(tag_sha) is None
-            ):
-                continue
-            comparison = fetch_json(f"{endpoint}/compare/{tag_sha}...{pin}")
-            status = comparison.get("status") if isinstance(comparison, dict) else None
-            if isinstance(status, str) and status in _REACHABLE_STATUSES:
-                admitting = name
-                break
-        if admitting is None:
-            return "no release tag reaches it", []
-        tree = _tree_sha(fetch_json(f"{endpoint}/git/commits/{pin}"))
-        if not isinstance(tree, str) or _FULL_SHA.fullmatch(tree) is None:
-            return "its commit record names no tree", []
-        for page in range(1, MAX_HISTORY_PAGES + 1):
-            history = fetch_json(f"{endpoint}/commits?sha=main&per_page=100&page={page}")
-            if not isinstance(history, list):
-                return "a page of main's history is not a list", []
-            for entry in history:
-                carrier = entry.get("sha") if isinstance(entry, dict) else None
-                carried = _tree_sha(entry.get("commit") if isinstance(entry, dict) else None)
-                if not all(
-                    isinstance(sha, str) and _FULL_SHA.fullmatch(sha) is not None
-                    for sha in (carrier, carried)
-                ):
-                    return "main's history holds a malformed commit record", []
-                if carried == tree:
-                    return None, [
-                        *notices,
-                        f"{prefix}: current pin {pin} is off release-policy main; locked "
-                        f"release tag {admitting} reaches it and main commit {carrier} "
-                        f"carries its tree, so repin to {carrier}",
-                    ]
-            if len(history) < 100:
-                break
+        admitting = _admitting_tag(pin, fetch_json)
+        tree = _tree_sha(fetch_json(f"repos/{_POLICY_REPOSITORY}/git/commits/{pin}"))
+        if not _full_sha(tree):
+            raise _Refusal("its commit record names no tree")
+        carrier = _main_carrier(tree, fetch_json)
+    except _Refusal as refusal:
+        return str(refusal), []
     except RuntimeError as error:
         return f"could not read release-policy tags or history: {error}", []
-    return f"no commit in the main history searched carries its tree {tree}", []
+    return None, [
+        *notices,
+        f"{prefix}: current pin {pin} is off release-policy main; locked release tag "
+        f"{admitting} reaches it and main commit {carrier} carries its tree, so repin "
+        f"to {carrier}",
+    ]
 
 
 def _expired_verify_errors(

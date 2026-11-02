@@ -673,15 +673,6 @@ fn ruleset_protects(ruleset: &Json, pattern: &str) -> bool {
     blocks("update") && blocks("deletion") && unexcluded && included
 }
 
-/// The errors and notices for the family's version tag protection.
-fn tag_protection(
-    canary: &Canary,
-    live: &mut dyn Live,
-    prefix: &str,
-) -> Result<(Vec<String>, Vec<String>), String> {
-    version_tag_protection(&canary.repository, &canary.tag_prefix, live, prefix)
-}
-
 /// The errors and notices for a repository's version tag protection.
 ///
 /// SLSA v1.2 source track level 2 and above requires tags that cannot be moved or
@@ -689,7 +680,7 @@ fn tag_protection(
 /// is read in full. GitHub returns bypass_actors only to a caller with write access
 /// to the ruleset, which the audit's token lacks on a consumer. Requiring the list
 /// would fail every consumer, so a list it cannot see is a notice, not a pass claim.
-fn version_tag_protection(
+fn tag_protection(
     repository: &str,
     tag_prefix: &str,
     live: &mut dyn Live,
@@ -755,6 +746,98 @@ fn tree_sha(commit: Option<&Json>) -> Option<&str> {
         .and_then(Json::as_str)
 }
 
+/// A value, or why no locked release tag admits the pin; the outer error is an
+/// exception Python let escape.
+type Admission<T> = Result<Result<T, String>, String>;
+
+/// Read a release-policy endpoint; a failed read refuses the admission.
+fn policy_read(live: &mut dyn Live, path: &str) -> Admission<Json> {
+    Ok(
+        handled(live.fetch_json(&format!("repos/{POLICY_REPOSITORY}/{path}")))?.map_err(|error| {
+            format!(
+                "could not read release-policy tags or history: {}",
+                error.message
+            )
+        }),
+    )
+}
+
+/// The first release tag whose commit is the pin or descends from it.
+fn admitting_tag(pin: &str, live: &mut dyn Live) -> Admission<String> {
+    let tags = match policy_read(live, "tags?per_page=100")? {
+        Ok(Json::Array(tags)) => tags,
+        Ok(_) => return Ok(Err("release-policy tag listing is not a list".into())),
+        Err(reason) => return Ok(Err(reason)),
+    };
+    for tag in &tags {
+        let name = tag.get("name").and_then(Json::as_str);
+        let tag_sha = tag
+            .get("commit")
+            .and_then(|commit| commit.get("sha"))
+            .and_then(Json::as_str)
+            .filter(|sha| matches_release_tag(tag.get("name"), "") && full(SHA, sha));
+        let (Some(name), Some(tag_sha)) = (name, tag_sha) else {
+            continue;
+        };
+        let comparison = match policy_read(live, &format!("compare/{tag_sha}...{pin}"))? {
+            Ok(comparison) => comparison,
+            Err(reason) => return Ok(Err(reason)),
+        };
+        let status = comparison.get("status").and_then(Json::as_str);
+        if status.is_some_and(|status| REACHABLE_STATUSES.contains(&status)) {
+            return Ok(Ok(name.to_owned()));
+        }
+    }
+    Ok(Err("no release tag reaches it".into()))
+}
+
+/// The first commit in main's searched history that carries `tree`.
+fn main_carrier(tree: &str, live: &mut dyn Live) -> Admission<String> {
+    for page in 1..=MAX_HISTORY_PAGES {
+        let path = format!("commits?sha=main&per_page=100&page={page}");
+        let history = match policy_read(live, &path)? {
+            Ok(Json::Array(history)) => history,
+            Ok(_) => return Ok(Err("a page of main's history is not a list".into())),
+            Err(reason) => return Ok(Err(reason)),
+        };
+        for entry in &history {
+            let carrier = entry.get("sha").and_then(Json::as_str);
+            let carried = tree_sha(entry.get("commit"));
+            let (Some(carrier), Some(carried)) = (
+                carrier.filter(|sha| full(SHA, sha)),
+                carried.filter(|sha| full(SHA, sha)),
+            ) else {
+                return Ok(Err("main's history holds a malformed commit record".into()));
+            };
+            if carried == tree {
+                return Ok(Ok(carrier.to_owned()));
+            }
+        }
+        if history.len() < 100 {
+            break;
+        }
+    }
+    Ok(Err(format!(
+        "no commit in the main history searched carries its tree {tree}"
+    )))
+}
+
+/// The admitting tag and the main commit that carries the pin's tree.
+fn tag_and_carrier(pin: &str, live: &mut dyn Live) -> Admission<(String, String)> {
+    let admitting = match admitting_tag(pin, live)? {
+        Ok(admitting) => admitting,
+        Err(reason) => return Ok(Err(reason)),
+    };
+    let commit = match policy_read(live, &format!("git/commits/{pin}"))? {
+        Ok(commit) => commit,
+        Err(reason) => return Ok(Err(reason)),
+    };
+    let Some(tree) = tree_sha(Some(&commit)).filter(|tree| full(SHA, tree)) else {
+        return Ok(Err("its commit record names no tree".into()));
+    };
+    Ok(main_carrier(tree, live)?.map(|carrier| (admitting, carrier)))
+}
+
 /// Why no locked release tag admits a pin off main, or None and the notices.
 ///
 /// The tag ruleset is read as for a consumer, so a bypass list this token cannot
@@ -764,89 +847,19 @@ fn locked_tag_admission(
     live: &mut dyn Live,
     prefix: &str,
 ) -> Result<(Option<String>, Vec<String>), String> {
-    let (tag_errors, mut notices) =
-        version_tag_protection(POLICY_REPOSITORY, "", live, "release-policy")?;
+    let (tag_errors, mut notices) = tag_protection(POLICY_REPOSITORY, "", live, "release-policy")?;
     if let Some(error) = tag_errors.into_iter().next() {
         return Ok((Some(error), Vec::new()));
     }
-    let refuse = |reason: String| Ok((Some(reason), Vec::new()));
-    let unreadable = |error: GitHubError| {
-        format!(
-            "could not read release-policy tags or history: {}",
-            error.message
-        )
-    };
-    let endpoint = format!("repos/{POLICY_REPOSITORY}");
-    let tags = match handled(live.fetch_json(&format!("{endpoint}/tags?per_page=100")))? {
-        Ok(Json::Array(tags)) => tags,
-        Ok(_) => return refuse("release-policy tag listing is not a list".into()),
-        Err(error) => return refuse(unreadable(error)),
-    };
-    let mut admitting = None;
-    for tag in &tags {
-        let name = tag.get("name");
-        let tag_sha = tag
-            .get("commit")
-            .and_then(|commit| commit.get("sha"))
-            .and_then(Json::as_str)
-            .filter(|sha| matches_release_tag(name, "") && full(SHA, sha));
-        let Some(tag_sha) = tag_sha else {
-            continue;
-        };
-        let compare = format!("{endpoint}/compare/{tag_sha}...{pin}");
-        let comparison = match handled(live.fetch_json(&compare))? {
-            Ok(comparison) => comparison,
-            Err(error) => return refuse(unreadable(error)),
-        };
-        let status = comparison.get("status").and_then(Json::as_str);
-        if status.is_some_and(|status| REACHABLE_STATUSES.contains(&status)) {
-            admitting = name.and_then(Json::as_str).map(str::to_owned);
-            break;
+    match tag_and_carrier(pin, live)? {
+        Err(reason) => Ok((Some(reason), Vec::new())),
+        Ok((admitting, carrier)) => {
+            notices.push(format!(
+                "{prefix}: current pin {pin} is off release-policy main; locked release tag {admitting} reaches it and main commit {carrier} carries its tree, so repin to {carrier}"
+            ));
+            Ok((None, notices))
         }
     }
-    let Some(admitting) = admitting else {
-        return refuse("no release tag reaches it".into());
-    };
-    let commit = match handled(live.fetch_json(&format!("{endpoint}/git/commits/{pin}")))? {
-        Ok(commit) => commit,
-        Err(error) => return refuse(unreadable(error)),
-    };
-    let Some(tree) = tree_sha(Some(&commit))
-        .filter(|tree| full(SHA, tree))
-        .map(str::to_owned)
-    else {
-        return refuse("its commit record names no tree".into());
-    };
-    for page in 1..=MAX_HISTORY_PAGES {
-        let history_endpoint = format!("{endpoint}/commits?sha=main&per_page=100&page={page}");
-        let history = match handled(live.fetch_json(&history_endpoint))? {
-            Ok(Json::Array(history)) => history,
-            Ok(_) => return refuse("a page of main's history is not a list".into()),
-            Err(error) => return refuse(unreadable(error)),
-        };
-        for entry in &history {
-            let carrier = entry.get("sha").and_then(Json::as_str);
-            let carried = tree_sha(entry.get("commit"));
-            let (Some(carrier), Some(carried)) = (
-                carrier.filter(|sha| full(SHA, sha)),
-                carried.filter(|sha| full(SHA, sha)),
-            ) else {
-                return refuse("main's history holds a malformed commit record".into());
-            };
-            if carried == tree {
-                notices.push(format!(
-                    "{prefix}: current pin {pin} is off release-policy main; locked release tag {admitting} reaches it and main commit {carrier} carries its tree, so repin to {carrier}"
-                ));
-                return Ok((None, notices));
-            }
-        }
-        if history.len() < 100 {
-            break;
-        }
-    }
-    refuse(format!(
-        "no commit in the main history searched carries its tree {tree}"
-    ))
 }
 
 /// Require a later, readable verification success once the recorded one expired.
@@ -1096,7 +1109,8 @@ pub fn check_live(
             errors.extend(freshness);
         }
         if release_family && release_evidence {
-            let (tag_errors, tag_notices) = tag_protection(canary, live, &prefix)?;
+            let (tag_errors, tag_notices) =
+                tag_protection(&canary.repository, &canary.tag_prefix, live, &prefix)?;
             errors.extend(tag_errors);
             result.notices.extend(tag_notices);
         }

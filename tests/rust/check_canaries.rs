@@ -2439,11 +2439,24 @@ fn an_unseen_policy_bypass_list_is_a_notice() {
     );
 }
 
+fn assert_refused(cases: impl IntoIterator<Item = (Rewrite, String)>) {
+    for (answers, reason) in cases {
+        let (result, _) = rewritten(answers);
+        assert_eq!(
+            result.errors,
+            vec![format!(
+                "python (ryanduguid/example): current pin {SHA} is not reachable from release-policy main (compare status 'diverged'), and no locked release tag admits it: {reason}"
+            )]
+        );
+        assert!(result.notices.is_empty(), "{:?}", result.notices);
+    }
+}
+
 #[test]
-fn a_rewritten_pin_is_refused_unless_every_condition_holds() {
+fn unlocked_or_unreadable_tags_admit_nothing() {
     let mut unlocked = ruleset(json!({"include": ["refs/tags/v*"], "exclude": []}));
     unlocked["rules"] = json!([{"type": "update"}]);
-    let cases = [
+    assert_refused([
         (
             Rewrite {
                 ruleset: unlocked,
@@ -2460,75 +2473,60 @@ fn a_rewritten_pin_is_refused_unless_every_condition_holds() {
         ),
         (
             Rewrite {
-                tags: Some(json!([
-                    null,
-                    {"name": "latest", "commit": {"sha": TAG_SHA}},
-                    {"name": "v1.0.0", "commit": null},
-                    {"name": "v1.0.0", "commit": {"sha": 7}},
-                    {"name": "v1.0.0", "commit": {"sha": "short"}},
-                ])),
+                tags: None,
                 ..rewrite()
             },
-            "no release tag reaches it".to_owned(),
+            "could not read release-policy tags or history: HTTP 502".to_owned(),
         ),
-        (
-            Rewrite {
-                tag_status: json!("diverged"),
-                ..rewrite()
-            },
-            "no release tag reaches it".to_owned(),
-        ),
-        (
-            Rewrite {
-                tag_status: json!("ahead"),
-                ..rewrite()
-            },
-            "no release tag reaches it".to_owned(),
-        ),
-        (
-            Rewrite {
-                tag_status: json!(["behind"]),
-                ..rewrite()
-            },
-            "no release tag reaches it".to_owned(),
-        ),
-        (
-            Rewrite {
-                pin_commit: json!({}),
-                ..rewrite()
-            },
-            "its commit record names no tree".to_owned(),
-        ),
-        (
-            Rewrite {
-                pin_commit: json!({"tree": TREE}),
-                ..rewrite()
-            },
-            "its commit record names no tree".to_owned(),
-        ),
-        (
-            Rewrite {
-                history: vec![json!({})],
-                ..rewrite()
-            },
-            "a page of main's history is not a list".to_owned(),
-        ),
-        (
-            Rewrite {
-                history: vec![json!([unrelated()])],
-                ..rewrite()
-            },
-            format!("no commit in the main history searched carries its tree {TREE}"),
-        ),
-        (
-            Rewrite {
-                pin_commit: json!({"tree": {"sha": "zz"}}),
-                history: vec![json!([carrier(json!(CARRIER), json!("zz"))])],
-                ..rewrite()
-            },
-            "its commit record names no tree".to_owned(),
-        ),
+    ]);
+}
+
+#[test]
+fn a_release_tag_must_reach_the_pin() {
+    let unusable = json!([
+        null,
+        {"name": "latest", "commit": {"sha": TAG_SHA}},
+        {"name": "v1.0.0", "commit": null},
+        {"name": "v1.0.0", "commit": {"sha": 7}},
+        {"name": "v1.0.0", "commit": {"sha": "short"}},
+    ]);
+    let tag_status = [json!("diverged"), json!("ahead"), json!(["behind"])]
+        .into_iter()
+        .map(|tag_status| Rewrite {
+            tag_status,
+            ..rewrite()
+        });
+    let cases = [Rewrite {
+        tags: Some(unusable),
+        ..rewrite()
+    }]
+    .into_iter()
+    .chain(tag_status);
+    assert_refused(cases.map(|answers| (answers, "no release tag reaches it".to_owned())));
+}
+
+#[test]
+fn the_pin_must_name_a_full_tree() {
+    let cases = [
+        Rewrite {
+            pin_commit: json!({}),
+            ..rewrite()
+        },
+        Rewrite {
+            pin_commit: json!({"tree": TREE}),
+            ..rewrite()
+        },
+        Rewrite {
+            pin_commit: json!({"tree": {"sha": "zz"}}),
+            history: vec![json!([carrier(json!(CARRIER), json!("zz"))])],
+            ..rewrite()
+        },
     ];
+    assert_refused(cases.map(|answers| (answers, "its commit record names no tree".to_owned())));
+}
+
+#[test]
+fn main_must_carry_the_tree_in_well_formed_history() {
     let malformed = [
         json!(null),
         carrier(json!(7), json!(TREE)),
@@ -2546,23 +2544,23 @@ fn a_rewritten_pin_is_refused_unless_every_condition_holds() {
             "main's history holds a malformed commit record".to_owned(),
         )
     });
-    let cases = cases.into_iter().chain(malformed).chain([(
-        Rewrite {
-            tags: None,
-            ..rewrite()
-        },
-        "could not read release-policy tags or history: HTTP 502".to_owned(),
-    )]);
-    for (answers, reason) in cases {
-        let (result, _) = rewritten(answers);
-        assert_eq!(
-            result.errors,
-            vec![format!(
-                "python (ryanduguid/example): current pin {SHA} is not reachable from release-policy main (compare status 'diverged'), and no locked release tag admits it: {reason}"
-            )]
-        );
-        assert!(result.notices.is_empty(), "{:?}", result.notices);
-    }
+    let cases = [
+        (
+            Rewrite {
+                history: vec![json!({})],
+                ..rewrite()
+            },
+            "a page of main's history is not a list".to_owned(),
+        ),
+        (
+            Rewrite {
+                history: vec![json!([unrelated()])],
+                ..rewrite()
+            },
+            format!("no commit in the main history searched carries its tree {TREE}"),
+        ),
+    ];
+    assert_refused(cases.into_iter().chain(malformed));
 }
 
 #[test]

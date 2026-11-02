@@ -1344,76 +1344,8 @@ class LockedTagAdmissionTests(unittest.TestCase):
             ),
         )
 
-    def test_a_rewritten_pin_is_refused_unless_every_condition_holds(self) -> None:
-        unrelated = carrier(sha="7" * 40, tree="8" * 40)
-        no_carrier = f"no commit in the main history searched carries its tree {TREE}"
-        for name, fetch, reason in (
-            (
-                "unlocked tags",
-                rewritten_history(protected_ruleset(rules=[{"type": "update"}])),
-                "release-policy: no recognised active tag ruleset without bypass actors "
-                "blocks update and deletion of refs/tags/v*",
-            ),
-            ("tag listing", rewritten_history(tags={}), "release-policy tag listing is not a list"),
-            (
-                "no usable tag",
-                rewritten_history(
-                    tags=[
-                        None,
-                        {"name": "latest", "commit": {"sha": TAG_SHA}},
-                        {"name": "v1.0.0", "commit": None},
-                        {"name": "v1.0.0", "commit": {"sha": 7}},
-                        {"name": "v1.0.0", "commit": {"sha": "short"}},
-                    ]
-                ),
-                "no release tag reaches it",
-            ),
-            ("tag diverged", rewritten_history(tag_status="diverged"), "no release tag reaches it"),
-            ("tag ahead", rewritten_history(tag_status="ahead"), "no release tag reaches it"),
-            ("odd status", rewritten_history(tag_status=["behind"]), "no release tag reaches it"),
-            ("no tree", rewritten_history(pin_commit={}), "its commit record names no tree"),
-            (
-                "tree not a mapping",
-                rewritten_history(pin_commit={"tree": TREE}),
-                "its commit record names no tree",
-            ),
-            (
-                "history page",
-                rewritten_history(history=[{}]),
-                "a page of main's history is not a list",
-            ),
-            (
-                "tree not kept",
-                rewritten_history(history=[[unrelated]]),
-                no_carrier,
-            ),
-            (
-                "malformed pin tree matching a malformed carrier",
-                rewritten_history(pin_commit={"tree": {"sha": "zz"}}, history=[[carrier(tree="zz")]]),
-                "its commit record names no tree",
-            ),
-            *(
-                (
-                    f"malformed history entry {index}",
-                    rewritten_history(history=[[entry, carrier()]]),
-                    "main's history holds a malformed commit record",
-                )
-                for index, entry in enumerate(
-                    (
-                        None,
-                        carrier(sha=7),
-                        carrier(sha="short"),
-                        {"sha": CARRIER, "commit": None},
-                        carrier(tree="short"),
-                    )
-                )
-            ),
-            (
-                "unreadable tags",
-                rewritten_history(tags=check_canaries.GitHubError("HTTP 502")),
-                "could not read release-policy tags or history: HTTP 502",
-            ),
-        ):
+    def assert_refused(self, *cases: tuple[str, object, str]) -> None:
+        for name, fetch, reason in cases:
             with self.subTest(name):
                 result = self.audit(fetch)
                 self.assertEqual(
@@ -1425,6 +1357,73 @@ class LockedTagAdmissionTests(unittest.TestCase):
                     ),
                 )
                 self.assertEqual(result.notices, ())
+
+    def test_unlocked_or_unreadable_tags_admit_nothing(self) -> None:
+        self.assert_refused(
+            (
+                "unlocked tags",
+                rewritten_history(protected_ruleset(rules=[{"type": "update"}])),
+                "release-policy: no recognised active tag ruleset without bypass actors "
+                "blocks update and deletion of refs/tags/v*",
+            ),
+            ("tag listing", rewritten_history(tags={}), "release-policy tag listing is not a list"),
+            (
+                "unreadable tags",
+                rewritten_history(tags=check_canaries.GitHubError("HTTP 502")),
+                "could not read release-policy tags or history: HTTP 502",
+            ),
+        )
+
+    def test_a_release_tag_must_reach_the_pin(self) -> None:
+        unusable = [
+            None,
+            {"name": "latest", "commit": {"sha": TAG_SHA}},
+            {"name": "v1.0.0", "commit": None},
+            {"name": "v1.0.0", "commit": {"sha": 7}},
+            {"name": "v1.0.0", "commit": {"sha": "short"}},
+        ]
+        self.assert_refused(
+            ("no usable tag", rewritten_history(tags=unusable), "no release tag reaches it"),
+            ("tag diverged", rewritten_history(tag_status="diverged"), "no release tag reaches it"),
+            ("tag ahead", rewritten_history(tag_status="ahead"), "no release tag reaches it"),
+            ("odd status", rewritten_history(tag_status=["behind"]), "no release tag reaches it"),
+        )
+
+    def test_the_pin_must_name_a_full_tree(self) -> None:
+        no_tree = "its commit record names no tree"
+        self.assert_refused(
+            ("no tree", rewritten_history(pin_commit={}), no_tree),
+            ("tree not a mapping", rewritten_history(pin_commit={"tree": TREE}), no_tree),
+            (
+                "malformed pin tree matching a malformed carrier",
+                rewritten_history(pin_commit={"tree": {"sha": "zz"}}, history=[[carrier(tree="zz")]]),
+                no_tree,
+            ),
+        )
+
+    def test_main_must_carry_the_tree_in_well_formed_history(self) -> None:
+        unrelated = carrier(sha="7" * 40, tree="8" * 40)
+        malformed = "main's history holds a malformed commit record"
+        self.assert_refused(
+            ("history page", rewritten_history(history=[{}]), "a page of main's history is not a list"),
+            (
+                "tree not kept",
+                rewritten_history(history=[[unrelated]]),
+                f"no commit in the main history searched carries its tree {TREE}",
+            ),
+            *(
+                (f"malformed history entry {index}", rewritten_history(history=[[entry, carrier()]]), malformed)
+                for index, entry in enumerate(
+                    (
+                        None,
+                        carrier(sha=7),
+                        carrier(sha="short"),
+                        {"sha": CARRIER, "commit": None},
+                        carrier(tree="short"),
+                    )
+                )
+            ),
+        )
 
     def test_only_a_pin_github_reports_off_main_can_be_admitted(self) -> None:
         for main_compare, shown in (
