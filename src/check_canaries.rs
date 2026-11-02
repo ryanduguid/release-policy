@@ -27,6 +27,14 @@ pub const MAX_RUN_PAGES: u32 = 10;
 // starts, so a pin that matches the consumer's workflow byte for byte can still
 // be dead after a history rewrite of this repository.
 const REACHABLE_STATUSES: [&str; 2] = ["identical", "behind"];
+// A pin that main no longer reaches still runs while a tag reaches it, so after
+// a history rewrite it is admitted only when a release tag of this repository,
+// locked by an active ruleset against update and deletion, reaches it and a
+// commit on main still carries the pin's exact tree: the code it runs is code
+// main kept. Main's history is read a hundred commits a page, at most this many
+// pages; a search that finds no such commit admits nothing.
+pub const MAX_HISTORY_PAGES: u32 = 10;
+const POLICY_REPOSITORY: &str = "ryanduguid/release-policy";
 // From 1 October 2026 GitHub deletes workflow runs older than the repository's
 // retention period, at most 90 days for a public repository. A recorded run
 // that returns 404 only after that, plus a day's margin for long runs, has
@@ -665,7 +673,7 @@ fn ruleset_protects(ruleset: &Json, pattern: &str) -> bool {
     blocks("update") && blocks("deletion") && unexcluded && included
 }
 
-/// The errors and notices for the family's version tag protection.
+/// The errors and notices for a repository's version tag protection.
 ///
 /// SLSA v1.2 source track level 2 and above requires tags that cannot be moved or
 /// deleted. The listing omits a ruleset's rules and conditions, so each active one
@@ -673,16 +681,17 @@ fn ruleset_protects(ruleset: &Json, pattern: &str) -> bool {
 /// to the ruleset, which the audit's token lacks on a consumer. Requiring the list
 /// would fail every consumer, so a list it cannot see is a notice, not a pass claim.
 fn tag_protection(
-    canary: &Canary,
+    repository: &str,
+    tag_prefix: &str,
     live: &mut dyn Live,
     prefix: &str,
 ) -> Result<(Vec<String>, Vec<String>), String> {
-    let pattern = if canary.tag_prefix.is_empty() {
+    let pattern = if tag_prefix.is_empty() {
         "refs/tags/v*".to_owned()
     } else {
-        format!("refs/tags/{}/v*", canary.tag_prefix)
+        format!("refs/tags/{tag_prefix}/v*")
     };
-    let endpoint = format!("repos/{}/rulesets", canary.repository);
+    let endpoint = format!("repos/{repository}/rulesets");
     let unreadable = |error: GitHubError| {
         vec![format!(
             "{prefix}: could not read tag rulesets: {}",
@@ -728,6 +737,129 @@ fn tag_protection(
         )],
         Vec::new(),
     ))
+}
+
+fn tree_sha(commit: Option<&Json>) -> Option<&str> {
+    commit
+        .and_then(|commit| commit.get("tree"))
+        .and_then(|tree| tree.get("sha"))
+        .and_then(Json::as_str)
+}
+
+/// A value, or why no locked release tag admits the pin; the outer error is an
+/// exception Python let escape.
+type Admission<T> = Result<Result<T, String>, String>;
+
+/// Read a release-policy endpoint; a failed read refuses the admission.
+fn policy_read(live: &mut dyn Live, path: &str) -> Admission<Json> {
+    Ok(
+        handled(live.fetch_json(&format!("repos/{POLICY_REPOSITORY}/{path}")))?.map_err(|error| {
+            format!(
+                "could not read release-policy tags or history: {}",
+                error.message
+            )
+        }),
+    )
+}
+
+/// The first release tag whose commit is the pin or descends from it.
+fn admitting_tag(pin: &str, live: &mut dyn Live) -> Admission<String> {
+    let tags = match policy_read(live, "tags?per_page=100")? {
+        Ok(Json::Array(tags)) => tags,
+        Ok(_) => return Ok(Err("release-policy tag listing is not a list".into())),
+        Err(reason) => return Ok(Err(reason)),
+    };
+    for tag in &tags {
+        let name = tag.get("name").and_then(Json::as_str);
+        let tag_sha = tag
+            .get("commit")
+            .and_then(|commit| commit.get("sha"))
+            .and_then(Json::as_str)
+            .filter(|sha| matches_release_tag(tag.get("name"), "") && full(SHA, sha));
+        let (Some(name), Some(tag_sha)) = (name, tag_sha) else {
+            continue;
+        };
+        let comparison = match policy_read(live, &format!("compare/{tag_sha}...{pin}"))? {
+            Ok(comparison) => comparison,
+            Err(reason) => return Ok(Err(reason)),
+        };
+        let status = comparison.get("status").and_then(Json::as_str);
+        if status.is_some_and(|status| REACHABLE_STATUSES.contains(&status)) {
+            return Ok(Ok(name.to_owned()));
+        }
+    }
+    Ok(Err("no release tag reaches it".into()))
+}
+
+/// The first commit in main's searched history that carries `tree`.
+fn main_carrier(tree: &str, live: &mut dyn Live) -> Admission<String> {
+    for page in 1..=MAX_HISTORY_PAGES {
+        let path = format!("commits?sha=main&per_page=100&page={page}");
+        let history = match policy_read(live, &path)? {
+            Ok(Json::Array(history)) => history,
+            Ok(_) => return Ok(Err("a page of main's history is not a list".into())),
+            Err(reason) => return Ok(Err(reason)),
+        };
+        for entry in &history {
+            let carrier = entry.get("sha").and_then(Json::as_str);
+            let carried = tree_sha(entry.get("commit"));
+            let (Some(carrier), Some(carried)) = (
+                carrier.filter(|sha| full(SHA, sha)),
+                carried.filter(|sha| full(SHA, sha)),
+            ) else {
+                return Ok(Err("main's history holds a malformed commit record".into()));
+            };
+            if carried == tree {
+                return Ok(Ok(carrier.to_owned()));
+            }
+        }
+        if history.len() < 100 {
+            break;
+        }
+    }
+    Ok(Err(format!(
+        "no commit in the main history searched carries its tree {tree}"
+    )))
+}
+
+/// The admitting tag and the main commit that carries the pin's tree.
+fn tag_and_carrier(pin: &str, live: &mut dyn Live) -> Admission<(String, String)> {
+    let admitting = match admitting_tag(pin, live)? {
+        Ok(admitting) => admitting,
+        Err(reason) => return Ok(Err(reason)),
+    };
+    let commit = match policy_read(live, &format!("git/commits/{pin}"))? {
+        Ok(commit) => commit,
+        Err(reason) => return Ok(Err(reason)),
+    };
+    let Some(tree) = tree_sha(Some(&commit)).filter(|tree| full(SHA, tree)) else {
+        return Ok(Err("its commit record names no tree".into()));
+    };
+    Ok(main_carrier(tree, live)?.map(|carrier| (admitting, carrier)))
+}
+
+/// Why no locked release tag admits a pin off main, or None and the notices.
+///
+/// The tag ruleset is read as for a consumer, so a bypass list this token cannot
+/// see is a notice. Any failed or malformed read admits nothing.
+fn locked_tag_admission(
+    pin: &str,
+    live: &mut dyn Live,
+    prefix: &str,
+) -> Result<(Option<String>, Vec<String>), String> {
+    let (tag_errors, mut notices) = tag_protection(POLICY_REPOSITORY, "", live, "release-policy")?;
+    if let Some(error) = tag_errors.into_iter().next() {
+        return Ok((Some(error), Vec::new()));
+    }
+    match tag_and_carrier(pin, live)? {
+        Err(reason) => Ok((Some(reason), Vec::new())),
+        Ok((admitting, carrier)) => {
+            notices.push(format!(
+                "{prefix}: current pin {pin} is off release-policy main; locked release tag {admitting} reaches it and main commit {carrier} carries its tree, so repin to {carrier}"
+            ));
+            Ok((None, notices))
+        }
+    }
 }
 
 /// Require a later, readable verification success once the recorded one expired.
@@ -873,11 +1005,26 @@ pub fn check_live(
                     .iter()
                     .any(|s| eq(status, &Json::str_obj(s)))
                 {
-                    errors.push(format!(
+                    let unreachable = format!(
                         "{prefix}: current pin {} is not reachable from release-policy main (compare status {})",
                         canary.current_policy_sha,
                         repr(status)
-                    ));
+                    );
+                    // Only a pin GitHub reports off main may be admitted by a tag;
+                    // an unreadable or unknown answer stays an error.
+                    if !["ahead", "diverged"]
+                        .iter()
+                        .any(|s| eq(status, &Json::str_obj(s)))
+                    {
+                        errors.push(unreachable);
+                    } else {
+                        match locked_tag_admission(&canary.current_policy_sha, live, &prefix)? {
+                            (None, admitted) => result.notices.extend(admitted),
+                            (Some(refusal), _) => errors.push(format!(
+                                "{unreachable}, and no locked release tag admits it: {refusal}"
+                            )),
+                        }
+                    }
                 }
             }
         }
@@ -962,7 +1109,8 @@ pub fn check_live(
             errors.extend(freshness);
         }
         if release_family && release_evidence {
-            let (tag_errors, tag_notices) = tag_protection(canary, live, &prefix)?;
+            let (tag_errors, tag_notices) =
+                tag_protection(&canary.repository, &canary.tag_prefix, live, &prefix)?;
             errors.extend(tag_errors);
             result.notices.extend(tag_notices);
         }

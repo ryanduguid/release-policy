@@ -81,7 +81,12 @@ this repository reaches any more. GitHub refuses a reusable-workflow call at
 such a commit before any job starts, so after a history rewrite here a
 consumer's pin can match its workflow byte for byte and still fail every
 release. The audit asks GitHub's compare API how the pin sits relative to
-`main` and accepts only `identical` or `behind`.
+`main` and accepts `identical` or `behind`. A pin off `main` passes only when
+a version tag here, locked by an active ruleset against update and deletion,
+reaches it and a commit on `main` still carries the pin's exact tree; the
+audit then names that commit as the repin target. A history rewrite therefore
+leaves released pins working without loosening the evidence checks, while any
+other pin off `main` still fails.
 
 The freshness rule differs by family, because the consumers differ. An
 archive, Python or skills release runs on a tag, so a success newer than the
