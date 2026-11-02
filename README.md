@@ -13,6 +13,18 @@
 
 </div>
 
+Reusable GitHub Actions workflows that release a repository's Python packages, source archives, Rust binaries and skill packs with checksums and SLSA provenance, plus workflows for VirusTotal release scans, attribution checks and independent PR reviews. A consumer calls one with `uses:`, pinned to a full commit SHA of this repository.
+
+| Workflow | Use it to | Guide |
+| --- | --- | --- |
+| `release-python.yml` | Build, attest and hand a Python package to PyPI | [Packaged Python](docs/python-consumers.md) |
+| `release-archive.yml` | Publish a checksummed, attested source archive | [Source archives](docs/archive-consumers.md) |
+| `release-binary.yml` | Build and publish Linux and Windows Rust executables | [Rust binaries](docs/binary-consumers.md) |
+| `release-skills.yml`, `verify-skills.yml` | Verify and release an agent skill pack | [Skill verification and releases](docs/skill-consumers.md) |
+| `virustotal-release.yml` | Scan a release's assets with VirusTotal | [VirusTotal release scans](docs/virustotal-consumers.md) |
+| `attribution-policy.yml` | Fail PR text and commits that carry AI attribution credits | [Attribution checks](docs/attribution-consumers.md) |
+| `pr-review.yml` | Run an independent PR review with your own API key | [PR reviews](docs/pr-review.md) |
+
 Policy checks establish release evidence, not accounting correctness.
 
 **Input:** the recorded `review-ready-gate/v0.1.5` Python canary from Accounting Review Pipeline.
@@ -36,17 +48,21 @@ Start with the [consumer prerequisites](docs/consumer-prerequisites.md) before c
 
 ## Release status
 
-`v0.1.0` is a manually created, notes-only historical source marker. It has no
-uploaded, checksummed module artefact and is not a verified distributable
-module release. GitHub marks the release immutable, so its tag and assets are
-fixed; only its title and notes can still be edited, and it must not be
-retrofitted with assets or described as a distributable.
+[`v0.3.0`](https://github.com/ryanduguid/release-policy/releases/tag/v0.3.0)
+(28 October 2026) is the first release with an artefact: the `release-policy`
+executable for Linux and Windows with SBOMs, provenance attestations and
+`SHA256SUMS`, built and published by this repository's own `release-binary.yml`.
+The workflows still run the Python scripts, not that executable. It is the first
+FSL-1.1-ALv2 release; earlier releases keep their own licence.
 
-The repository now contains reviewed-in-code source-archive and initial
-skill-pack workflow implementations. That does not retrofit `v0.1.0`, make the
-module itself distributable, or prove either phase through this repository's
-own tag. Each consumer migration remains a separate reviewed change pinned to
-a full policy commit.
+`v0.1.0` and `v0.2.0` are notes-only source markers with no uploaded artefact.
+`v0.2.0` marks `a601f1d8b143f92b0517f709216993660d21f480`, the revision ryanduguid
+source repositories pinned on 19 October 2026. GitHub marks the releases
+immutable, so their tags and assets are fixed; the markers must not be
+retrofitted with assets or described as distributables.
+
+Each consumer migration remains a separate reviewed change pinned to a full
+policy commit.
 
 ## Consumer guides
 
