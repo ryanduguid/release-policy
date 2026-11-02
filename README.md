@@ -91,7 +91,7 @@ To run that audit on demand, dispatch CI with `live-canary-audit` selected. The 
 
 ## Licence
 
-Licensed under the Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2). Each version becomes available under the Apache License, Version 2.0, on the second anniversary of its release, as [LICENSE](LICENSE) sets out.
+Licensed under the Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2). Each version becomes available under the Apache License, Version 2.0, on the second anniversary of the date it is made available, as [LICENSE](LICENSE) sets out.
 
 ---
 
