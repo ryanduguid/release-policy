@@ -11,6 +11,8 @@
 
 [![tests](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml) [![Codecov](https://codecov.io/gh/ryanduguid/release-policy/graph/badge.svg)](https://codecov.io/gh/ryanduguid/release-policy) [![CodeQL](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml) [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=ryanduguid_release-policy&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ryanduguid_release-policy) [![Codacy code quality](https://app.codacy.com/project/badge/Grade/49440ac0ee144a12b5fc1380425e9773)](https://app.codacy.com/gh/ryanduguid/release-policy/dashboard)<br> [![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/ryanduguid/release-policy.svg)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/release-policy) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15422/badge)](https://www.bestpractices.dev/projects/15422)<br> [![release](https://badgen.net/github/release/ryanduguid/release-policy/stable?label=release&color=66023C&labelColor=000000)](https://github.com/ryanduguid/release-policy/releases/latest) [![licence: FSL-1.1-ALv2](.github/assets/badges/licence.svg)](LICENSE)
 
+[Prerequisites](docs/consumer-prerequisites.md) · [Verify a release](docs/verify-a-release.md) · [Guarantees](docs/guarantees-and-evidence.md) · [Canaries](canaries.json) · [Licence](#licence)
+
 </div>
 
 Reusable GitHub Actions workflows that release a repository's Python packages, source archives, Rust binaries and skill packs with checksums and SLSA provenance, plus workflows for VirusTotal release scans, attribution checks and independent PR reviews. A consumer calls one with `uses:`, pinned to a full commit SHA of this repository.
@@ -27,19 +29,19 @@ Reusable GitHub Actions workflows that release a repository's Python packages, s
 
 Policy checks establish release evidence, not accounting correctness.
 
-**Input:** the recorded `review-ready-gate/v0.1.5` Python canary from Accounting Review Pipeline.
+**Input:** the recorded `v0.4.0` Python canary from AU FP&A Pack.
 
-The consumer's recorded integration line on 10 September 2026 is:
+The consumer's release caller at that tag is:
 
 ```yaml
-uses: ryanduguid/release-policy/.github/workflows/release-python.yml@fcf25e532e9eb60056ae6e5c819cf3125c4f4b91
+uses: ryanduguid/release-policy/.github/workflows/release-python.yml@0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c
 ```
 
-**Recorded output:** run 34163202701 supplies the release evidence for [review-ready-gate/v0.1.5](https://github.com/ryanduguid/accounting-review-pipeline/releases/tag/review-ready-gate/v0.1.5), with policy SHA `fcf25e532e9eb60056ae6e5c819cf3125c4f4b91`.
+**Recorded output:** run 40612457692 on 28 October 2026 supplies the release evidence for [au-fpa-pack v0.4.0](https://github.com/ryanduguid/au-fpa-pack/releases/tag/v0.4.0): the wheel, source archive, SBOM, provenance, release manifest and `SHA256SUMS`, with policy SHA `0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c`.
 
 **Human decision:** Check the release artefacts and their attestations against that recorded policy revision. This evidence applies to the recorded policy revision. Later policy changes need their own verification.
 
-This snapshot was checked against [canaries.json](canaries.json) on 10 September 2026. The manifest retains the source commit, policy SHA and run identity; consult it for later updates. This repository has no package installation command.
+This snapshot was checked against [canaries.json](canaries.json) on 2 November 2026. The manifest retains the source commit, policy SHA and run identity; consult it for later updates. This repository has no package installation command.
 
 Start with the [consumer prerequisites](docs/consumer-prerequisites.md) before choosing a release workflow.
 
@@ -86,6 +88,10 @@ Run the existing offline manifest check with `python scripts/check_canaries.py`.
 To run that audit on demand, dispatch CI with `live-canary-audit` selected. The input defaults to false; an ordinary manual dispatch performs the offline manifest check. A successful audit verifies the recorded evidence; it changes nothing and does not authorise a release or consumer migration.
 
 </details>
+
+## Licence
+
+Licensed under the Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2). Each version becomes available under the Apache License, Version 2.0, on the second anniversary of its release, as [LICENSE](LICENSE) sets out.
 
 ---
 
