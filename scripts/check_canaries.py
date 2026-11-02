@@ -489,7 +489,7 @@ def _locked_tag_admission(
         if admitting is None:
             return "no release tag reaches it", []
         tree = _tree_sha(fetch_json(f"{endpoint}/git/commits/{pin}"))
-        if not isinstance(tree, str):
+        if not isinstance(tree, str) or _FULL_SHA.fullmatch(tree) is None:
             return "its commit record names no tree", []
         for page in range(1, MAX_HISTORY_PAGES + 1):
             history = fetch_json(f"{endpoint}/commits?sha=main&per_page=100&page={page}")
@@ -497,8 +497,13 @@ def _locked_tag_admission(
                 return "a page of main's history is not a list", []
             for entry in history:
                 carrier = entry.get("sha") if isinstance(entry, dict) else None
-                commit = entry.get("commit") if isinstance(entry, dict) else None
-                if isinstance(carrier, str) and _tree_sha(commit) == tree:
+                carried = _tree_sha(entry.get("commit") if isinstance(entry, dict) else None)
+                if not all(
+                    isinstance(sha, str) and _FULL_SHA.fullmatch(sha) is not None
+                    for sha in (carrier, carried)
+                ):
+                    return "main's history holds a malformed commit record", []
+                if carried == tree:
                     return None, [
                         *notices,
                         f"{prefix}: current pin {pin} is off release-policy main; locked "
@@ -609,27 +614,34 @@ def check_live(
             "repos/ryanduguid/release-policy/compare/"
             f"main...{canary.current_policy_sha}"
         )
-        unreachable = None
         try:
             comparison = fetch_json(compare_endpoint)
         except RuntimeError as error:
-            unreachable = f": {error}"
+            errors.append(
+                f"{prefix}: current pin {canary.current_policy_sha} is not reachable "
+                f"from release-policy main: {error}"
+            )
         else:
             status = comparison.get("status") if isinstance(comparison, dict) else None
             if status not in _REACHABLE_STATUSES:
-                unreachable = f" (compare status {status!r})"
-        if unreachable is not None:
-            refusal, admitted = _locked_tag_admission(
-                canary.current_policy_sha, fetch_json, prefix
-            )
-            if refusal is None:
-                notices.extend(admitted)
-            else:
-                errors.append(
+                unreachable = (
                     f"{prefix}: current pin {canary.current_policy_sha} is not reachable "
-                    f"from release-policy main{unreachable}, and no locked release tag "
-                    f"admits it: {refusal}"
+                    f"from release-policy main (compare status {status!r})"
                 )
+                # Only a pin GitHub reports off main may be admitted by a tag;
+                # an unreadable or unknown answer stays an error.
+                if status not in ("ahead", "diverged"):
+                    errors.append(unreachable)
+                else:
+                    refusal, admitted = _locked_tag_admission(
+                        canary.current_policy_sha, fetch_json, prefix
+                    )
+                    if refusal is None:
+                        notices.extend(admitted)
+                    else:
+                        errors.append(
+                            f"{unreachable}, and no locked release tag admits it: {refusal}"
+                        )
 
         run_endpoint = f"repos/{canary.repository}/actions/runs/{canary.evidence.run_id}"
         run_expired = False

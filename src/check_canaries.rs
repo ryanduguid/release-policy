@@ -811,7 +811,10 @@ fn locked_tag_admission(
         Ok(commit) => commit,
         Err(error) => return refuse(unreadable(error)),
     };
-    let Some(tree) = tree_sha(Some(&commit)).map(str::to_owned) else {
+    let Some(tree) = tree_sha(Some(&commit))
+        .filter(|tree| full(SHA, tree))
+        .map(str::to_owned)
+    else {
         return refuse("its commit record names no tree".into());
     };
     for page in 1..=MAX_HISTORY_PAGES {
@@ -821,17 +824,21 @@ fn locked_tag_admission(
             Ok(_) => return refuse("a page of main's history is not a list".into()),
             Err(error) => return refuse(unreadable(error)),
         };
-        let kept = history.iter().find_map(|entry| {
-            entry
-                .get("sha")
-                .and_then(Json::as_str)
-                .filter(|_| tree_sha(entry.get("commit")) == Some(tree.as_str()))
-        });
-        if let Some(carrier) = kept {
-            notices.push(format!(
-                "{prefix}: current pin {pin} is off release-policy main; locked release tag {admitting} reaches it and main commit {carrier} carries its tree, so repin to {carrier}"
-            ));
-            return Ok((None, notices));
+        for entry in &history {
+            let carrier = entry.get("sha").and_then(Json::as_str);
+            let carried = tree_sha(entry.get("commit"));
+            let (Some(carrier), Some(carried)) = (
+                carrier.filter(|sha| full(SHA, sha)),
+                carried.filter(|sha| full(SHA, sha)),
+            ) else {
+                return refuse("main's history holds a malformed commit record".into());
+            };
+            if carried == tree {
+                notices.push(format!(
+                    "{prefix}: current pin {pin} is off release-policy main; locked release tag {admitting} reaches it and main commit {carrier} carries its tree, so repin to {carrier}"
+                ));
+                return Ok((None, notices));
+            }
         }
         if history.len() < 100 {
             break;
@@ -966,9 +973,11 @@ pub fn check_live(
             "repos/ryanduguid/release-policy/compare/main...{}",
             canary.current_policy_sha
         );
-        let mut unreachable = None;
         match handled(live.fetch_json(&compare_endpoint))? {
-            Err(error) => unreachable = Some(format!(": {}", error.message)),
+            Err(error) => errors.push(format!(
+                "{prefix}: current pin {} is not reachable from release-policy main: {}",
+                canary.current_policy_sha, error.message
+            )),
             Ok(comparison) => {
                 let status = comparison.get("status");
                 if let Some(Json::Array(_) | Json::Object(_)) = status {
@@ -983,17 +992,27 @@ pub fn check_live(
                     .iter()
                     .any(|s| eq(status, &Json::str_obj(s)))
                 {
-                    unreachable = Some(format!(" (compare status {})", repr(status)));
+                    let unreachable = format!(
+                        "{prefix}: current pin {} is not reachable from release-policy main (compare status {})",
+                        canary.current_policy_sha,
+                        repr(status)
+                    );
+                    // Only a pin GitHub reports off main may be admitted by a tag;
+                    // an unreadable or unknown answer stays an error.
+                    if !["ahead", "diverged"]
+                        .iter()
+                        .any(|s| eq(status, &Json::str_obj(s)))
+                    {
+                        errors.push(unreachable);
+                    } else {
+                        match locked_tag_admission(&canary.current_policy_sha, live, &prefix)? {
+                            (None, admitted) => result.notices.extend(admitted),
+                            (Some(refusal), _) => errors.push(format!(
+                                "{unreachable}, and no locked release tag admits it: {refusal}"
+                            )),
+                        }
+                    }
                 }
-            }
-        }
-        if let Some(unreachable) = unreachable {
-            match locked_tag_admission(&canary.current_policy_sha, live, &prefix)? {
-                (None, admitted) => result.notices.extend(admitted),
-                (Some(refusal), _) => errors.push(format!(
-                    "{prefix}: current pin {} is not reachable from release-policy main{unreachable}, and no locked release tag admits it: {refusal}",
-                    canary.current_policy_sha
-                )),
             }
         }
 

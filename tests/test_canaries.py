@@ -1253,6 +1253,7 @@ def rewritten_history(
     *rulesets: dict[str, object],
     tags: object = None,
     tag_status: object = "behind",
+    main_compare: object = None,
     pin_commit: object = None,
     history: object = None,
     requests: list[str] | None = None,
@@ -1264,7 +1265,9 @@ def rewritten_history(
 
     def fetch(endpoint: str) -> object:
         if endpoint == f"{POLICY}/compare/main...{SHA}":
-            return {"status": "diverged"}
+            if isinstance(main_compare, Exception):
+                raise main_compare
+            return {"status": "diverged"} if main_compare is None else main_compare
         if endpoint == f"{POLICY}/tags?per_page=100":
             if isinstance(tags, Exception):
                 raise tags
@@ -1381,10 +1384,29 @@ class LockedTagAdmissionTests(unittest.TestCase):
             ),
             (
                 "tree not kept",
-                rewritten_history(
-                    history=[[None, unrelated, carrier(sha=7), {"sha": CARRIER, "commit": None}]]
-                ),
+                rewritten_history(history=[[unrelated]]),
                 no_carrier,
+            ),
+            (
+                "malformed pin tree matching a malformed carrier",
+                rewritten_history(pin_commit={"tree": {"sha": "zz"}}, history=[[carrier(tree="zz")]]),
+                "its commit record names no tree",
+            ),
+            *(
+                (
+                    f"malformed history entry {index}",
+                    rewritten_history(history=[[entry, carrier()]]),
+                    "main's history holds a malformed commit record",
+                )
+                for index, entry in enumerate(
+                    (
+                        None,
+                        carrier(sha=7),
+                        carrier(sha="short"),
+                        {"sha": CARRIER, "commit": None},
+                        carrier(tree="short"),
+                    )
+                )
             ),
             (
                 "unreadable tags",
@@ -1404,10 +1426,28 @@ class LockedTagAdmissionTests(unittest.TestCase):
                 )
                 self.assertEqual(result.notices, ())
 
+    def test_only_a_pin_github_reports_off_main_can_be_admitted(self) -> None:
+        for main_compare, shown in (
+            (check_canaries.GitHubError("HTTP 502"), ": HTTP 502"),
+            ({}, " (compare status None)"),
+            ({"status": "unexpected"}, " (compare status 'unexpected')"),
+        ):
+            with self.subTest(shown):
+                requests: list[str] = []
+                result = self.audit(
+                    rewritten_history(main_compare=main_compare, requests=requests)
+                )
+                self.assertEqual(
+                    result.errors,
+                    (f"{self.PREFIX}: current pin {SHA} is not reachable from release-policy main{shown}",),
+                )
+                self.assertEqual(result.notices, ())
+                self.assertNotIn(f"{POLICY}/tags?per_page=100", requests)
+
     def test_the_search_of_main_is_bounded(self) -> None:
         requests: list[str] = []
         pages = [[carrier(sha="7" * 40, tree="8" * 40)] * 100] * (
-            check_canaries.MAX_HISTORY_PAGES + 1
+            10 + 1
         ) + [[carrier()]]
         result = self.audit(rewritten_history(history=pages, requests=requests))
         self.assertEqual(len(result.errors), 1)
@@ -1418,7 +1458,7 @@ class LockedTagAdmissionTests(unittest.TestCase):
         )
         self.assertEqual(
             sum("/commits?sha=main" in endpoint for endpoint in requests),
-            check_canaries.MAX_HISTORY_PAGES,
+            10,
         )
 
 

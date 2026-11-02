@@ -2334,6 +2334,7 @@ struct Rewrite {
     tag_status: Value,
     pin_commit: Value,
     history: Vec<Value>,
+    main_compare: Result<Value, &'static str>,
 }
 
 fn rewrite() -> Rewrite {
@@ -2343,6 +2344,7 @@ fn rewrite() -> Rewrite {
         tag_status: json!("behind"),
         pin_commit: json!({"tree": {"sha": TREE}}),
         history: vec![json!([carrier(json!(CARRIER), json!(TREE))])],
+        main_compare: Ok(json!({"status": "diverged"})),
     }
 }
 
@@ -2351,7 +2353,10 @@ fn rewritten(answers: Rewrite) -> (CheckResult, Vec<String>) {
     let mut fake = Fake {
         json: move |endpoint: &str| {
             if endpoint == format!("{POLICY}/compare/main...{SHA}") {
-                body(json!({"status": "diverged"}))
+                match &answers.main_compare {
+                    Ok(value) => body(value.clone()),
+                    Err(message) => Reply::Fail(message, None),
+                }
             } else if endpoint == format!("{POLICY}/rulesets?targets=tag&per_page=100") {
                 body(json!([{"id": 7, "enforcement": "active"}]))
             } else if endpoint == format!("{POLICY}/rulesets/7") {
@@ -2510,24 +2515,44 @@ fn a_rewritten_pin_is_refused_unless_every_condition_holds() {
         ),
         (
             Rewrite {
-                history: vec![json!([
-                    null,
-                    unrelated(),
-                    carrier(json!(7), json!(TREE)),
-                    {"sha": CARRIER, "commit": null},
-                ])],
+                history: vec![json!([unrelated()])],
                 ..rewrite()
             },
             format!("no commit in the main history searched carries its tree {TREE}"),
         ),
         (
             Rewrite {
-                tags: None,
+                pin_commit: json!({"tree": {"sha": "zz"}}),
+                history: vec![json!([carrier(json!(CARRIER), json!("zz"))])],
                 ..rewrite()
             },
-            "could not read release-policy tags or history: HTTP 502".to_owned(),
+            "its commit record names no tree".to_owned(),
         ),
     ];
+    let malformed = [
+        json!(null),
+        carrier(json!(7), json!(TREE)),
+        carrier(json!("short"), json!(TREE)),
+        json!({"sha": CARRIER, "commit": null}),
+        carrier(json!(CARRIER), json!("short")),
+    ]
+    .into_iter()
+    .map(|entry| {
+        (
+            Rewrite {
+                history: vec![json!([entry, carrier(json!(CARRIER), json!(TREE))])],
+                ..rewrite()
+            },
+            "main's history holds a malformed commit record".to_owned(),
+        )
+    });
+    let cases = cases.into_iter().chain(malformed).chain([(
+        Rewrite {
+            tags: None,
+            ..rewrite()
+        },
+        "could not read release-policy tags or history: HTTP 502".to_owned(),
+    )]);
     for (answers, reason) in cases {
         let (result, _) = rewritten(answers);
         assert_eq!(
@@ -2541,9 +2566,33 @@ fn a_rewritten_pin_is_refused_unless_every_condition_holds() {
 }
 
 #[test]
+fn only_a_pin_github_reports_off_main_can_be_admitted() {
+    for (main_compare, shown) in [
+        (Err("HTTP 502"), ": HTTP 502"),
+        (Ok(json!({})), " (compare status None)"),
+        (
+            Ok(json!({"status": "unexpected"})),
+            " (compare status 'unexpected')",
+        ),
+    ] {
+        let (result, requests) = rewritten(Rewrite {
+            main_compare,
+            ..rewrite()
+        });
+        assert_eq!(
+            result.errors,
+            vec![format!(
+                "python (ryanduguid/example): current pin {SHA} is not reachable from release-policy main{shown}"
+            )]
+        );
+        assert!(result.notices.is_empty(), "{:?}", result.notices);
+        assert!(!requests.contains(&format!("{POLICY}/tags?per_page=100")));
+    }
+}
+
+#[test]
 fn the_search_of_main_is_bounded() {
-    let mut history =
-        vec![Value::Array(vec![unrelated(); 100]); cc::MAX_HISTORY_PAGES as usize + 1];
+    let mut history = vec![Value::Array(vec![unrelated(); 100]); 10 + 1];
     history.push(json!([carrier(json!(CARRIER), json!(TREE))]));
     let (result, requests) = rewritten(Rewrite {
         history,
@@ -2558,6 +2607,6 @@ fn the_search_of_main_is_bounded() {
             .iter()
             .filter(|endpoint| endpoint.contains("/commits?sha=main"))
             .count(),
-        cc::MAX_HISTORY_PAGES as usize
+        10
     );
 }
