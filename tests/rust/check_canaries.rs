@@ -2309,3 +2309,255 @@ fn main_live_audit_without_gh_is_an_unexpected_error() {
     };
     assert_eq!(out.stderr, expected);
 }
+
+// LockedTagAdmissionTests
+
+const POLICY: &str = "repos/ryanduguid/release-policy";
+const TAG_SHA: &str = "4444444444444444444444444444444444444444";
+const TREE: &str = "5555555555555555555555555555555555555555";
+const CARRIER: &str = "6666666666666666666666666666666666666666";
+const UNRELATED: &str = "7777777777777777777777777777777777777777";
+const UNRELATED_TREE: &str = "8888888888888888888888888888888888888888";
+
+fn carrier(sha: Value, tree: Value) -> Value {
+    json!({"sha": sha, "commit": {"tree": {"sha": tree}}})
+}
+
+fn unrelated() -> Value {
+    carrier(json!(UNRELATED), json!(UNRELATED_TREE))
+}
+
+/// The reads of a pin that a history rewrite took off main; `tags: None` fails.
+struct Rewrite {
+    ruleset: Value,
+    tags: Option<Value>,
+    tag_status: Value,
+    pin_commit: Value,
+    history: Vec<Value>,
+}
+
+fn rewrite() -> Rewrite {
+    Rewrite {
+        ruleset: ruleset(json!({"include": ["refs/tags/v*"], "exclude": []})),
+        tags: Some(json!([{"name": "v0.3.0", "commit": {"sha": TAG_SHA}}])),
+        tag_status: json!("behind"),
+        pin_commit: json!({"tree": {"sha": TREE}}),
+        history: vec![json!([carrier(json!(CARRIER), json!(TREE))])],
+    }
+}
+
+fn rewritten(answers: Rewrite) -> (CheckResult, Vec<String>) {
+    let history_page = format!("{POLICY}/commits?sha=main&per_page=100&page=");
+    let mut fake = Fake {
+        json: move |endpoint: &str| {
+            if endpoint == format!("{POLICY}/compare/main...{SHA}") {
+                body(json!({"status": "diverged"}))
+            } else if endpoint == format!("{POLICY}/rulesets?targets=tag&per_page=100") {
+                body(json!([{"id": 7, "enforcement": "active"}]))
+            } else if endpoint == format!("{POLICY}/rulesets/7") {
+                body(answers.ruleset.clone())
+            } else if endpoint == format!("{POLICY}/tags?per_page=100") {
+                match &answers.tags {
+                    Some(tags) => body(tags.clone()),
+                    None => Reply::Fail("HTTP 502", None),
+                }
+            } else if endpoint == format!("{POLICY}/compare/{TAG_SHA}...{SHA}") {
+                body(json!({"status": answers.tag_status}))
+            } else if endpoint == format!("{POLICY}/git/commits/{SHA}") {
+                body(answers.pin_commit.clone())
+            } else if let Some(page) = endpoint.strip_prefix(&history_page) {
+                body(answers.history[page.parse::<usize>().unwrap() - 1].clone())
+            } else if endpoint.ends_with("/actions/runs/123") {
+                body(run("v1.2.3"))
+            } else {
+                listing(vec![run("v1.2.3")])
+            }
+        },
+        pin: pin("python"),
+        verifier: None,
+        requests: Vec::new(),
+    };
+    let result = cc::check_live(
+        &parse(&python()).unwrap(),
+        &mut fake,
+        false,
+        before_expiry(),
+    )
+    .unwrap();
+    (result, fake.requests)
+}
+
+fn admitted() -> String {
+    format!(
+        "python (ryanduguid/example): current pin {SHA} is off release-policy main; locked release tag v0.3.0 reaches it and main commit {CARRIER} carries its tree, so repin to {CARRIER}"
+    )
+}
+
+#[test]
+fn a_locked_tag_admits_a_rewritten_pin_whose_tree_main_kept() {
+    let (result, requests) = rewritten(rewrite());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert!(result.warnings.is_empty());
+    assert_eq!(result.notices, vec![admitted()]);
+    assert!(requests.contains(&format!("{POLICY}/rulesets?targets=tag&per_page=100")));
+    assert!(requests.contains(&format!("{POLICY}/compare/{TAG_SHA}...{SHA}")));
+}
+
+#[test]
+fn the_carrier_may_sit_on_a_later_page_of_main() {
+    let (result, _) = rewritten(Rewrite {
+        history: vec![
+            Value::Array(vec![unrelated(); 100]),
+            json!([carrier(json!(CARRIER), json!(TREE))]),
+        ],
+        ..rewrite()
+    });
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(result.notices, vec![admitted()]);
+}
+
+#[test]
+fn an_unseen_policy_bypass_list_is_a_notice() {
+    let mut hidden = ruleset(json!({"include": ["refs/tags/v*"], "exclude": []}));
+    hidden["bypass_actors"] = Value::Null;
+    let (result, _) = rewritten(Rewrite {
+        ruleset: hidden,
+        ..rewrite()
+    });
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert_eq!(
+        result.notices,
+        vec![
+            "release-policy: this token cannot see the bypass list of tag ruleset 7, so its bypass actors were not checked".to_owned(),
+            admitted(),
+        ]
+    );
+}
+
+#[test]
+fn a_rewritten_pin_is_refused_unless_every_condition_holds() {
+    let mut unlocked = ruleset(json!({"include": ["refs/tags/v*"], "exclude": []}));
+    unlocked["rules"] = json!([{"type": "update"}]);
+    let cases = [
+        (
+            Rewrite {
+                ruleset: unlocked,
+                ..rewrite()
+            },
+            "release-policy: no recognised active tag ruleset without bypass actors blocks update and deletion of refs/tags/v*".to_owned(),
+        ),
+        (
+            Rewrite {
+                tags: Some(json!({})),
+                ..rewrite()
+            },
+            "release-policy tag listing is not a list".to_owned(),
+        ),
+        (
+            Rewrite {
+                tags: Some(json!([
+                    null,
+                    {"name": "latest", "commit": {"sha": TAG_SHA}},
+                    {"name": "v1.0.0", "commit": null},
+                    {"name": "v1.0.0", "commit": {"sha": 7}},
+                    {"name": "v1.0.0", "commit": {"sha": "short"}},
+                ])),
+                ..rewrite()
+            },
+            "no release tag reaches it".to_owned(),
+        ),
+        (
+            Rewrite {
+                tag_status: json!("diverged"),
+                ..rewrite()
+            },
+            "no release tag reaches it".to_owned(),
+        ),
+        (
+            Rewrite {
+                tag_status: json!("ahead"),
+                ..rewrite()
+            },
+            "no release tag reaches it".to_owned(),
+        ),
+        (
+            Rewrite {
+                tag_status: json!(["behind"]),
+                ..rewrite()
+            },
+            "no release tag reaches it".to_owned(),
+        ),
+        (
+            Rewrite {
+                pin_commit: json!({}),
+                ..rewrite()
+            },
+            "its commit record names no tree".to_owned(),
+        ),
+        (
+            Rewrite {
+                pin_commit: json!({"tree": TREE}),
+                ..rewrite()
+            },
+            "its commit record names no tree".to_owned(),
+        ),
+        (
+            Rewrite {
+                history: vec![json!({})],
+                ..rewrite()
+            },
+            "a page of main's history is not a list".to_owned(),
+        ),
+        (
+            Rewrite {
+                history: vec![json!([
+                    null,
+                    unrelated(),
+                    carrier(json!(7), json!(TREE)),
+                    {"sha": CARRIER, "commit": null},
+                ])],
+                ..rewrite()
+            },
+            format!("no commit in the main history searched carries its tree {TREE}"),
+        ),
+        (
+            Rewrite {
+                tags: None,
+                ..rewrite()
+            },
+            "could not read release-policy tags or history: HTTP 502".to_owned(),
+        ),
+    ];
+    for (answers, reason) in cases {
+        let (result, _) = rewritten(answers);
+        assert_eq!(
+            result.errors,
+            vec![format!(
+                "python (ryanduguid/example): current pin {SHA} is not reachable from release-policy main (compare status 'diverged'), and no locked release tag admits it: {reason}"
+            )]
+        );
+        assert!(result.notices.is_empty(), "{:?}", result.notices);
+    }
+}
+
+#[test]
+fn the_search_of_main_is_bounded() {
+    let mut history =
+        vec![Value::Array(vec![unrelated(); 100]); cc::MAX_HISTORY_PAGES as usize + 1];
+    history.push(json!([carrier(json!(CARRIER), json!(TREE))]));
+    let (result, requests) = rewritten(Rewrite {
+        history,
+        ..rewrite()
+    });
+    assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+    assert!(result.errors[0].ends_with(&format!(
+        "no commit in the main history searched carries its tree {TREE}"
+    )));
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|endpoint| endpoint.contains("/commits?sha=main"))
+            .count(),
+        cc::MAX_HISTORY_PAGES as usize
+    );
+}

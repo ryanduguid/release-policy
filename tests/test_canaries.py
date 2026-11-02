@@ -1239,5 +1239,188 @@ class ProvenanceVerifierTests(unittest.TestCase):
                 self.run_verifier(**overrides)  # type: ignore[arg-type]
 
 
+POLICY = "repos/ryanduguid/release-policy"
+TAG_SHA = "4" * 40
+TREE = "5" * 40
+CARRIER = "6" * 40
+
+
+def carrier(sha: object = CARRIER, tree: object = TREE) -> dict[str, object]:
+    return {"sha": sha, "commit": {"tree": {"sha": tree}}}
+
+
+def rewritten_history(
+    *rulesets: dict[str, object],
+    tags: object = None,
+    tag_status: object = "behind",
+    pin_commit: object = None,
+    history: object = None,
+    requests: list[str] | None = None,
+):
+    """Answer the reads of a pin that a history rewrite took off main."""
+    tags = [{"name": "v0.3.0", "commit": {"sha": TAG_SHA}}] if tags is None else tags
+    pin_commit = {"tree": {"sha": TREE}} if pin_commit is None else pin_commit
+    pages = [[carrier()]] if history is None else history
+
+    def fetch(endpoint: str) -> object:
+        if endpoint == f"{POLICY}/compare/main...{SHA}":
+            return {"status": "diverged"}
+        if endpoint == f"{POLICY}/tags?per_page=100":
+            if isinstance(tags, Exception):
+                raise tags
+            return tags
+        if endpoint == f"{POLICY}/compare/{TAG_SHA}...{SHA}":
+            return {"status": tag_status}
+        if endpoint == f"{POLICY}/git/commits/{SHA}":
+            return pin_commit
+        prefix = f"{POLICY}/commits?sha=main&per_page=100&page="
+        if endpoint.startswith(prefix):
+            return pages[int(endpoint[len(prefix):]) - 1]
+        if endpoint.endswith("/actions/runs/123"):
+            return run_payload()
+        return {"workflow_runs": [run_payload()]}
+
+    answer = with_rulesets(fetch, *rulesets)
+
+    def recorded(endpoint: str) -> object:
+        if requests is not None:
+            requests.append(endpoint)
+        return answer(endpoint)
+
+    return recorded
+
+
+class LockedTagAdmissionTests(unittest.TestCase):
+    """After a history rewrite a pin off main still runs while a tag reaches it.
+    The audit admits it only through a locked release tag of this repository
+    that reaches it, and only when a commit on main still carries its tree."""
+
+    PREFIX = "python (ryanduguid/example)"
+
+    def audit(self, fetch) -> check_canaries.CheckResult:
+        return check_canaries.check_live(
+            check_canaries.parse_manifest(manifest()),
+            fetch_json=fetch,
+            fetch_text=lambda _: (
+                "uses: ryanduguid/release-policy/.github/workflows/"
+                f"release-python.yml@{SHA}\n"
+            ),
+        )
+
+    def admitted(self) -> str:
+        return (
+            f"{self.PREFIX}: current pin {SHA} is off release-policy main; locked "
+            f"release tag v0.3.0 reaches it and main commit {CARRIER} carries its "
+            f"tree, so repin to {CARRIER}"
+        )
+
+    def test_a_locked_tag_admits_a_rewritten_pin_whose_tree_main_kept(self) -> None:
+        requests: list[str] = []
+        result = self.audit(rewritten_history(requests=requests))
+        self.assertEqual(result.errors, ())
+        self.assertEqual(result.warnings, ())
+        self.assertEqual(result.notices, (self.admitted(),))
+        self.assertIn(f"{POLICY}/rulesets?targets=tag&per_page=100", requests)
+        self.assertIn(f"{POLICY}/compare/{TAG_SHA}...{SHA}", requests)
+
+    def test_the_carrier_may_sit_on_a_later_page_of_main(self) -> None:
+        other = carrier(sha="7" * 40, tree="8" * 40)
+        result = self.audit(rewritten_history(history=[[other] * 100, [carrier()]]))
+        self.assertEqual(result.errors, ())
+        self.assertEqual(result.notices, (self.admitted(),))
+
+    def test_an_unseen_bypass_list_is_a_notice(self) -> None:
+        result = self.audit(rewritten_history(protected_ruleset(bypass_actors=None)))
+        self.assertEqual(result.errors, ())
+        self.assertEqual(
+            result.notices,
+            (
+                "release-policy: this token cannot see the bypass list of tag ruleset 7, "
+                "so its bypass actors were not checked",
+                self.admitted(),
+            ),
+        )
+
+    def test_a_rewritten_pin_is_refused_unless_every_condition_holds(self) -> None:
+        unrelated = carrier(sha="7" * 40, tree="8" * 40)
+        no_carrier = f"no commit in the main history searched carries its tree {TREE}"
+        for name, fetch, reason in (
+            (
+                "unlocked tags",
+                rewritten_history(protected_ruleset(rules=[{"type": "update"}])),
+                "release-policy: no recognised active tag ruleset without bypass actors "
+                "blocks update and deletion of refs/tags/v*",
+            ),
+            ("tag listing", rewritten_history(tags={}), "release-policy tag listing is not a list"),
+            (
+                "no usable tag",
+                rewritten_history(
+                    tags=[
+                        None,
+                        {"name": "latest", "commit": {"sha": TAG_SHA}},
+                        {"name": "v1.0.0", "commit": None},
+                        {"name": "v1.0.0", "commit": {"sha": 7}},
+                        {"name": "v1.0.0", "commit": {"sha": "short"}},
+                    ]
+                ),
+                "no release tag reaches it",
+            ),
+            ("tag diverged", rewritten_history(tag_status="diverged"), "no release tag reaches it"),
+            ("tag ahead", rewritten_history(tag_status="ahead"), "no release tag reaches it"),
+            ("odd status", rewritten_history(tag_status=["behind"]), "no release tag reaches it"),
+            ("no tree", rewritten_history(pin_commit={}), "its commit record names no tree"),
+            (
+                "tree not a mapping",
+                rewritten_history(pin_commit={"tree": TREE}),
+                "its commit record names no tree",
+            ),
+            (
+                "history page",
+                rewritten_history(history=[{}]),
+                "a page of main's history is not a list",
+            ),
+            (
+                "tree not kept",
+                rewritten_history(
+                    history=[[None, unrelated, carrier(sha=7), {"sha": CARRIER, "commit": None}]]
+                ),
+                no_carrier,
+            ),
+            (
+                "unreadable tags",
+                rewritten_history(tags=check_canaries.GitHubError("HTTP 502")),
+                "could not read release-policy tags or history: HTTP 502",
+            ),
+        ):
+            with self.subTest(name):
+                result = self.audit(fetch)
+                self.assertEqual(
+                    result.errors,
+                    (
+                        f"{self.PREFIX}: current pin {SHA} is not reachable from "
+                        "release-policy main (compare status 'diverged'), and no locked "
+                        f"release tag admits it: {reason}",
+                    ),
+                )
+                self.assertEqual(result.notices, ())
+
+    def test_the_search_of_main_is_bounded(self) -> None:
+        requests: list[str] = []
+        pages = [[carrier(sha="7" * 40, tree="8" * 40)] * 100] * (
+            check_canaries.MAX_HISTORY_PAGES + 1
+        ) + [[carrier()]]
+        result = self.audit(rewritten_history(history=pages, requests=requests))
+        self.assertEqual(len(result.errors), 1)
+        self.assertTrue(
+            result.errors[0].endswith(
+                f"no commit in the main history searched carries its tree {TREE}"
+            )
+        )
+        self.assertEqual(
+            sum("/commits?sha=main" in endpoint for endpoint in requests),
+            check_canaries.MAX_HISTORY_PAGES,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

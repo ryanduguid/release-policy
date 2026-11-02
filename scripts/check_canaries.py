@@ -40,6 +40,14 @@ MAX_RUN_PAGES = 10
 # starts, so a pin that matches the consumer's workflow byte for byte can still
 # be dead after a history rewrite of this repository.
 _REACHABLE_STATUSES = frozenset({"identical", "behind"})
+# A pin that main no longer reaches still runs while a tag reaches it, so after
+# a history rewrite it is admitted only when a release tag of this repository,
+# locked by an active ruleset against update and deletion, reaches it and a
+# commit on main still carries the pin's exact tree: the code it runs is code
+# main kept. Main's history is read a hundred commits a page, at most this many
+# pages; a search that finds no such commit admits nothing.
+MAX_HISTORY_PAGES = 10
+_POLICY_REPOSITORY = "ryanduguid/release-policy"
 # From 1 October 2026 GitHub deletes workflow runs older than the repository's
 # retention period, at most 90 days for a public repository. A recorded run
 # that returns 404 only after that, plus a day's margin for long runs, has
@@ -401,7 +409,14 @@ def _ruleset_protects(ruleset: object, pattern: str) -> bool:
 def _tag_protection(
     canary: Canary, fetch_json: Callable[[str], object], prefix: str
 ) -> tuple[list[str], list[str]]:
-    """Return errors and notices for the family's version tag protection.
+    """Return errors and notices for the family's version tag protection."""
+    return _version_tag_protection(canary.repository, canary.tag_prefix, fetch_json, prefix)
+
+
+def _version_tag_protection(
+    repository: str, tag_prefix: str, fetch_json: Callable[[str], object], prefix: str
+) -> tuple[list[str], list[str]]:
+    """Return errors and notices for a repository's version tag protection.
 
     SLSA v1.2 source track level 2 and above requires tags that cannot be moved or
     deleted. The listing omits a ruleset's rules and conditions, so each active one
@@ -409,9 +424,9 @@ def _tag_protection(
     to the ruleset, which the audit's token lacks on a consumer. Requiring the list
     would fail every consumer, so a list it cannot see is a notice, not a pass claim.
     """
-    namespace = f"{canary.tag_prefix}/" if canary.tag_prefix else ""
+    namespace = f"{tag_prefix}/" if tag_prefix else ""
     pattern = f"refs/tags/{namespace}v*"
-    endpoint = f"repos/{canary.repository}/rulesets"
+    endpoint = f"repos/{repository}/rulesets"
     try:
         listing = fetch_json(f"{endpoint}?targets=tag&per_page=100")
         if not isinstance(listing, list):
@@ -430,6 +445,71 @@ def _tag_protection(
     except RuntimeError as error:
         return [f"{prefix}: could not read tag rulesets: {error}"], []
     return [f"{prefix}: no recognised active tag ruleset without bypass actors blocks update and deletion of {pattern}"], []
+
+
+def _tree_sha(commit: object) -> object:
+    tree = commit.get("tree") if isinstance(commit, dict) else None
+    return tree.get("sha") if isinstance(tree, dict) else None
+
+
+def _locked_tag_admission(
+    pin: str, fetch_json: Callable[[str], object], prefix: str
+) -> tuple[str | None, list[str]]:
+    """Return why no locked release tag admits a pin off main, or None and notices.
+
+    The tag ruleset is read as for a consumer, so a bypass list this token cannot
+    see is a notice. Any failed or malformed read admits nothing.
+    """
+    tag_errors, notices = _version_tag_protection(
+        _POLICY_REPOSITORY, "", fetch_json, "release-policy"
+    )
+    if tag_errors:
+        return tag_errors[0], []
+    endpoint = f"repos/{_POLICY_REPOSITORY}"
+    try:
+        tags = fetch_json(f"{endpoint}/tags?per_page=100")
+        if not isinstance(tags, list):
+            return "release-policy tag listing is not a list", []
+        admitting = None
+        for tag in tags:
+            name = tag.get("name") if isinstance(tag, dict) else None
+            commit = tag.get("commit") if isinstance(tag, dict) else None
+            tag_sha = commit.get("sha") if isinstance(commit, dict) else None
+            if (
+                not _matches_release_tag(name, "")
+                or not isinstance(tag_sha, str)
+                or _FULL_SHA.fullmatch(tag_sha) is None
+            ):
+                continue
+            comparison = fetch_json(f"{endpoint}/compare/{tag_sha}...{pin}")
+            status = comparison.get("status") if isinstance(comparison, dict) else None
+            if isinstance(status, str) and status in _REACHABLE_STATUSES:
+                admitting = name
+                break
+        if admitting is None:
+            return "no release tag reaches it", []
+        tree = _tree_sha(fetch_json(f"{endpoint}/git/commits/{pin}"))
+        if not isinstance(tree, str):
+            return "its commit record names no tree", []
+        for page in range(1, MAX_HISTORY_PAGES + 1):
+            history = fetch_json(f"{endpoint}/commits?sha=main&per_page=100&page={page}")
+            if not isinstance(history, list):
+                return "a page of main's history is not a list", []
+            for entry in history:
+                carrier = entry.get("sha") if isinstance(entry, dict) else None
+                commit = entry.get("commit") if isinstance(entry, dict) else None
+                if isinstance(carrier, str) and _tree_sha(commit) == tree:
+                    return None, [
+                        *notices,
+                        f"{prefix}: current pin {pin} is off release-policy main; locked "
+                        f"release tag {admitting} reaches it and main commit {carrier} "
+                        f"carries its tree, so repin to {carrier}",
+                    ]
+            if len(history) < 100:
+                break
+    except RuntimeError as error:
+        return f"could not read release-policy tags or history: {error}", []
+    return f"no commit in the main history searched carries its tree {tree}", []
 
 
 def _expired_verify_errors(
@@ -529,19 +609,26 @@ def check_live(
             "repos/ryanduguid/release-policy/compare/"
             f"main...{canary.current_policy_sha}"
         )
+        unreachable = None
         try:
             comparison = fetch_json(compare_endpoint)
         except RuntimeError as error:
-            errors.append(
-                f"{prefix}: current pin {canary.current_policy_sha} is not reachable "
-                f"from release-policy main: {error}"
-            )
+            unreachable = f": {error}"
         else:
             status = comparison.get("status") if isinstance(comparison, dict) else None
             if status not in _REACHABLE_STATUSES:
+                unreachable = f" (compare status {status!r})"
+        if unreachable is not None:
+            refusal, admitted = _locked_tag_admission(
+                canary.current_policy_sha, fetch_json, prefix
+            )
+            if refusal is None:
+                notices.extend(admitted)
+            else:
                 errors.append(
                     f"{prefix}: current pin {canary.current_policy_sha} is not reachable "
-                    f"from release-policy main (compare status {status!r})"
+                    f"from release-policy main{unreachable}, and no locked release tag "
+                    f"admits it: {refusal}"
                 )
 
         run_endpoint = f"repos/{canary.repository}/actions/runs/{canary.evidence.run_id}"
