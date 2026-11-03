@@ -456,10 +456,11 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
             repository.mkdir()
 
             def git(*args: str, stdin: str = "") -> str:
+                # Bytes, so Windows does not turn mktree's "\n" into "\r\n".
                 return subprocess.run(
-                    ["git", *args], cwd=repository, check=True, capture_output=True, text=True,
-                    input=stdin,
-                ).stdout.strip()
+                    ["git", *args], cwd=repository, check=True, capture_output=True,
+                    input=stdin.encode(),
+                ).stdout.decode().strip()
 
             def write(relative: str, text: str) -> None:
                 (repository / relative).parent.mkdir(parents=True, exist_ok=True)
