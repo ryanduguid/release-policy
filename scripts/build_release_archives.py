@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Sequence
 
 from git_revision import resolve_commit
-from python_release import validate_source_directory
+from python_release import validate_source_syntax
 
 _ARCHIVE_FORMATS = (("zip", ".zip"), ("tar.gz", ".tar.gz"))
 _GIT_CONFIG = (
@@ -55,6 +55,46 @@ def _preflight_outputs(output_base: Path, repository: Path, *, relative: bool) -
     return outputs
 
 
+def _validate_source_tree(repository: Path, commit: str, source_directory: str) -> str:
+    """Return a component that is a tree at commit, reached only through trees.
+
+    The archive is read from the commit, so the checkout, which may have moved
+    or removed the component since, is not consulted.
+    """
+
+    source_directory = validate_source_syntax(source_directory)
+    if source_directory == ".":
+        return "."
+    parts = source_directory.split("/")
+    for depth in range(1, len(parts) + 1):
+        component = "/".join(parts[:depth])
+        listed = subprocess.run(
+            ["git", "ls-tree", "--full-tree", "-z", commit, "--", component],
+            cwd=repository, check=True, capture_output=True,
+        ).stdout
+        entries = [record.partition(b"\t") for record in listed.split(b"\0") if record]
+        modes = [meta.split(b" ")[:2] for meta, _, path in entries if path == os.fsencode(component)]
+        if not modes:
+            raise ValueError(
+                f"source-directory is missing at the selected commit: {source_directory}"
+            )
+        mode, kind = modes[0]
+        if mode in {b"120000", b"160000"}:
+            raise ValueError(
+                f"source-directory must not traverse a symbolic link or gitlink: {source_directory}"
+            )
+        if kind != b"tree":
+            raise ValueError("source-directory must be a tree at the selected commit")
+    tracked = subprocess.run(
+        ["git", "ls-tree", "-r", "-z", "--name-only", "--full-tree", commit, "--",
+         f"{source_directory}/"],
+        cwd=repository, check=True, capture_output=True,
+    ).stdout
+    if not tracked:
+        raise ValueError(f"source-directory must contain tracked Git files: {source_directory}")
+    return source_directory
+
+
 def build_release_archives(
     *,
     commit: str,
@@ -68,15 +108,8 @@ def build_release_archives(
     _validate_prefix(prefix)
     repository = (Path.cwd() if cwd is None else Path(cwd)).resolve()
     commit = resolve_commit(repository, commit)
-    source_directory = validate_source_directory(repository, source_directory)
+    source_directory = _validate_source_tree(repository, commit, source_directory)
     treeish = commit if source_directory == "." else f"{commit}:{source_directory}"
-    if source_directory != ".":
-        selected = subprocess.run(
-            ["git", "cat-file", "-t", treeish], cwd=repository,
-            check=True, capture_output=True, text=True,
-        )
-        if selected.stdout.strip() != "tree":
-            raise ValueError("source-directory must be a tree at the selected commit")
     supplied_output_base = Path(output_base)
     output_base = (
         supplied_output_base

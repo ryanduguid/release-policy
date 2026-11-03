@@ -138,6 +138,76 @@ jobs:
           bash scripts/audit_binaries.sh "$RUNNER_TEMP/advisory-db"
           "$RUNNER_TEMP/latest-release/release-policy" "$RUNNER_TEMP/latest-release/release-policy.exe"
 
+  pin-lag:
+    name: list the families owing a re-pin
+    # A family whose files changed on main since the commit its consumers pin
+    # owes them a re-pin (docs/re-pinning.md). Lag is a warning, never a
+    # failure; a pin this job cannot read or compare fails it. A job of its
+    # own, like release-audit, so a failing canary step cannot skip it.
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.live-canary-audit)
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # pin_families.py diffs each pin against main; a pin off main is
+          # reached through its release tag.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      # Each canary consumer stands for its family. Attribution and VirusTotal
+      # have no canary, so the skills canary's callers of them stand in.
+      - name: Compare each family's consumer pin with main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          # check_canaries.py requires exactly one entry for each canary family.
+          if ! python scripts/check_canaries.py \
+            || ! consumers="$(jq -r '.families[] | "\(.policy_workflow | ltrimstr(".github/workflows/") | rtrimstr(".yml")) \(.policy_workflow) \(.repository) \(.workflow_path)"' canaries.json)"; then
+            echo "::error title=Pin lag not measured::canaries.json is not a valid canary manifest"
+            exit 1
+          fi
+          consumers+=$'\n'"attribution .github/workflows/attribution-policy.yml ryanduguid/australian-accounting-skills .github/workflows/no-ai-attribution.yml"
+          consumers+=$'\n'"virustotal-release .github/workflows/virustotal-release.yml ryanduguid/australian-accounting-skills .github/workflows/virustotal.yml"
+          printf '| Family | Consumer | Pin | Against main |\n| --- | --- | --- | --- |\n' >> "$GITHUB_STEP_SUMMARY"
+          failed=0
+          while read -r -u 3 family workflow repository caller; do
+            pin=""
+            if ! content="$(gh api -H 'Accept: application/vnd.github.raw' "repos/$repository/contents/$caller?ref=main")"; then
+              status="not measured: $repository/$caller could not be read"
+            else
+              # Only an active uses: line naming this workflow and a full commit SHA counts.
+              uses="^[[:space:]]*(- )?uses: $GITHUB_REPOSITORY/${workflow//./\\.}@[0-9a-f]{40}([[:space:]]|$)"
+              pin="$(grep -oE "$uses" <<< "$content" | sed -E 's/.*@([0-9a-f]{40}).*/\1/' | sort -u)"
+              if [ -z "$pin" ] || [ "$(wc -l <<< "$pin")" -ne 1 ]; then
+                status="not measured: $repository/$caller has no single $workflow pin"
+              elif ! report="$(python scripts/pin_families.py "$pin" origin/main 2>&1)"; then
+                status="not measured: $report"
+              elif grep -qvE '^[a-z-]+: (keep the pin|re-pin \(.+\))$' <<< "$report" \
+                || [ "$(grep -c "^$family: " <<< "$report")" -ne 1 ]; then
+                status="not measured: pin_families.py gave no single well-formed $family verdict"
+              else
+                status="$(sed -n "s/^$family: //p" <<< "$report")"
+              fi
+            fi
+            case "$status" in
+              "keep the pin") ;;
+              "re-pin ("*) echo "::warning title=Re-pin owed::$family ($repository) pins $pin; $status" ;;
+              *) echo "::error title=Pin lag not measured::$family ($repository): $status"; failed=1 ;;
+            esac
+            echo "$family ($repository) ${pin:-none}: $status"
+            echo "| $family | $repository | \`${pin:-none}\` | $status |" >> "$GITHUB_STEP_SUMMARY"
+          done 3<<< "$consumers"
+          exit "$failed"
+
   checks:
     timeout-minutes: 15
     name: lint and test
@@ -665,4 +735,4 @@ jobs:
       - name: Require every job to be listed, kept and successful
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: python3 .github/ci/check_gates.py .github/workflows/ci.yml ci-gates --exempt fuzzing --exempt rust-fuzzing --exempt release-audit --exempt codecov
+        run: python3 .github/ci/check_gates.py .github/workflows/ci.yml ci-gates --exempt fuzzing --exempt rust-fuzzing --exempt release-audit --exempt pin-lag --exempt codecov

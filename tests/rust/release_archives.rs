@@ -547,6 +547,90 @@ fn failed_archive_generation_removes_only_partial_outputs() {
 }
 
 #[test]
+fn a_historical_component_is_read_from_its_commit_not_the_checkout() {
+    // The archive comes from the selected commit, so a component the checkout
+    // has removed since still builds, and one the commit lacks, or reaches
+    // through a symlink or gitlink there, is refused whatever the checkout holds.
+    let temp = support::tempdir();
+    let root = release_policy::py::resolve(temp.path());
+    let repo = Repo::new_in(&root);
+    repo.write("packages/old/VERSION", "1.0.0\n");
+    let old = repo.commit("old component");
+    repo.write("link-target", "packages/old");
+    let blob = repo.git(&["hash-object", "-w", "link-target"]);
+    std::fs::remove_file(repo.path("link-target")).unwrap();
+    for entry in [
+        format!("120000,{blob},linked"),
+        format!("160000,{old},nested"),
+    ] {
+        repo.git(&["update-index", "--add", "--cacheinfo", &entry]);
+    }
+    repo.git(&["commit", "-q", "-m", "links"]);
+    let links = repo.git(&["rev-parse", "HEAD"]);
+    repo.git(&["rm", "-q", "-r", "--cached", "linked", "nested"]);
+    repo.git(&["rm", "-q", "-r", "packages/old"]);
+    for name in ["linked", "nested", "packages/new"] {
+        repo.write(&format!("{name}/VERSION"), "2.0.0\n");
+    }
+    repo.commit("now");
+    // Git never commits an empty directory, but a crafted tree can hold one.
+    let mktree = |input: &str| {
+        let mut child = std::process::Command::new("git")
+            .arg("mktree")
+            .current_dir(repo.root())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::io::Write::write_all(&mut child.stdin.take().unwrap(), input.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    };
+    let empty = mktree("");
+    let holder = mktree(&format!("040000 tree {empty}\tempty\n"));
+    let hollow = repo.git(&["commit-tree", &holder, "-m", "empty component"]);
+
+    let outputs = build_release_archives(
+        repo.root(),
+        &old,
+        "safe/",
+        &root.join("outside").join("old"),
+        "packages/old",
+    )
+    .unwrap();
+    let files = zip_files(&outputs[0]);
+    assert_eq!(files.keys().collect::<Vec<_>>(), ["safe/VERSION"]);
+    assert_eq!(files["safe/VERSION"], b"1.0.0\n");
+    for (index, (revision, source, message)) in [
+        (links.as_str(), "linked", "symbolic link or gitlink"),
+        (links.as_str(), "nested", "symbolic link or gitlink"),
+        (links.as_str(), "linked/inner", "symbolic link or gitlink"),
+        (
+            old.as_str(),
+            "packages/old/VERSION/inner",
+            "must be a tree at the selected commit",
+        ),
+        (
+            old.as_str(),
+            "packages/new",
+            "missing at the selected commit",
+        ),
+        ("HEAD", "packages/old", "missing at the selected commit"),
+        (hollow.as_str(), "empty", "must contain tracked Git files"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let base = root.join("outside").join(format!("case-{index}"));
+        refused(
+            build_release_archives(repo.root(), revision, "safe/", &base, source),
+            message,
+        );
+    }
+}
+
+#[test]
 fn failed_tree_and_timestamp_reads_are_unexpected_errors() {
     let temp = support::tempdir();
     let root = release_policy::py::resolve(temp.path());
@@ -556,9 +640,9 @@ fn failed_tree_and_timestamp_reads_are_unexpected_errors() {
     let mut real = archives::system_git(repo.root());
     for (refused_call, expected) in [
         (
-            "cat-file",
+            "ls-tree",
             format!(
-                "unexpected error: Command 'git cat-file -t {commit}:component' returned non-zero exit status 1."
+                "unexpected error: Command 'git ls-tree --full-tree -z {commit} -- component' returned non-zero exit status 1."
             ),
         ),
         (
