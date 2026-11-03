@@ -143,10 +143,9 @@ def _git_index_entries(root: Path, relative: str) -> tuple[tuple[str, bytes], ..
     return tuple(entries)
 
 
-def validate_source_directory(root: Path, supplied: str) -> str:
-    """Return a tracked, non-symlinked component directory relative to root."""
+def validate_source_syntax(supplied: str) -> str:
+    """Return supplied, a relative POSIX directory of safe parts, or '.'."""
 
-    root = root.resolve()
     if supplied == ".":
         return "."
     if (
@@ -163,7 +162,17 @@ def validate_source_directory(root: Path, supplied: str) -> str:
         for part in parts
     ):
         raise ValueError("source-directory must be a relative POSIX directory")
+    return relative.as_posix()
 
+
+def validate_source_directory(root: Path, supplied: str) -> str:
+    """Return a tracked, non-symlinked component directory relative to root."""
+
+    root = root.resolve()
+    if validate_source_syntax(supplied) == ".":
+        return "."
+    relative = PurePosixPath(supplied)
+    parts = supplied.split("/")
     current = root
     relative_parts: list[str] = []
     for part in parts:
