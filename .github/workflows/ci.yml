@@ -83,6 +83,61 @@ jobs:
           cargo +nightly-2026-10-15 fuzz run --target x86_64-unknown-linux-gnu policy_parsers fuzz/corpus --
           -max_total_time=60 -max_len=4096 -timeout=2 -rss_limit_mb=1024
 
+  release-audit:
+    name: audit the latest release's executables
+    # The publisher's checks, repeated on this repository's latest release, so
+    # an advisory published after the release fails this run. A job of its own:
+    # after the live canary audit in checks, a failing pin check skipped it.
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.live-canary-audit)
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned cargo-audit
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
+
+      # As docs/verify-a-release.md asks of any downloader: each archive is the
+      # one line of SHA256SUMS that names it, and its provenance was signed by
+      # this repository's binary release workflow for the tag.
+      - name: Download and verify the latest release's executables
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          latest="$RUNNER_TEMP/latest-release"
+          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          base="release-policy-${tag#v}"
+          linux="$base-x86_64-unknown-linux-musl.tar.gz"
+          windows="$base-x86_64-pc-windows-msvc.zip"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$latest" \
+            --pattern "$linux" --pattern "$windows" --pattern SHA256SUMS --pattern "$base.intoto.jsonl"
+          cd "$latest"
+          for archive in "$linux" "$windows"; do
+            awk -v name="$archive" '$2 == name' SHA256SUMS > "$archive.sha256"
+            test "$(wc -l < "$archive.sha256")" -eq 1
+            sha256sum --check --strict "$archive.sha256"
+            gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY" --bundle "$base.intoto.jsonl" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-binary.yml" \
+              --source-ref "refs/tags/$tag"
+          done
+          tar -xzf "$linux" release-policy
+          unzip -q "$windows" release-policy.exe
+
+      - name: Audit the latest release's executables against RustSec
+        run: >-
+          bash scripts/audit_binaries.sh "$RUNNER_TEMP/advisory-db"
+          "$RUNNER_TEMP/latest-release/release-policy" "$RUNNER_TEMP/latest-release/release-policy.exe"
+
   checks:
     timeout-minutes: 15
     name: lint and test
@@ -185,36 +240,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/check_canaries.py --live --require-current-evidence
-
-      - name: Install the pinned cargo-audit
-        if: >-
-          (github.event_name == 'schedule' ||
-          (github.event_name == 'workflow_dispatch' && inputs.live-canary-audit)) &&
-          matrix.python == '3.14'
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
-        with:
-          tool: cargo-audit@0.22.2
-          fallback: none
-
-      # The publisher's audit, repeated on the latest release's executables,
-      # so an advisory published after the release fails this run.
-      - name: Audit the latest release's executables against RustSec
-        if: >-
-          (github.event_name == 'schedule' ||
-          (github.event_name == 'workflow_dispatch' && inputs.live-canary-audit)) &&
-          matrix.python == '3.14'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          latest="$RUNNER_TEMP/latest-release"
-          gh release download --repo "$GITHUB_REPOSITORY" --dir "$latest" \
-            --pattern 'release-policy-*-x86_64-unknown-linux-musl.tar.gz' \
-            --pattern 'release-policy-*-x86_64-pc-windows-msvc.zip'
-          tar -xzf "$latest"/release-policy-*-x86_64-unknown-linux-musl.tar.gz -C "$latest" release-policy
-          unzip -q "$latest"/release-policy-*-x86_64-pc-windows-msvc.zip release-policy.exe -d "$latest"
-          bash scripts/audit_binaries.sh "$RUNNER_TEMP/advisory-db" \
-            "$latest/release-policy" "$latest/release-policy.exe"
 
       - name: Check repository baseline
         if: matrix.python == '3.14'
@@ -640,4 +665,4 @@ jobs:
       - name: Require every job to be listed, kept and successful
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: python3 .github/ci/check_gates.py .github/workflows/ci.yml ci-gates --exempt fuzzing --exempt rust-fuzzing --exempt codecov
+        run: python3 .github/ci/check_gates.py .github/workflows/ci.yml ci-gates --exempt fuzzing --exempt rust-fuzzing --exempt release-audit --exempt codecov
