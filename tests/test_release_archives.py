@@ -503,6 +503,8 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
             for index, (commit, source, message) in enumerate((
                 (links, "linked", "symbolic link or gitlink"),
                 (links, "nested", "symbolic link or gitlink"),
+                (links, "linked/inner", "symbolic link or gitlink"),
+                (old, "packages/old/VERSION/inner", "must be a tree at the selected commit"),
                 (old, "packages/new", "missing at the selected commit"),
                 ("HEAD", "packages/old", "missing at the selected commit"),
                 (hollow, "empty", "must contain tracked Git files"),

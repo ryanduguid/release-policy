@@ -605,6 +605,12 @@ fn a_historical_component_is_read_from_its_commit_not_the_checkout() {
     for (index, (revision, source, message)) in [
         (links.as_str(), "linked", "symbolic link or gitlink"),
         (links.as_str(), "nested", "symbolic link or gitlink"),
+        (links.as_str(), "linked/inner", "symbolic link or gitlink"),
+        (
+            old.as_str(),
+            "packages/old/VERSION/inner",
+            "must be a tree at the selected commit",
+        ),
         (
             old.as_str(),
             "packages/new",
