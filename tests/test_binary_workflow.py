@@ -179,25 +179,38 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertEqual(sorted(positions), positions)
 
     def test_scheduled_ci_audits_the_latest_release_executables(self) -> None:
+        # A job of its own: as steps after the live canary audit in checks, the
+        # audit was skipped whenever a consumer's pin lacked release evidence.
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
-        checks = self.mapping_block(self.mapping_block(ci, "jobs", indent=0), "checks", indent=2)
-        live = self.step(checks, "Audit live canary pins and successful-run evidence")
-        install = self.step(checks, "Install the pinned cargo-audit")
-        audit = self.step(checks, "Audit the latest release's executables against RustSec")
-        condition = live.split("        if: ", 1)[1].split("        env:", 1)[0]
-        self.assertIn("github.event_name == 'schedule'", condition)
-        for step in (install, audit):
-            with self.subTest(step=step.splitlines()[0]):
-                self.assertIn(f"        if: {condition}", step)
-        self.assert_pinned_cargo_audit(install)
-        self.assertLess(checks.index(live), checks.index(install))
-        self.assertLess(checks.index(install), checks.index(audit))
-        self.assertIn('gh release download --repo "$GITHUB_REPOSITORY" --dir "$latest"', audit)
+        jobs = self.mapping_block(ci, "jobs", indent=0)
+        job = self.mapping_block(jobs, "release-audit", indent=2)
+        self.assertNotIn("cargo-audit", self.mapping_block(jobs, "checks", indent=2))
         self.assertIn(
-            'bash scripts/audit_binaries.sh "$RUNNER_TEMP/advisory-db" \\\n'
-            '            "$latest/release-policy" "$latest/release-policy.exe"\n',
+            "    if: >-\n      github.event_name == 'schedule' ||\n"
+            "      (github.event_name == 'workflow_dispatch' && inputs.live-canary-audit)\n",
+            job)
+        self.assertNotIn("needs:", job)
+        install = self.step(job, "Install the pinned cargo-audit")
+        verify = self.step(job, "Download and verify the latest release's executables")
+        audit = self.step(job, "Audit the latest release's executables against RustSec")
+        self.assert_pinned_cargo_audit(install)
+        self.assertLess(job.index(install), job.index(verify))
+        self.assertLess(job.index(verify), job.index(audit))
+        for check in (
+            'awk -v name="$archive" \'$2 == name\' SHA256SUMS > "$archive.sha256"',
+            'test "$(wc -l < "$archive.sha256")" -eq 1',
+            'sha256sum --check --strict "$archive.sha256"',
+            '--bundle "$base.intoto.jsonl"',
+            '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-binary.yml"',
+            '--source-ref "refs/tags/$tag"',
+        ):
+            self.assertIn(check, verify)
+        self.assertIn(
+            'bash scripts/audit_binaries.sh "$RUNNER_TEMP/advisory-db"\n'
+            '          "$RUNNER_TEMP/latest-release/release-policy" "$RUNNER_TEMP/latest-release/release-policy.exe"\n',
             audit)
         self.assertEqual(1, ci.count("audit_binaries.sh"))
+        self.assertIn("--exempt release-audit", self.mapping_block(jobs, "ci-gates", indent=2))
 
     def test_audit_script_fails_closed_without_an_ignore_list(self) -> None:
         script = AUDIT.read_text(encoding="utf-8")
