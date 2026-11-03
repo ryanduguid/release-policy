@@ -1,8 +1,6 @@
 //! Build deterministic source-release archives from tracked Git content.
 
-use crate::{
-    Result, common::*, git_revision::resolve_commit, py, release::validate_source_directory,
-};
+use crate::{Result, common::*, git_revision::resolve_commit, py, release::validate_source_syntax};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -68,6 +66,68 @@ pub fn preflight(base: &Path, root: &Path, relative: bool) -> Result<Vec<PathBuf
     Ok(outputs)
 }
 
+fn owned(args: &[&str]) -> Vec<String> {
+    args.iter().map(|a| (*a).to_owned()).collect()
+}
+
+/// Require `source` to be a tree at `commit`, reached only through trees. The
+/// archive is read from the commit, so the checkout, which may have moved or
+/// removed the component since, is not consulted.
+fn source_tree(commit: &str, source: &str, git: &mut Git) -> Result<()> {
+    let parts = source.split('/').collect::<Vec<_>>();
+    for depth in 1..=parts.len() {
+        let component = parts[..depth].join("/");
+        let args = owned(&["ls-tree", "--full-tree", "-z", commit, "--", &component]);
+        let (ok, listed) = git(&args, &[])?;
+        if !ok {
+            return Err(format!(
+                "unexpected error: Command 'git ls-tree --full-tree -z {commit} -- {component}' returned non-zero exit status 1."
+            ));
+        }
+        let Some((meta, _)) = listed
+            .split('\0')
+            .filter_map(|record| record.split_once('\t'))
+            .find(|(_, path)| *path == component)
+        else {
+            return Err(format!(
+                "source-directory is missing at the selected commit: {source}"
+            ));
+        };
+        let mut fields = meta.split(' ');
+        if matches!(fields.next(), Some("120000" | "160000")) {
+            return Err(format!(
+                "source-directory must not traverse a symbolic link or gitlink: {source}"
+            ));
+        }
+        if fields.next() != Some("tree") {
+            return Err("source-directory must be a tree at the selected commit".into());
+        }
+    }
+    let prefix = format!("{source}/");
+    let args = owned(&[
+        "ls-tree",
+        "-r",
+        "-z",
+        "--name-only",
+        "--full-tree",
+        commit,
+        "--",
+        &prefix,
+    ]);
+    let (ok, tracked) = git(&args, &[])?;
+    if !ok {
+        return Err(format!(
+            "unexpected error: Command 'git ls-tree -r -z --name-only --full-tree {commit} -- {prefix}' returned non-zero exit status 1."
+        ));
+    }
+    if tracked.is_empty() {
+        return Err(format!(
+            "source-directory must contain tracked Git files: {source}"
+        ));
+    }
+    Ok(())
+}
+
 /// Build ZIP and tar.gz archives with stable text and time metadata.
 pub fn build_release_archives(
     root: &Path,
@@ -105,24 +165,15 @@ pub fn build_release_archives_with(
     }
     let root = absolute(root)?;
     let commit = resolve_commit(&root, revision)?;
-    let source = validate_source_directory(&root, source)?;
+    let source = validate_source_syntax(source)?;
+    if source != "." {
+        source_tree(&commit, source, git)?;
+    }
     let treeish = if source == "." {
         commit.clone()
     } else {
         format!("{commit}:{source}")
     };
-    let owned = |args: &[&str]| args.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>();
-    if source != "." {
-        let (ok, kind) = git(&owned(&["cat-file", "-t", &treeish]), &[])?;
-        if !ok {
-            return Err(format!(
-                "unexpected error: Command 'git cat-file -t {treeish}' returned non-zero exit status 1."
-            ));
-        }
-        if py::strip(&kind) != "tree" {
-            return Err("source-directory must be a tree at the selected commit".into());
-        }
-    }
     // Do not resolve the supplied output: traversal and symlink checks must see it.
     // Path() normalises separators and '.' parts, and the messages show that form.
     let supplied = py::PyPath::new(&supplied_base.to_string_lossy());

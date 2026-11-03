@@ -446,6 +446,72 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
                 )
             self.assertEqual(before, sorted(str(path.relative_to(root)) for path in root.rglob("*")))
 
+    def test_a_historical_component_is_read_from_its_commit_not_the_checkout(self) -> None:
+        # The archive comes from the selected commit, so a component the checkout
+        # has removed since still builds, and one the commit lacks, or reaches
+        # through a symlink or gitlink there, is refused whatever the checkout holds.
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            repository = root / "checkout"
+            repository.mkdir()
+
+            def git(*args: str, stdin: str = "") -> str:
+                return subprocess.run(
+                    ["git", *args], cwd=repository, check=True, capture_output=True, text=True,
+                    input=stdin,
+                ).stdout.strip()
+
+            def write(relative: str, text: str) -> None:
+                (repository / relative).parent.mkdir(parents=True, exist_ok=True)
+                (repository / relative).write_text(text, encoding="utf-8")
+
+            git("init", "--quiet", "-b", "main")
+            for key, value in (
+                ("user.email", "test@example.invalid"),
+                ("user.name", "Release Policy Test"),
+                ("maintenance.auto", "false"),
+            ):
+                git("config", key, value)
+            write("packages/old/VERSION", "1.0.0\n")
+            git("add", "-A")
+            git("commit", "--quiet", "-m", "old component")
+            old = git("rev-parse", "HEAD")
+            write("link-target", "packages/old")
+            blob = git("hash-object", "-w", "link-target")
+            (repository / "link-target").unlink()
+            git("update-index", "--add", "--cacheinfo", f"120000,{blob},linked")
+            git("update-index", "--add", "--cacheinfo", f"160000,{old},nested")
+            git("commit", "--quiet", "-m", "links")
+            links = git("rev-parse", "HEAD")
+            git("rm", "--quiet", "-r", "--cached", "linked", "nested")
+            git("rm", "--quiet", "-r", "packages/old")
+            for name in ("linked", "nested", "packages/new"):
+                write(f"{name}/VERSION", "2.0.0\n")
+            git("add", "-A")
+            git("commit", "--quiet", "-m", "now")
+            # Git never commits an empty directory, but a crafted tree can hold one.
+            empty = git("mktree")
+            hollow = git("commit-tree", git("mktree", stdin=f"040000 tree {empty}\tempty\n"),
+                         "-m", "empty component")
+
+            outputs = release_archives.build_release_archives(
+                commit=old, prefix="safe/", source_directory="packages/old",
+                output_base=root / "outside" / "old", cwd=repository,
+            )
+            self.assertEqual({"safe/VERSION": b"1.0.0\n"}, _zip_files(outputs[0]))
+            for index, (commit, source, message) in enumerate((
+                (links, "linked", "symbolic link or gitlink"),
+                (links, "nested", "symbolic link or gitlink"),
+                (old, "packages/new", "missing at the selected commit"),
+                ("HEAD", "packages/old", "missing at the selected commit"),
+                (hollow, "empty", "must contain tracked Git files"),
+            )):
+                with self.subTest(source=source), self.assertRaisesRegex(ValueError, message):
+                    release_archives.build_release_archives(
+                        commit=commit, prefix="safe/", source_directory=source,
+                        output_base=root / "outside" / f"case-{index}", cwd=repository,
+                    )
+
     def test_failed_archive_generation_removes_only_partial_outputs(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

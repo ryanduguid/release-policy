@@ -95,20 +95,25 @@ pub fn parse_index_entries(success: bool, stdout: &[u8]) -> Result<Vec<(String, 
     Ok(entries)
 }
 
+/// `supplied`, a relative POSIX directory of safe parts, or ".".
+pub fn validate_source_syntax(supplied: &str) -> Result<&str> {
+    if supplied != "."
+        && (supplied.is_empty()
+            || supplied.contains('\\')
+            || supplied.chars().any(|c| c < ' ' || c == '\x7f')
+            || supplied
+                .split('/')
+                .any(|p| matches!(p, "" | "." | "..") || !full("[A-Za-z0-9._-]+", p)))
+    {
+        return Err("source-directory must be a relative POSIX directory".into());
+    }
+    Ok(supplied)
+}
+
 pub fn validate_source_directory(root: &Path, supplied: &str) -> Result<String> {
     let root = absolute(root)?;
-    if supplied == "." {
+    if validate_source_syntax(supplied)? == "." {
         return Ok(".".into());
-    }
-    let invalid = "source-directory must be a relative POSIX directory";
-    if supplied.is_empty()
-        || supplied.contains('\\')
-        || supplied.chars().any(|c| c < ' ' || c == '\x7f')
-        || supplied
-            .split('/')
-            .any(|p| matches!(p, "" | "." | "..") || !full("[A-Za-z0-9._-]+", p))
-    {
-        return Err(invalid.into());
     }
     let mut current = root.clone();
     let mut relative = Vec::new();
