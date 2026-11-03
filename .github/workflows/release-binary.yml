@@ -198,7 +198,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Install the pinned cargo-auditable
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-auditable@0.7.7
           fallback: none
@@ -442,7 +442,7 @@ jobs:
       # the tool and fetches a fresh advisory database, and the script runs it
       # outside the consumer tree, so no consumer file can waive an advisory.
       - name: Install the pinned cargo-audit
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-audit@0.22.2
           fallback: none
