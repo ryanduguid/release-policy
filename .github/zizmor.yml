@@ -6,16 +6,6 @@ rules:
       # Runs only the attribution policy from the trusted base branch, never pull
       # request code.
       - no-ai-attribution.yml:13
-      # Both triggers call the reviewer pinned by full commit. The job accepts only
-      # the owner's pull requests or a Dependabot bridge run, and the reviewer checks
-      # out its own policy commit, not pull request code.
-      - pr-review-consumer.yml:4
-      - pr-review-consumer.yml:6
-  bot-conditions:
-    ignore:
-      # The job runs `true` with no permissions. scripts/pr_review.py checks the
-      # pull request's author and head commit before the bridge run is reviewed.
-      - pr-review-trigger.yml:11
   artipacked:
     ignore:
       # Fixing this needs a change to the action and then a repin of
