@@ -435,7 +435,7 @@ jobs:
 
   # The binary release family's build path, run on this repository's own CLI
   # for both targets. It publishes nothing; binary-sbom-check then takes the
-  # artefacts as the publisher would.
+  # artefacts as the release's admit job would.
   binary-self-check:
     timeout-minutes: 45
     name: binary release self-check (${{ matrix.target }})
@@ -547,7 +547,7 @@ jobs:
               --extract-dir "$RUNNER_TEMP/extracted/$target" --source . --root .
           done
 
-      - name: Require each admitted executable's linkage as the publisher does
+      - name: Require each admitted executable's linkage as the admit job does
         run: bash scripts/admitted_linkage.sh "$RUNNER_TEMP/extracted" release-policy
 
       - name: Generate the Linux binary's SPDX SBOM

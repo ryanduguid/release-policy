@@ -538,6 +538,135 @@ class CommandTests(Fixture):
         self.assertIn("cargo-package", out.getvalue())
 
 
+class HandoffTests(Fixture):
+    ARCHIVES = ("source-zip", "source-tar", "linux-archive", "windows-archive")
+    run_main = CommandTests.run_main
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.names = binary_release.handoff_names("example", "1.2.3")
+        self.dist, self.incoming = self.base / "dist", self.base / "admitted"
+
+    def hand_off(self) -> None:
+        """The admit job's artefact, and this job's own copy of each archive."""
+        for directory in (self.dist, self.incoming):
+            shutil.rmtree(directory, ignore_errors=True)
+            directory.mkdir()
+        for role, name in self.names.items():
+            (self.incoming / name).write_bytes(f"{role} bytes\n".encode())
+            if role in self.ARCHIVES:
+                shutil.copyfile(self.incoming / name, self.dist / name)
+
+    def outputs(self) -> list[str]:
+        """Digest outputs that match the admit job's artefact as it stands."""
+        return [f"{role}={hashlib.sha256((self.incoming / name).read_bytes()).hexdigest()}"
+                for role, name in self.names.items()]
+
+    def accept(self, outputs: list[str]) -> tuple[Path, ...]:
+        return binary_release.accept(incoming=self.incoming, dist=self.dist, stem="example",
+                                     version="1.2.3", digest_outputs=outputs)
+
+    def assert_refused(self, message: str, outputs: list[str]) -> None:
+        with self.assertRaisesRegex(ValueError, message):
+            self.accept(outputs)
+
+    def assert_no_sbom_kept(self) -> None:
+        self.assertEqual(sorted(self.names[role] for role in self.ARCHIVES),
+                         sorted(entry.name for entry in self.dist.iterdir()))
+
+    def test_a_matching_hand_off_keeps_the_sboms_beside_this_jobs_archives(self) -> None:
+        self.assertEqual(binary_release.asset_name("example", "1.2.3", LINUX),
+                         self.names["linux-archive"])
+        self.assertEqual(binary_release.asset_name("example", "1.2.3", WINDOWS),
+                         self.names["windows-archive"])
+        self.assertEqual("example-1.2.3.spdx.json", self.names["source-sbom"])
+        self.hand_off()
+        outputs = binary_release.digests(self.incoming, "example", "1.2.3")
+        self.assertEqual(tuple(self.outputs()), outputs)
+        self.assertEqual(tuple(self.dist / name for name in self.names.values()),
+                         self.accept(list(outputs)))
+        for name in self.names.values():
+            self.assertEqual((self.incoming / name).read_bytes(), (self.dist / name).read_bytes())
+        # An SBOM already in the release is never replaced.
+        with self.assertRaises(FileExistsError):
+            self.accept(list(outputs))
+
+    def test_a_changed_archive_with_a_forged_matching_digest_is_refused(self) -> None:
+        for role in self.ARCHIVES:
+            with self.subTest(role=role):
+                self.hand_off()
+                (self.incoming / self.names[role]).write_bytes(b"changed by the admit job\n")
+                self.assert_refused(f"{self.names[role]} from the admit job differs from this "
+                                    "job's own", self.outputs())
+                self.assert_no_sbom_kept()
+
+    def test_a_file_that_does_not_match_its_digest_output_is_refused(self) -> None:
+        for role in ("linux-archive", "linux-sbom"):
+            with self.subTest(role=role):
+                self.hand_off()
+                outputs = self.outputs()
+                (self.incoming / self.names[role]).write_bytes(b"damaged in transfer\n")
+                self.assert_refused(f"{self.names[role]} does not match the admit job's digest",
+                                    outputs)
+
+    def test_a_missing_extra_or_irregular_file_is_refused_before_anything_is_kept(self) -> None:
+        sbom = self.names["windows-sbom"]
+
+        def replace_with_directory() -> None:
+            (self.incoming / sbom).unlink()
+            (self.incoming / sbom).mkdir()
+
+        for case, message, damage in (
+            ("missing", "artefact holds", lambda: (self.incoming / sbom).unlink()),
+            ("extra", "artefact holds",
+             lambda: (self.incoming / "extra.spdx.json").write_bytes(b"{}")),
+            ("directory", "is not a regular file", replace_with_directory),
+        ):
+            with self.subTest(case=case):
+                self.hand_off()
+                outputs = self.outputs()
+                damage()
+                self.assert_refused(message, outputs)
+                self.assert_no_sbom_kept()
+
+    def test_malformed_missing_repeated_or_unknown_digest_outputs_are_refused(self) -> None:
+        self.hand_off()
+        outputs = self.outputs()
+        role, digest = outputs[0].split("=")
+        for malformed in (digest.upper(), digest[:-1], digest + "0", digest + "\n", "",
+                          f"sha256:{digest}", "g" * 64):
+            with self.subTest(malformed=malformed):
+                self.assert_refused(f"{role} digest is not valid",
+                                    [f"{role}={malformed}", *outputs[1:]])
+        self.assert_refused(f"the {role} digest output is repeated", [*outputs, outputs[0]])
+        for wrong in (outputs[:-1], [*outputs, f"other={digest}"]):
+            with self.subTest(wrong=wrong):
+                self.assert_refused("digest outputs are", wrong)
+        self.assert_refused(f"{digest} digest is not valid", [*outputs, digest])
+        self.assert_no_sbom_kept()
+
+    def test_a_missing_file_has_no_digest(self) -> None:
+        self.hand_off()
+        (self.incoming / self.names["source-sbom"]).unlink()
+        with self.assertRaises(FileNotFoundError):
+            binary_release.digests(self.incoming, "example", "1.2.3")
+
+    def test_the_commands_print_the_outputs_and_the_accepted_files(self) -> None:
+        self.hand_off()
+        release = ("--stem", "example", "--version", "1.2.3")
+        self.assertEqual(self.run_main("digests", "--dist", str(self.incoming), *release),
+                         (0, "\n".join(self.outputs()) + "\n", ""))
+        accept = ("accept", "--incoming", str(self.incoming), "--dist", str(self.dist), *release)
+        self.assertEqual(
+            self.run_main(*accept, "--digest", self.outputs()[0]),
+            (1, "", f"binary_release: digest outputs are ['source-zip'], expected "
+                    f"{sorted(self.names)}\n"),
+        )
+        digests = [argument for output in self.outputs() for argument in ("--digest", output)]
+        self.assertEqual(self.run_main(*accept, *digests),
+                         (0, "\n".join(self.names.values()) + "\n", ""))
+
+
 class PathArgumentTests(Fixture):
     # Each command's other arguments, then its path arguments.
     COMMANDS = {
@@ -553,6 +682,9 @@ class PathArgumentTests(Fixture):
         "smoke": (("--version", "1.2.3"), ("--executable",)),
         "linkage": (("--target", LINUX), ("--readobj-output",)),
         "sbom-lists": (("--package", "example"), ("--sbom",)),
+        "digests": (("--stem", "example", "--version", "1.2.3"), ("--dist",)),
+        "accept": (("--stem", "example", "--version", "1.2.3", "--digest", "source-zip="),
+                   ("--incoming", "--dist")),
     }
     run_main = CommandTests.run_main
 
