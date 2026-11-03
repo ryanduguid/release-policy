@@ -458,6 +458,13 @@ jobs:
         if: matrix.target == 'x86_64-pc-windows-msvc'
         run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
 
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Test, build, package and check the executable
         env:
           TARGET: ${{ matrix.target }}
