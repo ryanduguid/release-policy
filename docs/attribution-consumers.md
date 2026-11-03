@@ -41,6 +41,14 @@ Keep the consumer's `No AI attribution` workflow to one job:
   to every branch and manual dispatch, and grants the called workflow
   `contents: read`, `pull-requests: read` and `statuses: write`.
 
+From 2 December 2026 GitHub blocks `pull_request_target` in public
+repositories unless an Actions workflow execution policy allows it, with
+brownouts on 9 and 16 November 2026 from 16:00 to 18:00 UTC. In each public
+consumer, open Settings, then Policies under Actions, and add an active policy
+that targets `.github/workflows/no-ai-attribution.yml` only, with an event rule
+allowing `pull_request_target`. A blocked run reports no `Attribution policy`
+status, so the branch rule that requires it holds every pull request.
+
 The push trigger covers every branch, not only `main`. A commit pushed straight
 to a side branch would otherwise go unaudited until it reached `main`, and a
 branch that never opens a pull request would never be audited at all. A new
