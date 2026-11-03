@@ -32,7 +32,7 @@ CANONICAL_SHA256 = {
     ".github/ci/check_gates.py": "8d48fa32c92d15bb476e28f2ad34400660f62ee337c527c1d9fd9b7f6230f62a",
     ".github/actions/no-ai-attribution/action.yml": "3e123ba40b6b76eb22cb289625d3ba5ca606907339172a00d86b331bb5847e93",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
-    ".github/dependabot.yml": "e134592e17de2085feffe1da2552e86e365730a79568a84c81a111c8c1381da8",
+    ".github/dependabot.yml": "a2e60e605ef8847b1e051d42da813238b3d6601f5448436f0c2aeddf8373db40",
     ".github/workflows/ci.yml": "065f3b687bf45fb3f955f03f1c40ffce3d0e00326f71ca42e2f9784b6a31e55f",
     ".github/workflows/codeql.yml": "86a84c42a8de80f5c197c6ba7fd445a15734d6567d08add3d639baccf0e0835f",
     ".github/workflows/scorecard.yml": "0cfb357dd0c38ab298a1c761f83f8c087997b05b6038a838ee27655a9199780c",
