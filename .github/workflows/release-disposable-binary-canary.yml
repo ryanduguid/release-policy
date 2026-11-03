@@ -9,7 +9,7 @@ on:
     tags:
       # One exact tag per reviewed run. Its release is deleted once checked, and
       # an immutable release's tag cannot be reused, so the trigger then lapses.
-      - "disposable-binary-canary/v0.0.1"
+      - "disposable-binary-canary/v0.0.2"
 
 permissions:
   contents: read
@@ -27,7 +27,9 @@ jobs:
       attestations: write # Record provenance and SBOM attestations for release assets.
       contents: write # Create the draft release, upload assets and publish it.
       id-token: write # Obtain the OIDC identity required to sign attestations.
-    uses: ryanduguid/release-policy/.github/workflows/release-binary.yml@5094c69ebf14523e4787000e5ff3cdcb03c10f6e # binary release family (#222)
+    # Pinned to #258's head before it merges, to prove its admit job split on a
+    # real release run.
+    uses: ryanduguid/release-policy/.github/workflows/release-binary.yml@d958933816136d223b7678f168e740eee2cb65b2 # admit job split (#258)
     with:
       artifact-stem: disposable-binary-canary
       source-directory: canaries/disposable-binary-canary

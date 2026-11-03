@@ -42,7 +42,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/publish-archives.yml": "e84d2f2b0bc4593d4f3f1e43645504fac9ccf3a8459b3e89d83b118e77dc757f",
     ".github/workflows/release-archive.yml": "21dee8370a36f36d406a83197c2d42ce98d929eb87ce8bd086d740eca5faaac4",
     ".github/workflows/release-binary.yml": "9a1d611f415b4384cda830b1a359f7bddeb51ddf9d5a5fb127ac97b56a78ccbd",
-    ".github/workflows/release-disposable-binary-canary.yml": "d087f3ff8b9b1c5950828974be1f30c840399d47e77794d241ef98b63e7e46be",
+    ".github/workflows/release-disposable-binary-canary.yml": "22d5bf76f040a12537f5d2d791d27241de026dcab30f49fe618f4b8f00cec6d0",
     ".github/workflows/release-python.yml": "072af978fe1628d081a2f804446d42c68b97cde0b8da8654acb2deaf64a5821d",
     ".github/workflows/release.yml": "07c678387fd5aa6a9c7f4334d4aaf0c93f63b6738e887ae25dca58179c97be15",
     ".github/workflows/release-skills.yml": "a4b57255f0cb40bcda7a8048c34497fb3259887ce0083fa93694943defa3f47f",
