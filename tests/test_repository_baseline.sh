@@ -33,7 +33,7 @@ CANONICAL_SHA256 = {
     ".github/actions/no-ai-attribution/action.yml": "3e123ba40b6b76eb22cb289625d3ba5ca606907339172a00d86b331bb5847e93",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
     ".github/dependabot.yml": "a2e60e605ef8847b1e051d42da813238b3d6601f5448436f0c2aeddf8373db40",
-    ".github/workflows/ci.yml": "25e3ceb3416a9dc66b1b98f150545452422d3c8e7a489b2da2af113c85852ce5",
+    ".github/workflows/ci.yml": "781ceb34f134ef6ec3ebed1ba387c52a2e034cefacff8649c2567a4e5171c6c2",
     ".github/workflows/codeql.yml": "86a84c42a8de80f5c197c6ba7fd445a15734d6567d08add3d639baccf0e0835f",
     ".github/workflows/scorecard.yml": "0cfb357dd0c38ab298a1c761f83f8c087997b05b6038a838ee27655a9199780c",
     ".github/workflows/no-ai-attribution.yml": "2c517d6f7eda8667c8a2eba186ef15d9e27b4c91d4617a39083b0a31f26f2834",
@@ -58,7 +58,7 @@ CANONICAL_SHA256 = {
     "docs/guarantees-and-evidence.md": "7f2f709c9395883929bdd19375b6b955a8ac3890170221f1efa788d8ed7bdfe4",
     "docs/verify-a-release.md": "2a0e866c48a8455a194d22b1d11bcc0c2e6d056d0b24143d1d1b67fc12d6bc02",
     "docs/egress-check.md": "2d8f86aad40c65edec23d370cbfb39864cf5a101d24839055c7b2718592f5994",
-    "docs/re-pinning.md": "b23ff2d1ba4c0053e4c703a162048b23f40817daba5235552bfcad87b78148f6",
+    "docs/re-pinning.md": "81cd12661b30ab9cebf9bb83663d6138615b31fd6cabf4f88a4f065ca99236ee",
     "SECURITY.md": "9f9cea868cdb60a00c98ebaa892125d83a94fba1589d55227cd239c6af7804f9",
 }
 

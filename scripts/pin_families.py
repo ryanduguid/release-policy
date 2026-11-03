@@ -29,6 +29,7 @@ FAMILIES = {
     "release-skills": ".github/workflows/release-skills.yml",
     "verify-skills": ".github/workflows/verify-skills.yml",
     "attribution": ".github/workflows/attribution-policy.yml",
+    "virustotal-release": ".github/workflows/virustotal-release.yml",
 }
 WORKFLOW = re.compile(r"\.github/workflows/[\w.-]+\.yml")
 ACTION = re.compile(r"\.github/actions/[\w.-]+")
