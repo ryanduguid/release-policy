@@ -41,6 +41,13 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    groups:
+      # The ruff crates pass each other's types, so a lone bump leaves 2
+      # versions in the graph and fails to compile (#250 to #252). Grouped so
+      # they always arrive together.
+      ruff:
+        patterns:
+          - "ruff_*"
   - package-ecosystem: pip
     directory: /fixtures/demo-pkg
     schedule:
