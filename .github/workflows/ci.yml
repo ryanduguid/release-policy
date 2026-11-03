@@ -169,8 +169,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          if ! consumers="$(jq -r '.families[] | "\(.policy_workflow | ltrimstr(".github/workflows/") | rtrimstr(".yml")) \(.policy_workflow) \(.repository) \(.workflow_path)"' canaries.json)"; then
-            echo "::error title=Pin lag not measured::canaries.json could not be read"
+          # check_canaries.py requires exactly one entry for each canary family.
+          if ! python scripts/check_canaries.py \
+            || ! consumers="$(jq -r '.families[] | "\(.policy_workflow | ltrimstr(".github/workflows/") | rtrimstr(".yml")) \(.policy_workflow) \(.repository) \(.workflow_path)"' canaries.json)"; then
+            echo "::error title=Pin lag not measured::canaries.json is not a valid canary manifest"
             exit 1
           fi
           consumers+=$'\n'"attribution .github/workflows/attribution-policy.yml ryanduguid/australian-accounting-skills .github/workflows/no-ai-attribution.yml"
@@ -178,15 +180,23 @@ jobs:
           printf '| Family | Consumer | Pin | Against main |\n| --- | --- | --- | --- |\n' >> "$GITHUB_STEP_SUMMARY"
           failed=0
           while read -r -u 3 family workflow repository caller; do
-            pin="$(gh api -H 'Accept: application/vnd.github.raw' "repos/$repository/contents/$caller?ref=main" \
-              | grep -oE "uses: $GITHUB_REPOSITORY/$workflow@[0-9a-f]{40}" | sed 's/.*@//' | sort -u)"
-            if [ -z "$pin" ] || [ "$(wc -l <<< "$pin")" -ne 1 ]; then
-              status="not measured: $repository/$caller has no single $workflow pin"
-            elif report="$(python scripts/pin_families.py "$pin" origin/main 2>&1)"; then
-              status="$(sed -n "s/^$family: //p" <<< "$report")"
-              status="${status:-not measured: pin_families.py gave no $family verdict}"
+            pin=""
+            if ! content="$(gh api -H 'Accept: application/vnd.github.raw' "repos/$repository/contents/$caller?ref=main")"; then
+              status="not measured: $repository/$caller could not be read"
             else
-              status="not measured: $report"
+              # Only an active uses: line naming this workflow and a full commit SHA counts.
+              uses="^[[:space:]]*(- )?uses: $GITHUB_REPOSITORY/${workflow//./\\.}@[0-9a-f]{40}([[:space:]]|$)"
+              pin="$(grep -oE "$uses" <<< "$content" | sed -E 's/.*@([0-9a-f]{40}).*/\1/' | sort -u)"
+              if [ -z "$pin" ] || [ "$(wc -l <<< "$pin")" -ne 1 ]; then
+                status="not measured: $repository/$caller has no single $workflow pin"
+              elif ! report="$(python scripts/pin_families.py "$pin" origin/main 2>&1)"; then
+                status="not measured: $report"
+              elif grep -qvE '^[a-z-]+: (keep the pin|re-pin \(.+\))$' <<< "$report" \
+                || [ "$(grep -c "^$family: " <<< "$report")" -ne 1 ]; then
+                status="not measured: pin_families.py gave no single well-formed $family verdict"
+              else
+                status="$(sed -n "s/^$family: //p" <<< "$report")"
+              fi
             fi
             case "$status" in
               "keep the pin") ;;
