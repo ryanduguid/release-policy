@@ -129,6 +129,12 @@ class PinFamilyTests(unittest.TestCase):
         self.assertEqual(self.moved({path: FILES[path] + "name: updated release\n"}),
                          {"release-skills"})
 
+    def test_a_virustotal_change_moves_only_its_own_pins(self) -> None:
+        path = ".github/workflows/virustotal-release.yml"
+        self.assertEqual(self.moved({path: "name: scan\n"}), {"virustotal-release"})
+        self.assertEqual(self.moved({path: "name: scan again\n"}), {"virustotal-release"})
+        self.assertEqual(pin_families.inputs(pin_families.FAMILIES["virustotal-release"], "HEAD"), {path})
+
     def test_real_skill_families_share_the_verifier_inputs(self) -> None:
         verifier = pin_families.inputs(pin_families.FAMILIES["verify-skills"], "HEAD")
         release = pin_families.inputs(pin_families.FAMILIES["release-skills"], "HEAD")

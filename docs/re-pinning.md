@@ -8,14 +8,19 @@ CI run. Move only the pins whose family changed:
 python scripts/pin_families.py <old-commit> <new-commit>
 ```
 
-It prints `keep the pin` or the changed files for each of 6 families: `release-python`,
-`release-archive`, `release-binary`, `release-skills`, `verify-skills` and
-`attribution`. A family is the reusable workflow a consumer pins and every file it
+It prints `keep the pin` or the changed files for each of 7 families: `release-python`,
+`release-archive`, `release-binary`, `release-skills`, `verify-skills`, `attribution`
+and `virustotal-release`. A family is the reusable workflow a consumer pins and every file it
 executes, followed from the workflow through the workflows it calls, the composite
 action it uses and the scripts it names, sources or runs. Comment lines are not
 followed; a script named in other prose is, which can name a family that did not need a
 re-pin but never misses one that did. Re-pin the consumers of each named family and no
 others. A change outside these families, such as documentation or tests, moves no pin.
+
+The scheduled CI run's `pin-lag` job runs the same comparison from the pin a consumer
+declares today to `main`, one consumer per family: each canary in `canaries.json`, and
+the skills canary's attribution and VirusTotal callers. It warns for each family owing a
+re-pin and fails only when it cannot read or compare a pin.
 
 The skill verifier has its own consumer pin. Changes to its workflow or script move both
 `verify-skills` and `release-skills`; changes confined to release dependencies leave the

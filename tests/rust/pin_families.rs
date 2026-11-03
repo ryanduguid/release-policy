@@ -211,6 +211,29 @@ fn release_only_changes_preserve_the_verifier_pin() {
 }
 
 #[test]
+fn a_virustotal_change_moves_only_its_own_pins() {
+    let (repo, _) = fixture();
+    let path = ".github/workflows/virustotal-release.yml";
+    assert_eq!(
+        moved(&repo, &[(path, "name: scan\n")]),
+        set(&["virustotal-release"])
+    );
+    assert_eq!(
+        moved(&repo, &[(path, "name: scan again\n")]),
+        set(&["virustotal-release"])
+    );
+    let entry = FAMILIES
+        .iter()
+        .find(|(family, _)| *family == "virustotal-release")
+        .unwrap()
+        .1;
+    assert_eq!(
+        pin_families::inputs(entry, "HEAD", checkout()).unwrap(),
+        set(&[path])
+    );
+}
+
+#[test]
 fn real_skill_families_share_the_verifier_inputs() {
     let entry = |name: &str| {
         FAMILIES
