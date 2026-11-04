@@ -58,7 +58,7 @@ CANONICAL_SHA256 = {
     "docs/guarantees-and-evidence.md": "7f2f709c9395883929bdd19375b6b955a8ac3890170221f1efa788d8ed7bdfe4",
     "docs/verify-a-release.md": "2a0e866c48a8455a194d22b1d11bcc0c2e6d056d0b24143d1d1b67fc12d6bc02",
     "docs/egress-check.md": "2d8f86aad40c65edec23d370cbfb39864cf5a101d24839055c7b2718592f5994",
-    "docs/re-pinning.md": "81cd12661b30ab9cebf9bb83663d6138615b31fd6cabf4f88a4f065ca99236ee",
+    "docs/re-pinning.md": "89076862ed4ae6c2f9a08c722082c9e65c83e5084e4429ee21a9ed1d017913ff",
     "SECURITY.md": "9f9cea868cdb60a00c98ebaa892125d83a94fba1589d55227cd239c6af7804f9",
 }
 
