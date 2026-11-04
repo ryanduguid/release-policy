@@ -1,0 +1,8 @@
+# Codacy runs Bandit with this file.
+#
+# Test folders and fuzz harnesses use plain assert, exec, fixed fake
+# credentials and argument-list subprocess calls, so they are excluded. Bandit
+# skips every file whose path contains one of these names.
+exclude_dirs:
+  - tests
+  - fuzz
