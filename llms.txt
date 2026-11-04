@@ -29,3 +29,7 @@ historical source marker, not a distributable module release.
 ## Related
 
 - [Evidence and assurance](https://duguid.com.au/evidence/#security-tests-and-release-evidence): how the author's tools use this policy.
+
+## Reuse
+
+- [Reusing this code](https://github.com/ryanduguid/release-policy/blob/main/AGENTS.md#reusing-this-code): Ryan Duguid's work under FSL-1.1-ALv2; keep its notices and licence; public credit is requested.

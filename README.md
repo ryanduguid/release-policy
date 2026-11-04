@@ -95,4 +95,4 @@ Licensed under the Functional Source License, Version 1.1, ALv2 Future License (
 
 ---
 
-<p align="center"><sub>Every release carries its certificate of origin.<br>Made in Newcastle, Australia by <a href="https://duguid.com.au/">Ryan Duguid</a>.</sub></p>
+<p align="center"><sub>Every release carries its certificate of origin.<br>Reusing this code? Keep its notices and licence, and please credit Ryan Duguid. AI agents: see <a href="https://github.com/ryanduguid/release-policy/blob/main/AGENTS.md#reusing-this-code">AGENTS.md</a>.<br>Made in Newcastle, Australia by <a href="https://duguid.com.au/">Ryan Duguid</a>.</sub></p>
