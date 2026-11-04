@@ -53,26 +53,39 @@ names its TLS and DNS tests here; the release workflow cannot know them.
    archive again, smoke-tests `--version` and inspects linkage: no dynamic
    libraries or interpreter on Linux, and on Windows only DLLs in a pinned
    set of Windows system components, never a C runtime DLL. The archive and
-   its `.sha256` line go to the publisher as a uniquely named artefact of
-   the run.
-3. `publish` is the only job with write, OIDC and attestation scopes, and it
-   never runs Cargo or consumer code. It runs the release gates, reads
-   `Cargo.toml` and the toolchain file as data, builds the source archives and
-   their SBOM, and admits each target's artefact only when it holds exactly
-   the archive and its digest line, the digest matches, the members are
-   exactly the expected regular files within the size limits, and each
-   document is byte for byte the tagged one. It checks the copy it keeps,
-   then repeats the linkage check on each admitted executable with
-   `llvm-readobj` from a toolchain the policy pins, because the build jobs
-   ran consumer code that could have replaced their archive. Syft then
-   writes an SPDX SBOM for each extracted executable from its embedded
-   dependency list, and the job requires each SBOM to list the package.
-   `cargo-audit`, at a version the policy pins, then checks the same embedded
-   lists against a freshly fetched RustSec advisory database, from an empty
-   directory outside the consumer tree. Any advisory refuses the release,
-   informational ones such as an unmaintained crate included, as does a
-   failed fetch or an executable whose list it cannot read. There is no
-   ignore list or waiver: update or replace the dependency, then release.
+   its `.sha256` line go to `admit` and the publisher as a uniquely named
+   artefact of the run.
+3. `admit` holds `contents: read` only. It runs the steps that rely on tools
+   or data fetched at run time (Syft, a rustup toolchain and `cargo-audit`
+   with its advisory database), so none of them runs with a write, OIDC or
+   attestation scope. It builds the source archives and their SBOM, and
+   admits each target's artefact only when it holds exactly the archive and
+   its digest line, the digest matches, the members are exactly the expected
+   regular files within the size limits, and each document is byte for byte
+   the tagged one. It checks the copy it keeps, then repeats the linkage
+   check on each admitted executable with `llvm-readobj` from a toolchain the
+   policy pins, because the build jobs ran consumer code that could have
+   replaced their archive. Syft then writes an SPDX SBOM for each extracted
+   executable from its embedded dependency list, and the job requires each
+   SBOM to list the package. `cargo-audit`, at a version the policy pins,
+   then checks the same embedded lists against a freshly fetched RustSec
+   advisory database, from an empty directory outside the consumer tree. Any
+   advisory refuses the release, informational ones such as an unmaintained
+   crate included, as does a failed fetch or an executable whose list it
+   cannot read. There is no ignore list or waiver: update or replace the
+   dependency, then release. The job hands the 4 archives and 3 SBOMs to the
+   publisher as one artefact, with each file's SHA-256 as a job output.
+4. `publish` is the only job with write, OIDC and attestation scopes. It
+   never runs Cargo, consumer code or the admit job's third-party tools. It
+   runs the release gates, reads `Cargo.toml` and the toolchain file as data,
+   builds the source archives again and admits each target's artefact again
+   by the same rules. The admit job's artefact must then hold exactly the 7
+   expected files, each matching its digest output and each archive byte for
+   byte the publisher's own, so an archive changed together with its digest
+   is refused. The publisher keeps only the SBOMs from it and requires each
+   binary SBOM to list the package. Without those tools it cannot make the
+   SBOMs or repeat the linkage check and the audit, so for these it relies on
+   the admit job.
 
 The release holds 9 assets, for `<stem>-<version>`:
 

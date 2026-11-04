@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Check the linkage of both admitted executables in the publishing job.
+# Check the linkage of both admitted executables in the release's admit job.
 #
 # The build jobs run the same check, but they also ran consumer code, which
 # could replace an archive after its own check. This runs on the bytes the
-# publisher admitted, with llvm-readobj from a toolchain pinned here rather
-# than by the consumer, and from outside the consumer tree.
+# admit job admitted, which the publisher admits again and requires to be the
+# same, with llvm-readobj from a toolchain pinned here rather than by the
+# consumer, and from outside the consumer tree.
 set -euo pipefail
 
 if [[ "$#" -ne 2 ]]; then

@@ -1,8 +1,10 @@
 """Contract of the Rust binary release family: release-binary.yml and its publisher.
 
 The workflow is the trust boundary: consumer code runs only in read-only build
-jobs, and the one privileged job admits their archives as untrusted input,
-never runs Cargo, and publishes a fixed asset set under one signer identity.
+jobs and fetched third-party tools only in the read-only admit job. The one
+privileged job admits the build archives again as untrusted input, checks the
+admit job's hand-off against its own and never runs Cargo or those tools. It
+publishes a fixed asset set under one signer identity.
 """
 
 from __future__ import annotations
@@ -18,7 +20,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
+
 from tests.test_skill_workflows import YamlContractAssertions  # noqa: E402
+
+import binary_release  # noqa: E402
 
 WORKFLOWS = ROOT / ".github" / "workflows"
 LINUX = "x86_64-unknown-linux-musl"
@@ -62,7 +68,7 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
             self.mapping_block(inputs, "required-checks", indent=6), "required", indent=8))
         self.assertEqual({"contents": "read"}, self.permission_map(self.workflow, indent=0))
         jobs = self.mapping_block(self.workflow, "jobs", indent=0)
-        self.assertEqual(("checks", "build", "publish"), self.mapping_keys(jobs, indent=2))
+        self.assertEqual(("checks", "build", "admit", "publish"), self.mapping_keys(jobs, indent=2))
         for forbidden in ("secrets:", "secrets.", "pull_request_target", "continue-on-error"):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, self.workflow)
@@ -71,10 +77,17 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertEqual({"contents": "read", "actions": "read"},
                          self.permission_map(self.job("checks"), indent=4))
         self.assertEqual({"contents": "read"}, self.permission_map(self.job("build"), indent=4))
+        self.assertEqual({"contents": "read"}, self.permission_map(self.job("admit"), indent=4))
         self.assertEqual({"attestations": "write", "contents": "write", "id-token": "write"},
                          self.permission_map(self.job("publish"), indent=4))
         self.assertEqual("checks", self.mapping_value(self.job("build"), "needs", indent=4))
-        self.assertEqual("[checks, build]", self.job("publish").split("    needs: ", 1)[1].split("\n")[0])
+        for name, needs in (("admit", "[checks, build]"), ("publish", "[checks, build, admit]")):
+            with self.subTest(job=name):
+                job = self.job(name)
+                self.assertEqual(needs, job.split("    needs: ", 1)[1].split("\n")[0])
+                self.assertEqual("ubuntu-24.04", self.mapping_value(job, "runs-on", indent=4))
+                self.assertEqual("20", self.mapping_value(job, "timeout-minutes", indent=4))
+        self.assertNotIn("concurrency:", self.job("admit"))
 
     def test_consumer_checks_gate_matches_the_archive_family(self) -> None:
         archive = (WORKFLOWS / "release-archive.yml").read_text(encoding="utf-8")
@@ -111,72 +124,132 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertLess(build.index(exact),
                         build.index(self.step(build, "Check out the tagged consumer source")))
 
-    def test_publisher_never_runs_consumer_code_or_uploads_artefacts(self) -> None:
+    def assert_in_order(self, job: str, *names: str) -> None:
+        positions = [job.index(self.step(job, name)) for name in names]
+        self.assertEqual(sorted(positions), positions)
+
+    def test_publisher_runs_no_consumer_code_or_third_party_tool_and_uploads_nothing(self) -> None:
         publish = self.job("publish")
         for forbidden in (
             "cargo ", "rustup", "build_binary.sh", "actions/upload-artifact@",
             "pip install", "unittest discover", "pattern:", "merge-multiple", "./scripts/",
             "gh release upload", "secrets: inherit",
+            # The admit job's fetched tools and the policy scripts that run them.
+            "anchore/", "syft", "install-action", "cargo-audit", "audit_binaries.sh",
+            "admitted_linkage.sh", "llvm-readobj",
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, publish)
-        # The one tool the publisher installs is the policy's pinned auditor.
-        self.assertEqual(1, publish.count("install-action"))
-        self.assertIn("install-action", self.step(publish, "Install the pinned cargo-audit"))
+        self.assertEqual(
+            {"actions/checkout", "actions/setup-python", "actions/download-artifact",
+             "actions/attest"},
+            set(re.findall(r"uses: ([^@\s]+)@", publish)))
         self.assertIn("group: release-${{ github.repository }}-${{ github.ref }}", publish)
         self.assertIn("cancel-in-progress: false", publish)
 
-    def test_publisher_admits_each_named_artefact_before_using_it(self) -> None:
-        publish = self.job("publish")
-        receive = self.step(publish, "Validate and admit each target's archive")
-        self.assertIn("binary_release.py\" receive", receive)
-        self.assertIn('--source "$SOURCE_PATH" --root "$GITHUB_WORKSPACE/consumer"', receive)
-        linkage = self.step(publish, "Require each admitted executable's linkage")
+    def test_admit_job_holds_no_token_and_runs_no_consumer_code(self) -> None:
+        admit = self.job("admit")
+        for forbidden in (
+            "cargo ", "build_binary.sh", "pip install", "unittest discover", "pattern:",
+            "merge-multiple", "./scripts/", "secrets: inherit", "GH_TOKEN", "github.token",
+            "actions/attest@", "publish_binaries.sh",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, admit)
+        # The same checkouts as the publisher's: the tag with history, and the policy pin.
+        for step in ("Check out the tagged consumer source",
+                     "Check out release-policy at the calling pin", "Require an immutable policy pin"):
+            with self.subTest(step=step):
+                self.assertEqual(self.step(self.job("publish"), step), self.step(admit, step))
+
+    def test_admit_and_publish_each_admit_the_named_build_artefacts(self) -> None:
+        for job in (self.job("admit"), self.job("publish")):
+            receive = self.step(job, "Validate and admit each target's archive")
+            self.assertIn("binary_release.py\" receive", receive)
+            self.assertIn('--source "$SOURCE_PATH" --root "$GITHUB_WORKSPACE/consumer"', receive)
+            sources = self.step(job, "Build deterministic source archives")
+            self.assertIn("policy/scripts/build_release_archives.py", sources)
+            for target, label in ((LINUX, "Linux"), (WINDOWS, "Windows")):
+                with self.subTest(target=target):
+                    download = self.step(job, f"Download the {label} build artefact")
+                    self.assertIn(
+                        f"name: binary-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}-{target}\n",
+                        download)
+                    self.assertIn(f"path: ${{{{ runner.temp }}}}/incoming/{target}\n", download)
+                    self.assertLess(job.index(download), job.index(receive))
+
+    def test_admit_checks_describes_and_audits_before_the_hand_off(self) -> None:
+        admit = self.job("admit")
+        linkage = self.step(admit, "Require each admitted executable's linkage")
         self.assertIn('"$GITHUB_WORKSPACE/policy/scripts/admitted_linkage.sh"', linkage)
-        self.assertLess(publish.index(receive), publish.index(linkage))
-        self.assertLess(publish.index(linkage), publish.index("Attest release asset provenance"))
+        self.assertIn("syft-version: v1.51.0",
+                      self.step(admit, "Generate an SPDX SBOM for the source ZIP archive"))
         for target, label in ((LINUX, "Linux"), (WINDOWS, "Windows")):
             with self.subTest(target=target):
-                download = self.step(publish, f"Download the {label} build artefact")
-                self.assertIn(
-                    f"name: binary-${{{{ github.run_id }}}}-${{{{ github.run_attempt }}}}-{target}\n",
-                    download)
-                self.assertIn(f"path: ${{{{ runner.temp }}}}/incoming/{target}\n", download)
-                sbom = self.step(publish, f"Generate the {label} binary's SPDX SBOM")
+                sbom = self.step(admit, f"Generate the {label} binary's SPDX SBOM")
                 self.assertIn(f"${{{{ runner.temp }}}}/extracted/{target}/", sbom)
                 self.assertIn("syft-version: v1.51.0", sbom)
-                self.assertLess(publish.index(download), publish.index(receive))
-                self.assertLess(publish.index(receive), publish.index(sbom))
-        lists = self.step(publish, "Require each binary SBOM to list the package")
-        self.assertLess(publish.index(lists), publish.index("Attest release asset provenance"))
+        self.assert_in_order(
+            admit,
+            "Build deterministic source archives",
+            "Generate an SPDX SBOM for the source ZIP archive",
+            "Validate and admit each target's archive",
+            "Require each admitted executable's linkage",
+            "Generate the Linux binary's SPDX SBOM",
+            "Generate the Windows binary's SPDX SBOM",
+            "Require each binary SBOM to list the package",
+            "Install the pinned cargo-audit",
+            "Refuse any RustSec advisory against an admitted executable",
+            "Record the SHA-256 of each file for the publisher",
+            "Hand the admitted archives and SBOMs to the publisher",
+        )
+        upload = self.step(admit, "Hand the admitted archives and SBOMs to the publisher")
+        name = "name: admitted-${{ github.run_id }}-${{ github.run_attempt }}\n"
+        self.assertIn(name, upload)
+        self.assertIn("overwrite: false", upload)
+        self.assertIn(name, self.step(self.job("publish"), "Download the admit job's archives and SBOMs"))
+
+    def test_each_handed_over_file_has_one_digest_output_that_publish_checks(self) -> None:
+        admit, publish = self.job("admit"), self.job("publish")
+        outputs = self.mapping_block(admit, "outputs", indent=4)
+        roles = tuple(binary_release.HANDOFF)
+        self.assertEqual(roles, self.mapping_keys(outputs, indent=6))
+        record = self.step(admit, "Record the SHA-256 of each file for the publisher")
+        self.assertIn("id: digests\n", record)
+        self.assertIn('binary_release.py" digests\n', record)
+        self.assertIn('>> "$GITHUB_OUTPUT"', record)
+        accept = self.step(publish, "Accept the admit job's SBOMs once its archives match this job's")
+        self.assertIn('binary_release.py" accept\n', accept)
+        self.assertIn('--incoming "$RUNNER_TEMP/admitted" --dist "$SOURCE_PATH/dist"', accept)
+        self.assertEqual(len(roles), accept.count("--digest "))
+        # The digests reach no other publish step: they carry no authority.
+        self.assertEqual(len(roles), publish.count("needs.admit."))
+        self.assertEqual(len(roles), accept.count("needs.admit."))
+        for role in roles:
+            variable = role.upper().replace("-", "_")
+            with self.subTest(role=role):
+                self.assertEqual(f"${{{{ steps.digests.outputs.{role} }}}}",
+                                 self.mapping_value(outputs, role, indent=6))
+                self.assertIn(f"{variable}: ${{{{ needs.admit.outputs.{role} }}}}\n", accept)
+                self.assertIn(f'--digest "{role}=${variable}"', accept)
 
     def assert_pinned_cargo_audit(self, install: str) -> None:
         self.assertRegex(install, r"uses: taiki-e/install-action@[0-9a-f]{40} # v2\.\d+\.\d+\n")
         self.assertIn(f"tool: cargo-audit@{CARGO_AUDIT}\n", install)
         self.assertIn("fallback: none\n", install)
 
-    def test_publisher_refuses_any_advisory_against_the_admitted_executables(self) -> None:
-        publish = self.job("publish")
-        install = self.step(publish, "Install the pinned cargo-audit")
+    def test_admit_refuses_any_advisory_against_the_admitted_executables(self) -> None:
+        admit = self.job("admit")
+        install = self.step(admit, "Install the pinned cargo-audit")
         self.assert_pinned_cargo_audit(install)
-        audit = self.step(publish, "Refuse any RustSec advisory against an admitted executable")
+        audit = self.step(admit, "Refuse any RustSec advisory against an admitted executable")
         self.assertIn(
             'bash "$GITHUB_WORKSPACE/policy/scripts/audit_binaries.sh" "$RUNNER_TEMP/advisory-db"\n'
             f'          "$RUNNER_TEMP/extracted/{LINUX}/$BINARY"\n'
             f'          "$RUNNER_TEMP/extracted/{WINDOWS}/$BINARY.exe"\n',
             audit)
         self.assertNotIn("working-directory:", audit)
-        order = (
-            "Require each admitted executable's linkage",
-            "Require each binary SBOM to list the package",
-            "Install the pinned cargo-audit",
-            "Refuse any RustSec advisory against an admitted executable",
-            "Write and verify the exact release asset inventory",
-            "Attest release asset provenance",
-            "Create, inspect and publish the immutable release",
-        )
-        positions = [publish.index(self.step(publish, name)) for name in order]
-        self.assertEqual(sorted(positions), positions)
+        self.assertEqual(1, admit.count("install-action"))
 
     def test_scheduled_ci_audits_the_latest_release_executables(self) -> None:
         # A job of its own: as steps after the live canary audit in checks, the
@@ -226,11 +299,15 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
 
     def test_publisher_gates_attests_and_publishes_the_fixed_assets(self) -> None:
         publish = self.job("publish")
-        order = (
+        self.assert_in_order(
+            publish,
             "Require a release-ready tag, repository and archive contract",
             "Require the Cargo package, binary and toolchain to match the release",
             "Build deterministic source archives",
             "Validate and admit each target's archive",
+            "Download the admit job's archives and SBOMs",
+            "Accept the admit job's SBOMs once its archives match this job's",
+            "Require each binary SBOM to list the package",
             "Write and verify the exact release asset inventory",
             "Attest release asset provenance",
             "Write the provenance bundle as a release asset",
@@ -238,8 +315,6 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
             "Re-check the remote tag, main and release absence",
             "Create, inspect and publish the immutable release",
         )
-        positions = [publish.index(self.step(publish, name)) for name in order]
-        self.assertEqual(sorted(positions), positions)
         self.assertIn("run_archive_release_gates", publish)
         self.assertIn('signer="ryanduguid/release-policy/.github/workflows/release-binary.yml"', publish)
         self.assertIn('--signer-digest "$MODULE_SHA"', publish)

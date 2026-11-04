@@ -2,9 +2,12 @@ name: Reusable Rust binary release
 
 # One tag, one publisher, one immutable release: the deterministic source
 # archives and a prebuilt executable for each fixed target. Consumer code
-# (tests and build scripts) runs only in the read-only build jobs. The
-# publisher holds the write, OIDC and attestation scopes, never runs Cargo or
-# consumer code, and treats every build artefact as untrusted input.
+# (tests and build scripts) runs only in the read-only build jobs, and the
+# fetched third-party tools (Syft, cargo-audit and a rustup toolchain) only in
+# the read-only admit job. The publisher holds the write, OIDC and attestation
+# scopes. It runs no consumer code, no Cargo and none of those tools, and it
+# treats every build artefact and everything the admit job hands over as
+# untrusted input.
 
 on:
   workflow_call:
@@ -234,8 +237,241 @@ jobs:
           overwrite: false
           retention-days: 3
 
-  publish:
+  # Admission, linkage, the SBOMs and the RustSec audit run here, read-only,
+  # because they rely on fetched third-party tools and data: Syft, a rustup
+  # toolchain, the cargo-audit installer and the RustSec advisory database.
+  # The publisher admits and rebuilds every archive again and takes only the
+  # SBOMs from this job: its outputs carry digests, not authority.
+  admit:
     needs: [checks, build]
+    timeout-minutes: 20
+    name: admit, describe and audit the binary release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      source-zip: ${{ steps.digests.outputs.source-zip }}
+      source-tar: ${{ steps.digests.outputs.source-tar }}
+      linux-archive: ${{ steps.digests.outputs.linux-archive }}
+      windows-archive: ${{ steps.digests.outputs.windows-archive }}
+      source-sbom: ${{ steps.digests.outputs.source-sbom }}
+      linux-sbom: ${{ steps.digests.outputs.linux-sbom }}
+      windows-sbom: ${{ steps.digests.outputs.windows-sbom }}
+    steps:
+      - name: Check out the tagged consumer source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          path: consumer
+          persist-credentials: false
+
+      - name: Check out release-policy at the calling pin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ryanduguid/release-policy
+          ref: ${{ job.workflow_sha }}
+          path: policy
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Require an immutable policy pin
+        env:
+          MODULE_SHA: ${{ job.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MODULE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "job.workflow_sha is not a 40-hex policy commit" >&2; exit 1; }
+          test "$(git -C policy rev-parse HEAD)" = "$MODULE_SHA"
+
+      - name: Validate the component release inputs
+        id: inputs
+        env:
+          SOURCE_DIRECTORY: ${{ inputs.source-directory }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+        shell: bash
+        working-directory: consumer
+        run: |
+          set -euo pipefail
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
+          write_release_input_outputs "$SOURCE_DIRECTORY" "$TAG_PREFIX" consumer
+
+      # Derived as the build jobs derive it, so this job needs no token. The
+      # publisher runs the release gates itself.
+      - name: Read the release version, binary and package
+        id: release
+        working-directory: consumer
+        env:
+          ARTIFACT_STEM: ${{ inputs.artifact-stem }}
+          BINARY: ${{ inputs.binary }}
+          SOURCE_DIRECTORY: ${{ steps.inputs.outputs.source-directory }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
+          { read -r stem; read -r version; } < <(
+            derive_archive_metadata "$ARTIFACT_STEM" VERSION "$SOURCE_DIRECTORY"
+          )
+          binary="${BINARY:-$stem}"
+          package="$(python "$GITHUB_WORKSPACE/policy/scripts/binary_release.py" cargo-package \
+            --manifest "$SOURCE_DIRECTORY/Cargo.toml" --version "$version" --binary "$binary")"
+          {
+            echo "stem=$stem"
+            echo "version=$version"
+            echo "binary=$binary"
+            echo "package=$package"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build deterministic source archives
+        working-directory: consumer
+        env:
+          TZ: UTC
+          SOURCE_DIRECTORY: ${{ steps.inputs.outputs.source-directory }}
+          SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
+          STEM: ${{ steps.release.outputs.stem }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python "$GITHUB_WORKSPACE/policy/scripts/build_release_archives.py" \
+            --commit "$GITHUB_SHA" \
+            --prefix "$STEM-$VERSION/" \
+            --source-directory "$SOURCE_DIRECTORY" \
+            --output-base "$SOURCE_PATH/dist/$STEM-$VERSION"
+
+      - name: Generate an SPDX SBOM for the source ZIP archive
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      # Exact names from this run, never a pattern, so another job's upload
+      # cannot be taken for a target's archive.
+      - name: Download the Linux build artefact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-${{ github.run_id }}-${{ github.run_attempt }}-x86_64-unknown-linux-musl
+          path: ${{ runner.temp }}/incoming/x86_64-unknown-linux-musl
+
+      - name: Download the Windows build artefact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-${{ github.run_id }}-${{ github.run_attempt }}-x86_64-pc-windows-msvc
+          path: ${{ runner.temp }}/incoming/x86_64-pc-windows-msvc
+
+      # The build jobs ran consumer code, so their artefacts are untrusted
+      # input: exact files, matching digest line, safe members, then admission.
+      - name: Validate and admit each target's archive
+        env:
+          BINARY: ${{ steps.release.outputs.binary }}
+          SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
+          STEM: ${{ steps.release.outputs.stem }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in x86_64-unknown-linux-musl x86_64-pc-windows-msvc; do
+            python "$GITHUB_WORKSPACE/policy/scripts/binary_release.py" receive \
+              --incoming "$RUNNER_TEMP/incoming/$target" --stem "$STEM" --version "$VERSION" \
+              --binary "$BINARY" --target "$target" --dist "$SOURCE_PATH/dist" \
+              --extract-dir "$RUNNER_TEMP/extracted/$target" \
+              --source "$SOURCE_PATH" --root "$GITHUB_WORKSPACE/consumer"
+          done
+
+      - name: Require each admitted executable's linkage
+        env:
+          BINARY: ${{ steps.release.outputs.binary }}
+        shell: bash
+        run: >-
+          bash "$GITHUB_WORKSPACE/policy/scripts/admitted_linkage.sh"
+          "$RUNNER_TEMP/extracted" "$BINARY"
+
+      # Syft reads the dependency list cargo-auditable embedded for the exact
+      # target. It runs from the workspace root, outside the consumer tree,
+      # so no consumer file configures it.
+      - name: Generate the Linux binary's SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: ${{ runner.temp }}/extracted/x86_64-unknown-linux-musl/${{ steps.release.outputs.binary }}
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-unknown-linux-musl.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate the Windows binary's SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          file: ${{ runner.temp }}/extracted/x86_64-pc-windows-msvc/${{ steps.release.outputs.binary }}.exe
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-pc-windows-msvc.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Require each binary SBOM to list the package
+        working-directory: ${{ steps.inputs.outputs.source-path }}
+        env:
+          PACKAGE: ${{ steps.release.outputs.package }}
+          BASE: ${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in x86_64-unknown-linux-musl x86_64-pc-windows-msvc; do
+            python "$GITHUB_WORKSPACE/policy/scripts/binary_release.py" sbom-lists \
+              --sbom "dist/$BASE-$target.spdx.json" --package "$PACKAGE"
+          done
+
+      # cargo-audit reads the same embedded dependency lists. The policy pins
+      # the tool and fetches a fresh advisory database, and the script runs it
+      # outside the consumer tree, so no consumer file can waive an advisory.
+      - name: Install the pinned cargo-audit
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
+
+      - name: Refuse any RustSec advisory against an admitted executable
+        env:
+          BINARY: ${{ steps.release.outputs.binary }}
+        shell: bash
+        run: >-
+          bash "$GITHUB_WORKSPACE/policy/scripts/audit_binaries.sh" "$RUNNER_TEMP/advisory-db"
+          "$RUNNER_TEMP/extracted/x86_64-unknown-linux-musl/$BINARY"
+          "$RUNNER_TEMP/extracted/x86_64-pc-windows-msvc/$BINARY.exe"
+
+      # Each output is one 64-hex SHA-256, refused otherwise, here and again
+      # by the publisher.
+      - name: Record the SHA-256 of each file for the publisher
+        id: digests
+        env:
+          SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
+          STEM: ${{ steps.release.outputs.stem }}
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: >-
+          python "$GITHUB_WORKSPACE/policy/scripts/binary_release.py" digests
+          --dist "$SOURCE_PATH/dist" --stem "$STEM" --version "$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Hand the admitted archives and SBOMs to the publisher
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: admitted-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.inputs.outputs.source-path }}/dist/
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 3
+
+  publish:
+    needs: [checks, build, admit]
     timeout-minutes: 20
     name: gate, attest and publish the binary release
     runs-on: ubuntu-24.04
@@ -351,16 +587,6 @@ jobs:
             --source-directory "$SOURCE_DIRECTORY" \
             --output-base "$SOURCE_PATH/dist/$STEM-$VERSION"
 
-      - name: Generate an SPDX SBOM for the source ZIP archive
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
-        with:
-          file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.zip
-          format: spdx-json
-          syft-version: v1.51.0
-          output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-
       # Exact names from this run, never a pattern, so another job's upload
       # cannot be taken for a target's archive.
       - name: Download the Linux build artefact
@@ -377,6 +603,8 @@ jobs:
 
       # The build jobs ran consumer code, so their artefacts are untrusted
       # input: exact files, matching digest line, safe members, then admission.
+      # The admit job did the same; admitting again here is what lets this job
+      # refuse an archive the admit job changed along with its digest.
       - name: Validate and admit each target's archive
         env:
           BINARY: ${{ steps.binary.outputs.binary }}
@@ -394,36 +622,35 @@ jobs:
               --source "$SOURCE_PATH" --root "$GITHUB_WORKSPACE/consumer"
           done
 
-      - name: Require each admitted executable's linkage
+      - name: Download the admit job's archives and SBOMs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: admitted-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/admitted
+
+      # Exactly the expected files, each matching its digest output, and each
+      # archive byte for byte this job's own. Only the SBOMs are kept.
+      - name: Accept the admit job's SBOMs once its archives match this job's
         env:
-          BINARY: ${{ steps.binary.outputs.binary }}
+          SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
+          STEM: ${{ steps.release.outputs.stem }}
+          VERSION: ${{ steps.release.outputs.version }}
+          SOURCE_ZIP: ${{ needs.admit.outputs.source-zip }}
+          SOURCE_TAR: ${{ needs.admit.outputs.source-tar }}
+          LINUX_ARCHIVE: ${{ needs.admit.outputs.linux-archive }}
+          WINDOWS_ARCHIVE: ${{ needs.admit.outputs.windows-archive }}
+          SOURCE_SBOM: ${{ needs.admit.outputs.source-sbom }}
+          LINUX_SBOM: ${{ needs.admit.outputs.linux-sbom }}
+          WINDOWS_SBOM: ${{ needs.admit.outputs.windows-sbom }}
         shell: bash
         run: >-
-          bash "$GITHUB_WORKSPACE/policy/scripts/admitted_linkage.sh"
-          "$RUNNER_TEMP/extracted" "$BINARY"
-
-      # Syft reads the dependency list cargo-auditable embedded for the exact
-      # target. It runs from the workspace root, outside the consumer tree,
-      # so no consumer file configures it.
-      - name: Generate the Linux binary's SPDX SBOM
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
-        with:
-          file: ${{ runner.temp }}/extracted/x86_64-unknown-linux-musl/${{ steps.binary.outputs.binary }}
-          format: spdx-json
-          syft-version: v1.51.0
-          output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-unknown-linux-musl.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
-
-      - name: Generate the Windows binary's SPDX SBOM
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
-        with:
-          file: ${{ runner.temp }}/extracted/x86_64-pc-windows-msvc/${{ steps.binary.outputs.binary }}.exe
-          format: spdx-json
-          syft-version: v1.51.0
-          output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-pc-windows-msvc.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
+          python "$GITHUB_WORKSPACE/policy/scripts/binary_release.py" accept
+          --incoming "$RUNNER_TEMP/admitted" --dist "$SOURCE_PATH/dist"
+          --stem "$STEM" --version "$VERSION"
+          --digest "source-zip=$SOURCE_ZIP" --digest "source-tar=$SOURCE_TAR"
+          --digest "linux-archive=$LINUX_ARCHIVE" --digest "windows-archive=$WINDOWS_ARCHIVE"
+          --digest "source-sbom=$SOURCE_SBOM" --digest "linux-sbom=$LINUX_SBOM"
+          --digest "windows-sbom=$WINDOWS_SBOM"
 
       - name: Require each binary SBOM to list the package
         working-directory: ${{ steps.inputs.outputs.source-path }}
@@ -437,24 +664,6 @@ jobs:
             python "$GITHUB_WORKSPACE/policy/scripts/binary_release.py" sbom-lists \
               --sbom "dist/$BASE-$target.spdx.json" --package "$PACKAGE"
           done
-
-      # cargo-audit reads the same embedded dependency lists. The policy pins
-      # the tool and fetches a fresh advisory database, and the script runs it
-      # outside the consumer tree, so no consumer file can waive an advisory.
-      - name: Install the pinned cargo-audit
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
-        with:
-          tool: cargo-audit@0.22.2
-          fallback: none
-
-      - name: Refuse any RustSec advisory against an admitted executable
-        env:
-          BINARY: ${{ steps.binary.outputs.binary }}
-        shell: bash
-        run: >-
-          bash "$GITHUB_WORKSPACE/policy/scripts/audit_binaries.sh" "$RUNNER_TEMP/advisory-db"
-          "$RUNNER_TEMP/extracted/x86_64-unknown-linux-musl/$BINARY"
-          "$RUNNER_TEMP/extracted/x86_64-pc-windows-msvc/$BINARY.exe"
 
       - name: Write and verify the exact release asset inventory
         working-directory: ${{ steps.inputs.outputs.source-path }}

@@ -1,10 +1,13 @@
 """Package, check and validate the per-target archives of a Rust binary release.
 
 The binary release family (`release-binary.yml`) builds each target in its own
-read-only job and publishes from one privileged job that never runs consumer
-code. The build jobs call `package`, `smoke` and `linkage`; the publisher calls
-`cargo-package` before anything is built and `verify` on each archive it
-receives, so a missing, extra or unsafe member stops the release.
+read-only job, checks the archives with third-party tools in a read-only admit
+job and publishes from one privileged job that runs neither consumer code nor
+those tools. The build jobs call `package`, `smoke` and `linkage`. The admit
+job calls `receive`, `linkage`, `sbom-lists` and `digests`. The publisher calls
+`cargo-package` before anything is built, `receive` on each archive again and
+`accept` on what the admit job hands over, so a missing, extra, unsafe or
+changed file stops the release.
 
 Every output path comes from the workflow or build_binary.sh, under the
 runner's temporary directory or the checkout's dist directory; member names
@@ -73,6 +76,21 @@ _ZIP_END_SEARCH = 22 + 0xFFFF
 _MAX_ZIP_DIRECTORY_BYTES = 64 * 1024
 _TOOLCHAIN_CHANNEL = re.compile(r"[1-9][0-9]*\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
 _DIGEST_LINE = re.compile(r"(?P<digest>[0-9a-f]{64}) [ *](?P<name>[^\r\n]+)\r?\n\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+# The files the admit job hands to the publisher, by the name of the job output
+# that carries each one's SHA-256, and the suffix after `<stem>-<version>`. The
+# publisher rebuilds or re-admits each archive itself; it takes the SBOMs, the
+# roles ending in -sbom, because making them needs Syft, which it never runs.
+# Archives come first, so `accept` copies no SBOM until every archive matches.
+HANDOFF = {
+    "source-zip": ".zip",
+    "source-tar": ".tar.gz",
+    "linux-archive": "-x86_64-unknown-linux-musl.tar.gz",
+    "windows-archive": "-x86_64-pc-windows-msvc.zip",
+    "source-sbom": ".spdx.json",
+    "linux-sbom": "-x86_64-unknown-linux-musl.spdx.json",
+    "windows-sbom": "-x86_64-pc-windows-msvc.spdx.json",
+}
 # Documents copied beside the executable. LICENSE and README.md are required;
 # NOTICE ships only when the component or repository has one.
 DOCUMENTS = ("LICENSE", "NOTICE", "README.md")
@@ -462,6 +480,67 @@ def sbom_lists(sbom: Path, package_name: str) -> bool:
     )
 
 
+def handoff_names(stem: str, version: str) -> dict[str, str]:
+    """Each file the admit job hands over, by the job output holding its digest."""
+    base = f"{_checked(_STEM, stem, 'artifact-stem')}-{_checked(_VERSION, version, 'version')}"
+    return {role: base + suffix for role, suffix in HANDOFF.items()}
+
+
+def _sha256(path: Path) -> str:
+    with path.open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def digests(dist: Path, stem: str, version: str) -> tuple[str, ...]:
+    """The admit job's outputs: one `<role>=<SHA-256>` line for each file it hands over."""
+    return tuple(
+        f"{role}={_checked(_SHA256, _sha256(dist / name), f'{name} digest')}"
+        for role, name in handoff_names(stem, version).items()
+    )
+
+
+def accept(
+    *, incoming: Path, dist: Path, stem: str, version: str, digest_outputs: Sequence[str],
+) -> tuple[Path, ...]:
+    """Take the admit job's SBOMs into the release once its whole hand-off checks out.
+
+    The admit job ran third-party tools, so its artefact and its outputs are
+    untrusted: a compromised job could change a file and its digest together.
+    The digests only prove the transfer. Each archive must also be byte for
+    byte the one already in `dist`, which this job built or admitted itself.
+    Each SBOM is copied into `dist` first, and the copy is what is hashed and
+    kept. Each `digest_outputs` item is `<role>=<SHA-256>`, once per role.
+    """
+    names = handoff_names(stem, version)
+    expected: dict[str, str] = {}
+    for item in digest_outputs:
+        role, _, digest = item.partition("=")
+        if role in expected:
+            raise ValueError(f"the {role} digest output is repeated")
+        expected[role] = _checked(_SHA256, digest, f"{role} digest")
+    if set(expected) != set(names):
+        raise ValueError(f"digest outputs are {sorted(expected)}, expected {sorted(names)}")
+    entries = {entry.name: entry for entry in incoming.iterdir()}
+    if set(entries) != set(names.values()):
+        raise ValueError(f"artefact holds {sorted(entries)}, expected {sorted(names.values())}")
+    for entry in entries.values():
+        if entry.is_symlink() or not entry.is_file():
+            raise ValueError(f"{entry.name} is not a regular file")
+    kept: list[Path] = []
+    for role, name in names.items():
+        own, received = dist / name, entries[name]
+        if role.endswith("-sbom"):
+            with received.open("rb") as source, own.open("xb") as copy:  # NOSONAR
+                shutil.copyfileobj(source, copy)
+            received = own
+        elif _sha256(own) != expected[role]:
+            raise ValueError(f"{name} from the admit job differs from this job's own")
+        if _sha256(received) != expected[role]:
+            raise ValueError(f"{name} does not match the admit job's digest")
+        kept.append(own)
+    return tuple(kept)
+
+
 def _trusted_bases() -> list[Path]:
     bases = [Path.cwd(), Path(tempfile.gettempdir())]
     bases += [Path(os.environ[name]) for name in _RUNNER_DIRECTORIES if os.environ.get(name)]
@@ -489,7 +568,7 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     def command(name: str, *required: str, paths: tuple[str, ...] = (),
-                optional: tuple[str, ...] = ()) -> None:
+                optional: tuple[str, ...] = ()) -> argparse.ArgumentParser:
         sub = commands.add_parser(name)
         for option in required:
             sub.add_argument(option, required=True)
@@ -497,6 +576,7 @@ def _parser() -> argparse.ArgumentParser:
             sub.add_argument(option, type=Path, required=True)
         for option in optional:
             sub.add_argument(option, type=Path)
+        return sub
 
     command("cargo-package", "--version", "--binary", paths=("--manifest",))
     command("toolchain", paths=("--source", "--root"))
@@ -508,6 +588,9 @@ def _parser() -> argparse.ArgumentParser:
     command("smoke", "--version", paths=("--executable",))
     command("linkage", "--target", paths=("--readobj-output",))
     command("sbom-lists", "--package", paths=("--sbom",))
+    command("digests", "--stem", "--version", paths=("--dist",))
+    command("accept", "--stem", "--version", paths=("--incoming", "--dist")).add_argument(
+        "--digest", action="append", required=True)
     return parser
 
 
@@ -546,6 +629,13 @@ def _run(arguments: argparse.Namespace) -> str:
         case "linkage":
             output = _confined(arguments.readobj_output).read_bytes().decode("utf-8")
             return "\n".join(linkage(output, arguments.target))
+        case "digests":
+            return "\n".join(digests(_confined(arguments.dist), arguments.stem, arguments.version))
+        case "accept":
+            return "\n".join(path.name for path in accept(
+                incoming=_confined(arguments.incoming), dist=_confined(arguments.dist),
+                stem=arguments.stem, version=arguments.version, digest_outputs=arguments.digest,
+            ))
         case _:
             if not sbom_lists(_confined(arguments.sbom), arguments.package):
                 raise ValueError(f"{arguments.sbom} does not list the package {arguments.package}")
