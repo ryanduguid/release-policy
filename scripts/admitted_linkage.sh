@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 # Check the linkage of both admitted executables in the release's admit job.
 #
 # The build jobs run the same check, but they also ran consumer code, which

@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """The shared attribution workflow must run the action this repository ships.
 
 `attribution-policy.yml` pins the composite action by commit. Every consumer

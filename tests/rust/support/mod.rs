@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Fixtures shared by the integration tests: temporary Git checkouts and the
 //! binary itself.
 #![allow(dead_code)]

@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """The CI download commands accept HTTPS but refuse a redirect to HTTP."""
 
 from __future__ import annotations

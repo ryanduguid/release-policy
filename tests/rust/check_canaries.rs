@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Release-family canary pins and live successful-run evidence.
 //! Ported from tests/test_canaries.py and tests/test_canaries_refusals.py.
 //! `test_ci_validates_manifest_and_runs_live_audit_only_on_schedule` reads

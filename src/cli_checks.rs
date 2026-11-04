@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 use clap::Args;
 use release_policy::{Result, common::*, egress, py, required_checks as rc};
 use std::io::Read;

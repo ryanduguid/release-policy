@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Build deterministic source-release archives from tracked Git content.
 
 use crate::{Result, common::*, git_revision::resolve_commit, py, release::validate_source_syntax};

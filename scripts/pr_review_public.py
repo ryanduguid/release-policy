@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Capture and report Ryan's public PRs without authenticated GitHub requests."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """A bounded /review adapter for the pinned PR-Agent engine.
 
 Only PR-Agent's review prompt, token budget and structured output model are

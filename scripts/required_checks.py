@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Require the consumer's mandatory checks to have succeeded for the exact release commit.
 
 The release gates prove that the tag names the ``main`` head when the run starts,

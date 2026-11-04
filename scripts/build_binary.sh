@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 # Test, build, package and check one target of a Rust binary release.
 #
 # Runs in a read-only build job of release-binary.yml, and in CI's self-check

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 # Audit shipped executables against a freshly fetched RustSec advisory database.
 #
 # cargo-audit reads the dependency list cargo-auditable embedded in each

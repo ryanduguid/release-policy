@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Repository contract for the risk-based changed-line coverage pilot."""
 
 import unittest

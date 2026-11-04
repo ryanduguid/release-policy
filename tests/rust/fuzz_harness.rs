@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The fuzz target's invariants on its seed corpus, and proof that each one
 //! fails when a parser misbehaves. Ported from tests/test_fuzz_harness.py.
 
