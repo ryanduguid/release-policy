@@ -145,6 +145,98 @@ run allow "indented prose under a trailer key" 'Fix
 Notes: some context
     on a continuation line.'
 
+echo "--- live tool trailers (parity with the shared action) ---"
+run block "Qoder co-author" 'Fix
+
+Co-authored-by: Qoder <noreply@qoder.com>'
+run block "opencode co-author" 'Fix
+
+Co-authored-by: opencode (fable-5) <ai@local>'
+run block "Grok co-author" 'Fix
+
+Co-Authored-By: Grok 4.7 <noreply@x.ai>'
+run block "Droid co-author by its domain" 'Fix
+
+Co-Authored-By: Droid <noreply@factory.ai>'
+run block "Factory bot co-author" 'Fix
+
+Co-authored-by: factory-droid[bot] <1+factory-droid[bot]@users.noreply.github.com>'
+run block "Amp co-author by its domain" 'Fix
+
+Co-authored-by: Amp <amp@ampcode.com>'
+run block "Junie co-author by its address" 'Fix
+
+Co-authored-by: Junie <junie@jetbrains.com>'
+run block "Kiro co-author by its domain" 'Fix
+
+Co-Authored-By: Kiro <noreply@kiro.dev>'
+run block "Kiro co-author by its account" 'Fix
+
+Co-authored-by: Kiro Agent <1+kiro-agent@users.noreply.github.com>'
+run block "Jules co-author by its bot account" 'Fix
+
+Co-authored-by: google-labs-jules[bot] <1+google-labs-jules[bot]@users.noreply.github.com>'
+run block "made-with trailer" 'Fix
+
+Made-with: Cursor'
+run block "made-by trailer" 'Fix
+
+Made-by: Grok'
+run block "generated-with trailer" 'Fix
+
+Generated-with: Qoder'
+run block "session id trailer" 'Fix
+
+Codex-Session-Id: ses_123'
+run block "thread id trailer" 'Fix
+
+Claude_Thread_Id: 0123abcd'
+run block "thread id at a vendor domain" 'Fix
+
+Amp-Thread-ID: https://ampcode.com/threads/T-1'
+run block "bare Amp url" 'Fix
+
+https://ampcode.com/threads/T-1'
+run block "robot emoji credit naming Grok" "$(printf 'Fix\n\n\xf0\x9f\xa4\x96 Generated with [Grok](https://x.ai)')"
+
+echo "--- people and words that share a tool's name ---"
+run allow "a surname containing amp" 'Fix
+
+Co-authored-by: Sampson Jones <sampson@example.com>'
+run allow "a person called Jules" 'Fix
+
+Co-authored-by: Jules Verne <jules@example.com>'
+run allow "a person called Junie" 'Fix
+
+Co-authored-by: Junie Moon <junie@example.com>'
+run allow "a person called Kiro" 'Fix
+
+Co-authored-by: Kiro Tanaka <kiro@example.com>'
+run allow "a surname containing grok" 'Fix
+
+Co-authored-by: Ana Grokhovsky <ana@example.com>'
+run allow "a reviewer called Jules" 'Fix
+
+Reviewed-by: Jules Verne <jules@example.com>'
+run allow "made-by naming a person" 'Fix
+
+Made-by: Junie Moon'
+run allow "made-with naming no tool" 'Fix
+
+Made-with: care'
+run allow "a sentence, not a trailer" 'Fix
+
+Made with cursor pagination'
+run allow "a thread id elsewhere" 'Fix
+
+Amp-Thread-ID: https://example.com/threads/1'
+run allow "a word containing grok" 'Fix
+
+Grokking the parser took a while.'
+run allow "a vendor made something" 'Fix
+
+OpenAI made its API stricter.'
+
 echo "--- identities (parity with the shared action) ---"
 run block "author at a blocked address" 'Publish' 'Claude' 'noreply@anthropic.com'
 run block "committer at a blocked address" 'Publish' \
