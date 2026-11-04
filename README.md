@@ -68,19 +68,27 @@ policy commit.
 
 ## Consumer guides
 
+How-to:
+
 - [Packaged Python](docs/python-consumers.md)
 - [PyPI hand-off and one-time setup](docs/pypi-publishing.md)
 - [Source archives](docs/archive-consumers.md)
 - [Rust binaries](docs/binary-consumers.md)
 - [Skill verification and releases](docs/skill-consumers.md)
-- [Attribution checks](docs/attribution-consumers.md)
-- [The egress check](docs/egress-check.md)
 - [Independent PR reviews with your own API key](docs/pr-review.md)
 - [VirusTotal release scans](docs/virustotal-consumers.md)
-- [Prerequisites](docs/consumer-prerequisites.md)
 - [Re-pinning consumers](docs/re-pinning.md)
-- [Guarantees and canary evidence](docs/guarantees-and-evidence.md)
 - [Verify a downloaded release](docs/verify-a-release.md)
+
+Reference:
+
+- [Prerequisites](docs/consumer-prerequisites.md)
+- [Attribution checks](docs/attribution-consumers.md)
+- [The egress check](docs/egress-check.md)
+- [Guarantees and canary evidence](docs/guarantees-and-evidence.md)
+
+Background:
+
 - [Shared-policy decision](docs/adr/0001-shared-release-policy.md)
 
 Run the existing offline manifest check with `python scripts/check_canaries.py`. Scheduled CI adds the live audit, which checks each consumer's pin, confirms the pin is still reachable from this repository's `main` (or, after a history rewrite, from a locked version tag, provided `main` still carries the pin's tree), and compares the recorded evidence with the latest successful run. A release family must record the latest success itself; the verification consumer, which runs on every push to its default branch, instead has to show that its newest success runs the pin it declares today. The same run, in a job of its own so a failing pin check cannot skip it, checks the executables in this repository's latest release against `SHA256SUMS` and their signed provenance, then audits them against a fresh RustSec advisory database, as the binary release's admit job does, so an advisory published after the release fails it. Consumers' binary releases are audited only at publication.
