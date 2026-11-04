@@ -221,6 +221,15 @@ Reviewed-by: Jules Verne <jules@example.com>'
 run allow "made-by naming a person" 'Fix
 
 Made-by: Junie Moon'
+run allow "a lookalike host" 'Fix
+
+https://ampcode.com.example.org/threads/1'
+run block "made-by naming the tool Devin" 'Fix
+
+Made-by: Devin'
+run block "made-by naming Claude Code" 'Fix
+
+Made-by: Claude Code'
 run allow "made-with naming no tool" 'Fix
 
 Made-with: care'

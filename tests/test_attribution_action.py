@@ -222,6 +222,9 @@ class AttributionActionTests(unittest.TestCase):
             ),
             ("Made-with: Cursor", "agent by-line trailer"),
             ("Made-by: Grok", "agent by-line trailer"),
+            ("Made-by: Devin", "agent by-line trailer"),
+            ("Made-by: Claude Code", "agent by-line trailer"),
+            ("Reviewed-by: Claude 4.8", "agent by-line trailer"),
             ("Generated-with: Qoder", "agent by-line trailer"),
             ("Codex-Session-Id: ses_123", "session trailer"),
             ("Claude_Thread_Id: 0123abcd", "session trailer"),
@@ -261,6 +264,8 @@ class AttributionActionTests(unittest.TestCase):
             "OpenAI made its API stricter.",
             "https://sampson.example/ampcode.com/threads/1",
             "https://max.ai/docs",
+            "https://ampcode.com.example.org/threads/1",
+            "https://claude.ai-tools.example/x",
         ):
             with self.subTest(line=line):
                 result = self.run_policy(PR_BODY="Summary\n\n" + line)

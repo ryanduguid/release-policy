@@ -108,7 +108,7 @@ DOMAIN = (r"(?:claude\.ai|claude\.com|anthropic\.com|openai\.com|"
           r"chatgpt\.com|cursor\.com|cursor\.sh|codeium\.com|"
           r"windsurf\.com|cognition\.ai|devin\.ai|nousresearch\.com|qodo\.ai|openhands\.dev|all-hands\.dev|"
           r"qoder\.com|qoder\.ai|opencode\.ai|factory\.ai|ampcode\.com|x\.ai|grok\.com|"
-          r"jules\.google|junie\.jetbrains\.com|kiro\.dev)")
+          r"jules\.google(?:\.com)?|junie\.jetbrains\.com|kiro\.dev)")
 
 AI_NAME = re.compile(
     r"(?:anthropic|codex|openai|cursor|nousresearch|copilot|chatgpt|"
@@ -130,7 +130,7 @@ PATTERNS = [
     ("session trailer", r"^\s*" + VENDOR + r"[-_ ]?(?:(?:session|thread)[-_ ]id|session|run|thread|trace|id):"),
     ("robot emoji credit", r"^\s*_?\s*\U0001F916.*" + VENDOR),
     ("generated-with footer", r"^\s*_?" + CREDIT_VERB + r"\s+(?:with|by)\s+\[?[^\]\n]*" + VENDOR),
-    ("bare vendor url", r"^\s*(?:[\w-]+[-_](?:session|thread)[-_]id:\s*)?[_<(]*https?://(?:[\w.-]+\.)?" + DOMAIN + r"\b"),
+    ("bare vendor url", r"^\s*(?:[\w-]+[-_](?:session|thread)[-_]id:\s*)?[_<(]*https?://(?:[\w.-]+\.)?" + DOMAIN + r"(?![\w-]|\.[\w-])"),
 ]
 RX = [(name, re.compile(p, re.I)) for name, p in PATTERNS]
 
