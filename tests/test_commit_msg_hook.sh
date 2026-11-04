@@ -227,6 +227,9 @@ https://ampcode.com.example.org/threads/1'
 run block "made-by naming the tool Devin" 'Fix
 
 Made-by: Devin'
+run block "a bare tool name fails closed, even on a person" 'Fix
+
+Made-by: Devin McGill'
 run block "made-by naming Claude Code" 'Fix
 
 Made-by: Claude Code'

@@ -223,6 +223,8 @@ class AttributionActionTests(unittest.TestCase):
             ("Made-with: Cursor", "agent by-line trailer"),
             ("Made-by: Grok", "agent by-line trailer"),
             ("Made-by: Devin", "agent by-line trailer"),
+            # A bare tool name fails closed, even on a person.
+            ("Made-by: Devin McGill", "agent by-line trailer"),
             ("Made-by: Claude Code", "agent by-line trailer"),
             ("Reviewed-by: Claude 4.8", "agent by-line trailer"),
             ("Generated-with: Qoder", "agent by-line trailer"),
