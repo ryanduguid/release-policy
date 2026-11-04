@@ -33,7 +33,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/pr-review.yml": "2e5e3775e4ad72fae2ad7e32bd49627bb93300df447a522b5aed1b1a73f27f25",
     "docs/attribution-consumers.md": "075a9adbfba0e7a40a427b6bc2d04d9dfe39cb9218dd6b86d97623863d9e977a",
     ".github/ci/check_gates.py": "8d48fa32c92d15bb476e28f2ad34400660f62ee337c527c1d9fd9b7f6230f62a",
-    ".github/actions/no-ai-attribution/action.yml": "3e123ba40b6b76eb22cb289625d3ba5ca606907339172a00d86b331bb5847e93",
+    ".github/actions/no-ai-attribution/action.yml": "c9181672a3b2e4ab7a486f906ba8481d33aabac5d7fcf21979d32d6b74fe9243",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
     ".github/dependabot.yml": "a2e60e605ef8847b1e051d42da813238b3d6601f5448436f0c2aeddf8373db40",
     ".github/workflows/ci.yml": "6ced6089af689ed3c9d35f0fb128aac6d3c4d01cf85534d3a9f59cbb723ee562",
