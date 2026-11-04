@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 # Exercise .githooks/commit-msg, the local copy of the attribution rules that
 # refuses a credit at the keyboard rather than after a push.
 #

@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Packaging, archive validation and checks for the binary release family.
 
 The build jobs package each target and the publisher validates what it

@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Closed metadata parsing and exact candidate inventory for Python releases."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Name the pin families a release-policy change moves, so consumers re-pin only those.
 //!
 //! Consumers pin a reusable workflow by commit. A family is that workflow and every file

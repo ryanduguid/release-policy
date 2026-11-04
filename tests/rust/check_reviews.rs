@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! A consumer's review index, verdict files and known-unknowns register.
 //! Ported from tests/test_check_reviews.py.
 mod support;

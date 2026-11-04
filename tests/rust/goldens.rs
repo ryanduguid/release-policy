@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Replays how the base Python tooling treated library-dependent input:
 //! CPython's ast and literal_eval, tomllib, json, re, datetime and its Unicode
 //! tables. tests/rust/data/python_goldens.json comes from

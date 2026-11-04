@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Deterministic source-release archives. Ported from the builder tests in
 //! tests/test_release_archives.py; its workflow-contract tests read the
 //! reusable workflow YAML, which stays as it is, and remain in Python.

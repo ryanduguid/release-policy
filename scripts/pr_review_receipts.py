@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Sanitised diagnostic receipts. These never authorise a report or another call."""
 
 from __future__ import annotations

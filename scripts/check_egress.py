@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Check a publication candidate for content that must not leave private hands.
 
 The gate runs on egress: at the point files are about to be published, never

@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Validate release-family canary pins and live successful-run evidence.
 
 use crate::common::{REPOSITORY, SHA, full, repr_list, sha256};

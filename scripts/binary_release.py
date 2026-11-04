@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Package, check and validate the per-target archives of a Rust binary release.
 
 The binary release family (`release-binary.yml`) builds each target in its own

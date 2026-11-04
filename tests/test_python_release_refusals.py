@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Refusal paths of python_release that the round-trip tests do not reach.
 
 Each case is one way a consumer checkout or a candidate directory can be wrong;

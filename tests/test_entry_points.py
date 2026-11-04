@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Command entry points and short-circuit branches the module tests do not reach."""
 
 from __future__ import annotations
