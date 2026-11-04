@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Release policy contracts, ported from the pinned Python tooling.
 pub mod archives;
 pub mod attribution;

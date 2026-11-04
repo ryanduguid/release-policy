@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """File the attribution repin patch as an issue when the action pin is stale.
 
 `attribution-policy.yml` pins `.github/actions/no-ai-attribution` by commit, so

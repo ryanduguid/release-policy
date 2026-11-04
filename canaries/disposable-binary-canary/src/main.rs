@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! A release candidate for nothing: `release-binary.yml` tags, builds, attests
 //! and publishes this executable so the real signing and publication path can
 //! be checked without spending a real version.

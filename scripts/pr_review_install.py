@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Prepare only the pinned engine's two hash-verified source build exceptions."""
 
 from __future__ import annotations

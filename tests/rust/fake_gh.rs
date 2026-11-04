@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! A stand-in `gh` for differential and integration tests.
 //!
 //! `FAKE_GH_SCENARIO` names a JSON file `{"rules": [...], "log": "path"}`.

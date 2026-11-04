@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 # Release-readiness gates. Source this file; each gate returns 0 on pass,
 # non-zero with a stderr message on fail. Fail closed (ADR-0001).
 set -euo pipefail

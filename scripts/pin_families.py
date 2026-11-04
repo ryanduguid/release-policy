@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Name the pin families a release-policy change moves, so consumers re-pin only those.
 
 Usage: python scripts/pin_families.py OLD_COMMIT NEW_COMMIT

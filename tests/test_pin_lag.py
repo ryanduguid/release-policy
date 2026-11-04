@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Contract of ci.yml's pin-lag job: lag warns, an unmeasured pin fails.
 
 The job's comparison step runs here against a stub GitHub and a stub

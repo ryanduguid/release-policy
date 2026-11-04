@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 # The release build installs nothing: once the locked dev extra is synced as
 # wheels, with the project itself left uninstalled and every build refused, a
 # package builds its wheel and sdist without isolation and with every index

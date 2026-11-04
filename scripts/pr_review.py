@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Freeze PR evidence and validate two independent reviews before publishing a status.
 
 The model transport has no GitHub write operation. The publisher has no model

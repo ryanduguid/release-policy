@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The consumer's mandatory checks for the exact release commit.
 //! Ported from tests/test_required_checks.py. The tests that read the
 //! adapter workflows' gate timeouts and the consumer guides (GateTimeoutTests'

@@ -1,3 +1,6 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
 """Contract of the Rust binary release family: release-binary.yml and its publisher.
 
 The workflow is the trust boundary: consumer code runs only in read-only build
