@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
+// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
 //! Command entry points the module tests do not reach. Ported from
 //! tests/test_entry_points.py; its PR-review case stays with the Python

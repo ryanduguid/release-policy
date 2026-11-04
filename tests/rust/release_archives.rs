@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: FSL-1.1-ALv2
+// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
 //! Deterministic source-release archives. Ported from the builder tests in
 //! tests/test_release_archives.py; its workflow-contract tests read the
