@@ -11,7 +11,7 @@
 
 [![tests](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml) [![Codecov](https://codecov.io/gh/ryanduguid/release-policy/graph/badge.svg)](https://codecov.io/gh/ryanduguid/release-policy) [![CodeQL](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml) [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=ryanduguid_release-policy&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ryanduguid_release-policy) [![Codacy code quality](https://app.codacy.com/project/badge/Grade/49440ac0ee144a12b5fc1380425e9773)](https://app.codacy.com/gh/ryanduguid/release-policy/dashboard)<br> [![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/ryanduguid/release-policy.svg)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/release-policy) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15422/badge)](https://www.bestpractices.dev/projects/15422)<br> [![release](https://badgen.net/github/release/ryanduguid/release-policy/stable?label=release&color=66023C&labelColor=000000)](https://github.com/ryanduguid/release-policy/releases/latest) [![licence: Ryan Duguid Public Attribution Licence 1.0](.github/assets/badges/licence.svg)](LICENSE)
 
-[Prerequisites](docs/consumer-prerequisites.md) · [Verify a release](docs/verify-a-release.md) · [Guarantees](docs/guarantees-and-evidence.md) · [Canaries](canaries.json) · [Licence](#licence)
+[Prerequisites](docs/consumer-prerequisites.md) · [Verify a release](docs/verify-a-release.md) · [Guarantees](docs/guarantees-and-evidence.md) · [Canaries](canaries.json) · [Development](#development) · [Licence](#licence)
 
 </div>
 
@@ -68,19 +68,27 @@ policy commit.
 
 ## Consumer guides
 
+How-to:
+
 - [Packaged Python](docs/python-consumers.md)
 - [PyPI hand-off and one-time setup](docs/pypi-publishing.md)
 - [Source archives](docs/archive-consumers.md)
 - [Rust binaries](docs/binary-consumers.md)
 - [Skill verification and releases](docs/skill-consumers.md)
-- [Attribution checks](docs/attribution-consumers.md)
-- [The egress check](docs/egress-check.md)
 - [Independent PR reviews with your own API key](docs/pr-review.md)
 - [VirusTotal release scans](docs/virustotal-consumers.md)
-- [Prerequisites](docs/consumer-prerequisites.md)
 - [Re-pinning consumers](docs/re-pinning.md)
-- [Guarantees and canary evidence](docs/guarantees-and-evidence.md)
 - [Verify a downloaded release](docs/verify-a-release.md)
+
+Reference:
+
+- [Prerequisites](docs/consumer-prerequisites.md)
+- [Attribution checks](docs/attribution-consumers.md)
+- [The egress check](docs/egress-check.md)
+- [Guarantees and canary evidence](docs/guarantees-and-evidence.md)
+
+Background:
+
 - [Shared-policy decision](docs/adr/0001-shared-release-policy.md)
 
 Run the existing offline manifest check with `python scripts/check_canaries.py`. Scheduled CI adds the live audit, which checks each consumer's pin, confirms the pin is still reachable from this repository's `main` (or, after a history rewrite, from a locked version tag, provided `main` still carries the pin's tree), and compares the recorded evidence with the latest successful run. A release family must record the latest success itself; the verification consumer, which runs on every push to its default branch, instead has to show that its newest success runs the pin it declares today. The same run, in a job of its own so a failing pin check cannot skip it, checks the executables in this repository's latest release against `SHA256SUMS` and their signed provenance, then audits them against a fresh RustSec advisory database, as the binary release's admit job does, so an advisory published after the release fails it. Consumers' binary releases are audited only at publication.
@@ -88,6 +96,10 @@ Run the existing offline manifest check with `python scripts/check_canaries.py`.
 To run that audit on demand, dispatch CI with `live-canary-audit` selected. The input defaults to false; an ordinary manual dispatch performs the offline manifest check. A successful audit verifies the recorded evidence; it changes nothing and does not authorise a release or consumer migration.
 
 </details>
+
+## Development
+
+[CONTRIBUTING.md](CONTRIBUTING.md) lists the checks to run before a change. [SECURITY.md](SECURITY.md) says how to report a vulnerability.
 
 ## Licence
 
