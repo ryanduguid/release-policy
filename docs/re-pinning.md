@@ -37,3 +37,15 @@ A contribution fork's `No AI attribution` workflow omits the push trigger, as
 requests opened inside the fork. Those forks stay on the attribution pin they carry
 (`87767ec` on 27 September 2026) and are left out of routine re-pins. Move a fork's pin
 only when a change alters what the check does to a pull request opened inside the fork.
+
+## No `actions.lock` for now
+
+Consumers keep calling these workflows by full commit SHA, and this repository keeps a
+full commit SHA on every action it uses, with no `actions.lock`. GitHub's workflow
+dependency lockfiles became generally available on 28 October 2026, but a lockfile does
+not pin calls to reusable workflows (`jobs.<job_id>.uses`), which is how consumers call
+this repository; GitHub says to pin those by full commit SHA. The actions a reusable
+workflow uses fall under the lockfile of the repository that defines it, so a lockfile
+for them would belong here, not in a consumer. Checked on 4 November 2026 against the
+[changelog](https://github.blog/changelog/2026-10-28-github-actions-workflow-lockfiles-are-generally-available/)
+and the [lockfile documentation](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles).
