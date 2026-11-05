@@ -37,3 +37,4 @@ upload_asset "$manifest" application/json
 upload_asset "$checksums" text/plain
 upload_asset "$provenance" application/jsonl
 finalise_release
+write_release_summary release-python
