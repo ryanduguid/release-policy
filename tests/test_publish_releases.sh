@@ -194,16 +194,23 @@ if [ "${#signing_workflows[@]}" != 1 ] \
   echo "FAIL $family: expected one workflow that signs and verifies as $signer"
   failures=$((failures+1))
 fi
-expected_verify_argv="$(printf '%s\n' attestation verify SHA256SUMS --repo example/fixture \
-  --signer-workflow "$signer" --source-ref refs/tags/v1.2.3)"
-# Runs the summary's bash block as a reader would, beside a real fixture asset,
-# with a stub `gh` that prints the arguments it receives.
-summary_verify_argv() (
-  # shellcheck disable=SC2329 # The eval below calls it.
-  gh() { [ -f "$3" ] && printf '%s\n' "$@"; }
-  cd "$FIXTURE/consumer/dist"
+expected_verify_calls="$(printf '%s\n' '-- gh call' attestation verify SHA256SUMS \
+  --repo example/fixture --signer-workflow "$signer" --source-ref refs/tags/v1.2.3)"
+# Runs the summary's bash block as a reader would, beside a real fixture asset.
+# The stub records each call in its own file, so printing the expected lines
+# proves nothing, and `bash -eu` makes any failing command fail the block.
+summary_block_runs() (
+  # shellcheck disable=SC2329 # The block calls it through the export.
+  gh() {
+    printf '%s\n' '-- gh call' "$@" >> "$FIXTURE/verify-calls"
+    [ -f "$3" ]
+  }
+  export -f gh
+  : > "$FIXTURE/verify-calls"
   # shellcheck disable=SC2016 # The backticks are Markdown.
-  eval "$(sed -n '/^```bash$/,/^```$/{/^```/d;p;}' "$FIXTURE/summary")"
+  sed -n '/^```bash$/,/^```$/{/^```/d;p;}' "$FIXTURE/summary" > "$FIXTURE/verify-block"
+  cd "$FIXTURE/consumer/dist"
+  bash -eu "$FIXTURE/verify-block"
 )
 if [ "$family" = archives ]; then
 for CASE in create-fails upload-fails already-published wrong-identity unsettled-tag missing-tag moved-tag changed-tag never-settles; do
@@ -280,7 +287,7 @@ if [ "$expected_status" = 0 ]; then
       failures=$((failures+1))
     }
   done
-  if [ "$(summary_verify_argv)" != "$expected_verify_argv" ]; then
+  if ! summary_block_runs || [ "$(cat "$FIXTURE/verify-calls")" != "$expected_verify_calls" ]; then
     echo "FAIL $family $CASE: the summary's verify command did not run as expected"
     failures=$((failures+1))
   fi
@@ -289,8 +296,9 @@ elif [ -e "$FIXTURE/summary" ]; then
   failures=$((failures+1))
 fi
 done
-# A published release stays published, with a warning and no partial summary,
-# when its job summary cannot be read or written.
+# A published release stays published, with a warning, when its digests cannot
+# be read or validated, which also leaves no summary, or when the summary's
+# destination cannot be opened.
 CASE=success
 export CASE SUMMARY_FAULT
 for SUMMARY_FAULT in unwritable digests-missing digests-unreadable digests-truncated digests-malformed; do
