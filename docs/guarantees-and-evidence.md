@@ -74,6 +74,47 @@ separate adapter so their inventory and stronger validation controls are not
 reduced to the source-archive contract. The historical notes-only `v0.1.0`
 marker proves neither release phase.
 
+## SLSA Build Level
+
+The release workflows are designed to support
+[SLSA v1.0](https://slsa.dev/spec/v1.0/requirements) Build Level 3. This
+repository does not state that any release reaches that level: the design has
+not been audited against every requirement, and nobody has assessed it
+independently. SLSA now marks v1.0 as retired and v1.2 as current; GitHub's
+statement below is about v1.0. A consumer's 'SLSA 3' badge adds no assurance to
+this page.
+
+The design rests on these points:
+
+- GitHub says [artifact attestations](https://docs.github.com/en/actions/concepts/security/artifact-attestations)
+  alone meet SLSA v1.0 Build Level 2, and that a reusable workflow can isolate
+  the build from the calling workflow to meet Build Level 3.
+- Every release family builds and signs inside this repository's reusable
+  workflows, pinned by commit. A caller sets their inputs but not their steps.
+- No job that runs consumer code holds `id-token: write` or
+  `attestations: write`. The Python and binary families build in one job and
+  attest in another; the archive job, which skill packs share, attests but runs
+  no consumer code.
+
+These points show where permissions sit and how jobs are separated. They leave
+unverified:
+
+- Whether GitHub-hosted runners meet the Hosted and Isolated requirements,
+  including that runs cannot influence one another. This repository cannot test
+  that.
+- Whether each family's real attestations meet the Unforgeable requirement. No
+  audit has inspected them against it.
+
+The same account maintains this repository and its consumers, so the reusable
+workflow isolates a build from its caller, not from that maintainer. A build
+level says how an artefact was built, not that its source was reviewed or is
+correct.
+
+Verification is a separate step and does not change a build level. To check that
+the expected workflow signed an asset, use `--signer-workflow`, as
+[Verify a release](verify-a-release.md) shows. `--signer-repo` accepts any
+workflow in this repository, so it does not establish that.
+
 ## Release-family canaries
 
 [`canaries.json`](../canaries.json) names one active Python, archive, skill and

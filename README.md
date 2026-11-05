@@ -11,11 +11,17 @@
 
 [![tests](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml) [![Codecov](https://codecov.io/gh/ryanduguid/release-policy/graph/badge.svg)](https://codecov.io/gh/ryanduguid/release-policy) [![CodeQL](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml) [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=ryanduguid_release-policy&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ryanduguid_release-policy) [![Codacy code quality](https://app.codacy.com/project/badge/Grade/49440ac0ee144a12b5fc1380425e9773)](https://app.codacy.com/gh/ryanduguid/release-policy/dashboard)<br> [![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/ryanduguid/release-policy.svg)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/release-policy) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15422/badge)](https://www.bestpractices.dev/projects/15422)<br> [![release](https://badgen.net/github/release/ryanduguid/release-policy/stable?label=release&color=66023C&labelColor=000000)](https://github.com/ryanduguid/release-policy/releases/latest) [![licence: Ryan Duguid Public Attribution Licence 1.0](.github/assets/badges/licence.svg)](LICENSE)
 
-[Prerequisites](docs/consumer-prerequisites.md) · [Verify a release](docs/verify-a-release.md) · [Guarantees](docs/guarantees-and-evidence.md) · [Canaries](canaries.json) · [Development](#development) · [Licence](#licence)
+[Prerequisites](docs/consumer-prerequisites.md) · [Verify a release](docs/verify-a-release.md) · [Guarantees](docs/guarantees-and-evidence.md) · [Canaries](canaries.json) · [Alternatives](#alternatives) · [Development](#development) · [Licence](#licence)
 
 </div>
 
-Reusable GitHub Actions workflows that release a repository's Python packages, source archives, Rust binaries and skill packs with checksums and SLSA provenance, plus workflows for VirusTotal release scans, attribution checks and independent PR reviews. A consumer calls one with `uses:`, pinned to a full commit SHA of this repository.
+release-policy is a set of reusable GitHub Actions workflows for repository maintainers: they release Python packages, source archives, Rust binaries and skill packs with checksums and SLSA provenance, and run VirusTotal release scans, attribution checks and independent PR reviews.
+
+A consumer calls one with `uses:`, pinned to a full commit SHA of this repository. Before adopting, check 3 limits:
+
+- **PyPI:** PyPI cannot name a reusable workflow as a Trusted Publisher ([pypi/warehouse#11096](https://github.com/pypi/warehouse/issues/11096)), so the [publish step](docs/pypi-publishing.md) runs in the consumer, not here.
+- **Targets:** `release-binary.yml` builds x86_64 Linux and Windows only. [Alternatives](#alternatives) says when another tool fits better.
+- **SLSA:** The release workflows are designed to support SLSA Build Level 3, but no audit has shown that a release reaches it. [SLSA Build Level](docs/guarantees-and-evidence.md#slsa-build-level) says what is unverified and why verification needs `--signer-workflow`.
 
 | Workflow | Use it to | Guide |
 | --- | --- | --- |
@@ -27,7 +33,7 @@ Reusable GitHub Actions workflows that release a repository's Python packages, s
 | `attribution-policy.yml` | Fail PR text and commits that carry AI attribution credits | [Attribution checks](docs/attribution-consumers.md) |
 | `pr-review.yml` | Run an independent PR review with your own API key | [PR reviews](docs/pr-review.md) |
 
-Policy checks establish release evidence, not accounting correctness.
+Policy checks establish release evidence, not accounting correctness. The example below is a recorded canary.
 
 **Input:** the recorded `v0.4.0` Python canary from AU FP&A Pack.
 
@@ -68,6 +74,8 @@ policy commit.
 
 ## Consumer guides
 
+The release-policy guides are grouped as how-to, reference and background pages.
+
 How-to:
 
 - [Packaged Python](docs/python-consumers.md)
@@ -96,6 +104,14 @@ Run the existing offline manifest check with `python scripts/check_canaries.py`.
 To run that audit on demand, dispatch CI with `live-canary-audit` selected. The input defaults to false; an ordinary manual dispatch performs the offline manifest check. A successful audit verifies the recorded evidence; it changes nothing and does not authorise a release or consumer migration.
 
 </details>
+
+## Alternatives
+
+release-policy fits maintainers who want reusable workflows pinned to a commit SHA, with the weight on release gates, attestations and recorded canaries. Use another tool if you want installers, Homebrew publishing or binaries beyond x86_64 Linux and Windows. As read on 5 November 2026:
+
+- [dist](https://github.com/axodotdev/cargo-dist) (formerly cargo-dist) builds binaries, makes tarballs and installers, and can publish Homebrew formulae to your own tap.
+- [GoReleaser](https://goreleaser.com/) builds and releases Go, Rust, TypeScript, Python and Zig projects for multiple platforms and architectures, and can publish to package managers including Homebrew, Scoop and Winget.
+- [slsa-github-generator](https://github.com/slsa-framework/slsa-github-generator) generates SLSA provenance for GitHub projects. Its README says it is no longer actively maintained.
 
 ## Development
 
