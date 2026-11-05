@@ -69,6 +69,34 @@ separate adapter so their inventory and stronger validation controls are not
 reduced to the source-archive contract. The historical notes-only `v0.1.0`
 marker proves neither release phase.
 
+## SLSA Build Level
+
+Releases from these workflows reach
+[SLSA v1.0](https://slsa.dev/spec/v1.0/levels) Build Level 3 on GitHub's
+description of that level, provided the verifier names the signing workflow.
+This is this repository's reading of GitHub's documentation, not an independent
+assessment.
+
+- GitHub says [artifact attestations](https://docs.github.com/en/actions/concepts/security/artifact-attestations)
+  alone meet SLSA v1.0 Build Level 2, and names a build in a reusable workflow,
+  which isolates the build from the calling workflow, as the route to Build
+  Level 3.
+- Every release family builds and signs inside this repository's reusable
+  workflows, pinned by commit. A caller sets their inputs but not their steps.
+- No job that runs consumer code holds `id-token: write` or
+  `attestations: write`. The Python and binary families build in one job and
+  attest in another; the archive job, which skill packs share, attests but runs
+  no consumer code.
+- [Verify a release](verify-a-release.md) names the signer with `--signer-repo`,
+  or the exact workflow with `--signer-workflow`, so the check fails for an
+  asset this repository's workflows did not sign.
+
+The level rests on GitHub-hosted runners meeting the platform requirements,
+which this repository cannot test. The same account maintains this repository
+and its consumers, so the reusable workflow isolates a build from its caller,
+not from that maintainer. A build level says how an artefact was built, not
+that its source was reviewed or is correct.
+
 ## Release-family canaries
 
 [`canaries.json`](../canaries.json) names one active Python, archive, skill and

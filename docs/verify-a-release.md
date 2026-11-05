@@ -1,8 +1,10 @@
 # Verify a release
 
 A repository that releases through these workflows attaches signed build
-provenance to every release; some show an 'SLSA 3' badge. These steps check a
-downloaded asset with a current [GitHub CLI](https://cli.github.com/). They
+provenance to every release; some show an 'SLSA 3' badge, which
+[SLSA Build Level](guarantees-and-evidence.md#slsa-build-level) explains. These
+steps check a downloaded asset with a current
+[GitHub CLI](https://cli.github.com/). They
 prove where and how the asset was built, not that its contents are correct.
 
 The commands assume a POSIX shell with GNU `sha256sum`, such as Linux, WSL or
