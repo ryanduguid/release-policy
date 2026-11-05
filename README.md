@@ -21,7 +21,7 @@ A consumer calls one with `uses:`, pinned to a full commit SHA of this repositor
 
 - **PyPI:** PyPI cannot name a reusable workflow as a Trusted Publisher ([pypi/warehouse#11096](https://github.com/pypi/warehouse/issues/11096)), so the [publish step](docs/pypi-publishing.md) runs in the consumer, not here.
 - **Targets:** `release-binary.yml` builds x86_64 Linux and Windows only. [Alternatives](#alternatives) says when another tool fits better.
-- **SLSA:** Releases reach SLSA v1.0 Build Level 3 on GitHub's description of that level, provided the verifier names the signing workflow. This is this repository's reading, not an independent assessment. [SLSA Build Level](docs/guarantees-and-evidence.md#slsa-build-level) gives the conditions.
+- **SLSA:** The release workflows are designed to support SLSA Build Level 3, but no audit has shown that a release reaches it. [SLSA Build Level](docs/guarantees-and-evidence.md#slsa-build-level) says what is unverified and why verification needs `--signer-workflow`.
 
 | Workflow | Use it to | Guide |
 | --- | --- | --- |
