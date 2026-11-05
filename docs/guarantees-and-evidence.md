@@ -62,7 +62,9 @@
   exact published release and its assets are being verified.
 - Once a release is published and verified, the run's job summary lists each
   asset with its SHA-256 digest and the `gh attestation verify` command for the
-  family's signer. A summary that cannot be written does not fail the release.
+  family's signer. If the digest inventory cannot be read or validated, or the
+  summary cannot be written, the run logs a warning instead of a complete
+  summary and the release still stands.
 - Consumers pin this repository by full commit SHA and upgrade by reviewed
   pull request (ADR-0001).
 

@@ -45,6 +45,15 @@ gh() {
   fi
   if [ "$1 $2" = "release verify" ] || [ "$1 $2" = "release verify-asset" ]; then
     [ "$CASE" != verification-fails ] || return 1
+    # Publication has finished comparing the digest file by this first call.
+    if [ "$2" = verify ]; then
+      case "${SUMMARY_FAULT:-}" in
+        digests-missing) rm -f /tmp/expected-digests ;;
+        digests-unreadable) rm -f /tmp/expected-digests; mkdir /tmp/expected-digests ;;
+        digests-truncated) sed -i 1d /tmp/expected-digests ;;
+        digests-malformed) sed -i '1s/sha256:.*/sha256:short/' /tmp/expected-digests ;;
+      esac
+    fi
     if [ "$1 $2" = "release verify-asset" ]; then
       [ "$CASE" != asset-verification-fails ] || return 1
     fi
@@ -175,6 +184,27 @@ sleep() { printf '%s\n' "$*" >> "$FIXTURE/sleeps"; }
 export -f sleep
 
 failures=0
+# The workflow that runs a family's publish script is the one that signs its
+# assets, so it names the signer the summary must print.
+mapfile -t signing_workflows < <(grep -lF "policy/scripts/publish_$family.sh" "$POLICY"/.github/workflows/*.yml)
+signer="ryanduguid/release-policy/.github/workflows/$(basename "${signing_workflows[0]}")"
+if [ "${#signing_workflows[@]}" != 1 ] \
+    || ! grep -q 'uses: actions/attest@' "${signing_workflows[0]}" \
+    || ! grep -qF "signer=\"$signer\"" "${signing_workflows[0]}"; then
+  echo "FAIL $family: expected one workflow that signs and verifies as $signer"
+  failures=$((failures+1))
+fi
+expected_verify_argv="$(printf '%s\n' attestation verify SHA256SUMS --repo example/fixture \
+  --signer-workflow "$signer" --source-ref refs/tags/v1.2.3)"
+# Runs the summary's bash block as a reader would, beside a real fixture asset,
+# with a stub `gh` that prints the arguments it receives.
+summary_verify_argv() (
+  # shellcheck disable=SC2329 # The eval below calls it.
+  gh() { [ -f "$3" ] && printf '%s\n' "$@"; }
+  cd "$FIXTURE/consumer/dist"
+  # shellcheck disable=SC2016 # The backticks are Markdown.
+  eval "$(sed -n '/^```bash$/,/^```$/{/^```/d;p;}' "$FIXTURE/summary")"
+)
 if [ "$family" = archives ]; then
 for CASE in create-fails upload-fails already-published wrong-identity unsettled-tag missing-tag moved-tag changed-tag never-settles; do
   export CASE
@@ -250,15 +280,8 @@ if [ "$expected_status" = 0 ]; then
       failures=$((failures+1))
     }
   done
-  case "$family" in
-    archives) signer=publish-archives ;;
-    binaries) signer=release-binary ;;
-    python) signer=release-python ;;
-  esac
-  if ! grep -qF -- "--signer-workflow ryanduguid/release-policy/.github/workflows/$signer.yml" "$FIXTURE/summary" \
-      || ! grep -qF -- "--source-ref refs/tags/v1.2.3" "$FIXTURE/summary" \
-      || ! grep -qF "gh attestation verify <asset> --repo example/fixture" "$FIXTURE/summary"; then
-    echo "FAIL $family $CASE: job summary lacks the verify command"
+  if [ "$(summary_verify_argv)" != "$expected_verify_argv" ]; then
+    echo "FAIL $family $CASE: the summary's verify command did not run as expected"
     failures=$((failures+1))
   fi
 elif [ -e "$FIXTURE/summary" ]; then
@@ -266,26 +289,33 @@ elif [ -e "$FIXTURE/summary" ]; then
   failures=$((failures+1))
 fi
 done
-# A published release stays published when its job summary cannot be written.
+# A published release stays published, with a warning and no partial summary,
+# when its job summary cannot be read or written.
 CASE=success
-export CASE GITHUB_STEP_SUMMARY="$FIXTURE/missing/summary"
-rm -f "$FIXTURE/published"
-: > "$FIXTURE/assets"
-: > "$FIXTURE/deleted"
-for name in "${asset_names[@]}"; do
-  digest="$(sha256sum "$FIXTURE/consumer/dist/$name" | cut -d' ' -f1)"
-  jq -n --arg name "$name" --arg digest "sha256:$digest" '{name:$name,digest:$digest}' >> "$FIXTURE/assets"
+export CASE SUMMARY_FAULT
+for SUMMARY_FAULT in unwritable digests-missing digests-unreadable digests-truncated digests-malformed; do
+  export GITHUB_STEP_SUMMARY="$FIXTURE/summary"
+  [ "$SUMMARY_FAULT" != unwritable ] || export GITHUB_STEP_SUMMARY="$FIXTURE/missing/summary"
+  rm -f "$FIXTURE/published" "$FIXTURE/summary"
+  : > "$FIXTURE/assets"
+  : > "$FIXTURE/deleted"
+  for name in "${asset_names[@]}"; do
+    digest="$(sha256sum "$FIXTURE/consumer/dist/$name" | cut -d' ' -f1)"
+    jq -n --arg name "$name" --arg digest "sha256:$digest" '{name:$name,digest:$digest}' >> "$FIXTURE/assets"
+  done
+  if bash "$POLICY/scripts/publish_$family.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3 \
+      "$FIXTURE/consumer" . > "$FIXTURE/output" 2>&1 \
+      && [ -f "$FIXTURE/published" ] && [ ! -e "$FIXTURE/summary" ] \
+      && grep -q 'could not write the job summary' "$FIXTURE/output"; then
+    echo "ok   $family $SUMMARY_FAULT warns without failing the release"
+  else
+    echo "FAIL $family $SUMMARY_FAULT: expected a published release, a warning and no summary"
+    cat "$FIXTURE/output"
+    failures=$((failures+1))
+  fi
+  rm -rf /tmp/expected-digests
 done
-if bash "$POLICY/scripts/publish_$family.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3 \
-    "$FIXTURE/consumer" . > "$FIXTURE/output" 2>&1 \
-    && [ -f "$FIXTURE/published" ] && grep -q 'could not write the job summary' "$FIXTURE/output"; then
-  echo "ok   $family an unwritable job summary does not fail the release"
-else
-  echo "FAIL $family: an unwritable job summary failed the release"
-  cat "$FIXTURE/output"
-  failures=$((failures+1))
-fi
-export GITHUB_STEP_SUMMARY="$FIXTURE/summary"
+export GITHUB_STEP_SUMMARY="$FIXTURE/summary" SUMMARY_FAULT=
 # A merge to main while the release publishes must not fail it unless the merge
 # changed the component or the release caller; then the draft is withdrawn.
 for CASE in main-moved-unrelated main-moved-component main-moved-caller; do

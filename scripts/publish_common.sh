@@ -241,20 +241,36 @@ finalise_release() {
   trap - EXIT
 }
 
+# Prints the summary only once the digest file holds a well-formed row for
+# exactly the assets finalise_release checked, so a reader never sees a partial
+# table. The caller's `if` suspends errexit here, so each failure returns itself.
+render_release_summary() {
+  local digests name digest
+  digests="$(cat /tmp/expected-digests)" || return 1
+  [[ "$(cut -f1 <<< "$digests")" = "$expected_assets" ]] || return 1
+  printf '## Release %s\n\n| Asset | SHA-256 |\n| --- | --- |\n' "$tag"
+  while IFS=$'\t' read -r name digest; do
+    [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    # shellcheck disable=SC2016 # The backticks are Markdown.
+    printf '| `%s` | `%s` |\n' "$name" "${digest#sha256:}"
+  done <<< "$digests"
+  # shellcheck disable=SC2016 # The backticks are Markdown.
+  printf '\nVerify a downloaded asset, with `ASSET` set to its path:\n\n```bash\n'
+  printf 'ASSET=SHA256SUMS\n'
+  # shellcheck disable=SC2016 # The reader's shell expands ASSET.
+  printf 'gh attestation verify "$ASSET" --repo %s \\\n' "$GITHUB_REPOSITORY"
+  printf '  --signer-workflow ryanduguid/release-policy/.github/workflows/%s.yml \\\n' "$1"
+  printf '  --source-ref refs/tags/%s\n```\n' "$tag"
+}
+
 # Runs last, so a job summary never reports a release that failed. The release
-# is already published here, so a summary that cannot be written must not fail it.
+# is already published here, so a summary that cannot be read or written warns
+# and must not fail it.
 write_release_summary() {
-  signer="ryanduguid/release-policy/.github/workflows/$1.yml"
   [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] || return 0
-  {
-    printf '## Release %s\n\n| Asset | SHA-256 |\n| --- | --- |\n' "$tag"
-    while IFS=$'\t' read -r name digest; do
-      # shellcheck disable=SC2016 # The backticks are Markdown.
-      printf '| `%s` | `%s` |\n' "$name" "${digest#sha256:}"
-    done < /tmp/expected-digests
-    printf '\nVerify a downloaded asset:\n\n```bash\n'
-    printf 'gh attestation verify <asset> --repo %s \\\n' "$GITHUB_REPOSITORY"
-    printf '  --signer-workflow %s \\\n' "$signer"
-    printf '  --source-ref refs/tags/%s\n```\n' "$tag"
-  } >> "$GITHUB_STEP_SUMMARY" || echo "could not write the job summary" >&2
+  local summary
+  if ! summary="$(render_release_summary "$1")" \
+      || ! printf '%s\n' "$summary" >> "$GITHUB_STEP_SUMMARY"; then
+    echo "could not write the job summary" >&2
+  fi
 }
