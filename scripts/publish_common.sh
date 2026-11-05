@@ -12,7 +12,7 @@
 #
 # The caller sets `tag`, `expected_commit`, `source_path`, `source_directory`
 # and the `assets` array of file paths, then calls `create_draft`,
-# `upload_asset` once per asset, and `finalise_release`.
+# `upload_asset` once per asset, `finalise_release` and `write_release_summary`.
 
 # Fail at source time, not half way through a publication, when a caller
 # forgets one of them. The assignments also tell shellcheck these come from
@@ -239,4 +239,22 @@ finalise_release() {
     [[ "$asset_verified" = true ]]
   done
   trap - EXIT
+}
+
+# Runs last, so a job summary never reports a release that failed. The release
+# is already published here, so a summary that cannot be written must not fail it.
+write_release_summary() {
+  signer="ryanduguid/release-policy/.github/workflows/$1.yml"
+  [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] || return 0
+  {
+    printf '## Release %s\n\n| Asset | SHA-256 |\n| --- | --- |\n' "$tag"
+    while IFS=$'\t' read -r name digest; do
+      # shellcheck disable=SC2016 # The backticks are Markdown.
+      printf '| `%s` | `%s` |\n' "$name" "${digest#sha256:}"
+    done < /tmp/expected-digests
+    printf '\nVerify a downloaded asset:\n\n```bash\n'
+    printf 'gh attestation verify <asset> --repo %s \\\n' "$GITHUB_REPOSITORY"
+    printf '  --signer-workflow %s \\\n' "$signer"
+    printf '  --source-ref refs/tags/%s\n```\n' "$tag"
+  } >> "$GITHUB_STEP_SUMMARY" || echo "could not write the job summary" >&2
 }

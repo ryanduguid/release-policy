@@ -28,6 +28,7 @@ export GH=gh
 export GITHUB_REPOSITORY=example/fixture GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export GITHUB_WORKFLOW_REF=example/fixture/.github/workflows/release.yml@refs/tags/v1.2.3
 export GITHUB_WORKSPACE="$FIXTURE/workspace"
+export GITHUB_STEP_SUMMARY="$FIXTURE/summary"
 
 # Every GitHub request is handled here; an unexpected request fails closed.
 gh() {
@@ -213,7 +214,7 @@ cases=(success superseded published-mutable published-identity published-digest 
 [ "$family" != archives ] || cases+=(settles)
 for CASE in "${cases[@]}"; do
 export CASE
-rm -f "$FIXTURE/published" "$FIXTURE/seen-unsettled"
+rm -f "$FIXTURE/published" "$FIXTURE/seen-unsettled" "$FIXTURE/summary"
 : > "$FIXTURE/calls"
 : > "$FIXTURE/assets"
 : > "$FIXTURE/uploads"
@@ -242,8 +243,49 @@ if [ "$expected_status" = 0 ]; then
     echo "FAIL $family $CASE: release or asset verification was skipped"
     failures=$((failures+1))
   fi
+  for name in "${asset_names[@]}"; do
+    digest="$(sha256sum "$FIXTURE/consumer/dist/$name" | cut -d' ' -f1)"
+    grep -qF "| \`$name\` | \`$digest\` |" "$FIXTURE/summary" || {
+      echo "FAIL $family $CASE: job summary lacks $name and its digest"
+      failures=$((failures+1))
+    }
+  done
+  case "$family" in
+    archives) signer=publish-archives ;;
+    binaries) signer=release-binary ;;
+    python) signer=release-python ;;
+  esac
+  if ! grep -qF -- "--signer-workflow ryanduguid/release-policy/.github/workflows/$signer.yml" "$FIXTURE/summary" \
+      || ! grep -qF -- "--source-ref refs/tags/v1.2.3" "$FIXTURE/summary" \
+      || ! grep -qF "gh attestation verify <asset> --repo example/fixture" "$FIXTURE/summary"; then
+    echo "FAIL $family $CASE: job summary lacks the verify command"
+    failures=$((failures+1))
+  fi
+elif [ -e "$FIXTURE/summary" ]; then
+  echo "FAIL $family $CASE: a failed release wrote a job summary"
+  failures=$((failures+1))
 fi
 done
+# A published release stays published when its job summary cannot be written.
+CASE=success
+export CASE GITHUB_STEP_SUMMARY="$FIXTURE/missing/summary"
+rm -f "$FIXTURE/published"
+: > "$FIXTURE/assets"
+: > "$FIXTURE/deleted"
+for name in "${asset_names[@]}"; do
+  digest="$(sha256sum "$FIXTURE/consumer/dist/$name" | cut -d' ' -f1)"
+  jq -n --arg name "$name" --arg digest "sha256:$digest" '{name:$name,digest:$digest}' >> "$FIXTURE/assets"
+done
+if bash "$POLICY/scripts/publish_$family.sh" v1.2.3 "$GITHUB_SHA" example 1.2.3 \
+    "$FIXTURE/consumer" . > "$FIXTURE/output" 2>&1 \
+    && [ -f "$FIXTURE/published" ] && grep -q 'could not write the job summary' "$FIXTURE/output"; then
+  echo "ok   $family an unwritable job summary does not fail the release"
+else
+  echo "FAIL $family: an unwritable job summary failed the release"
+  cat "$FIXTURE/output"
+  failures=$((failures+1))
+fi
+export GITHUB_STEP_SUMMARY="$FIXTURE/summary"
 # A merge to main while the release publishes must not fail it unless the merge
 # changed the component or the release caller; then the draft is withdrawn.
 for CASE in main-moved-unrelated main-moved-component main-moved-caller; do

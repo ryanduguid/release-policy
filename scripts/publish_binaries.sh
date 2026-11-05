@@ -47,3 +47,4 @@ upload_asset "$windows.spdx.json" application/spdx+json SPDX%202.3%20Windows%20e
 upload_asset "$checksums" text/plain SHA-256%20checksums
 upload_asset "$provenance" application/jsonl SLSA%20provenance%20bundle
 finalise_release
+write_release_summary release-binary
