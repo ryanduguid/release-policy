@@ -12,7 +12,7 @@
 #
 # The caller sets `tag`, `expected_commit`, `source_path`, `source_directory`
 # and the `assets` array of file paths, then calls `create_draft`,
-# `upload_asset` once per asset, and `finalise_release`.
+# `upload_asset` once per asset, `finalise_release` and `write_release_summary`.
 
 # Fail at source time, not half way through a publication, when a caller
 # forgets one of them. The assignments also tell shellcheck these come from
@@ -239,4 +239,38 @@ finalise_release() {
     [[ "$asset_verified" = true ]]
   done
   trap - EXIT
+}
+
+# Prints the summary only once the digest file holds a well-formed row for
+# exactly the assets finalise_release checked, so a reader never sees a partial
+# table. The caller's `if` suspends errexit here, so each failure returns itself.
+render_release_summary() {
+  local digests name digest
+  digests="$(cat /tmp/expected-digests)" || return 1
+  [[ "$(cut -f1 <<< "$digests")" = "$expected_assets" ]] || return 1
+  printf '## Release %s\n\n| Asset | SHA-256 |\n| --- | --- |\n' "$tag"
+  while IFS=$'\t' read -r name digest; do
+    [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    # shellcheck disable=SC2016 # The backticks are Markdown.
+    printf '| `%s` | `%s` |\n' "$name" "${digest#sha256:}"
+  done <<< "$digests"
+  # shellcheck disable=SC2016 # The backticks are Markdown.
+  printf '\nVerify a downloaded asset, with `ASSET` set to its path:\n\n```bash\n'
+  printf 'ASSET=SHA256SUMS\n'
+  # shellcheck disable=SC2016 # The reader's shell expands ASSET.
+  printf 'gh attestation verify "$ASSET" --repo %s \\\n' "$GITHUB_REPOSITORY"
+  printf '  --signer-workflow ryanduguid/release-policy/.github/workflows/%s.yml \\\n' "$1"
+  printf '  --source-ref refs/tags/%s\n```\n' "$tag"
+}
+
+# Runs last, so a job summary never reports a release that failed. The release
+# is already published here, so a summary that cannot be read or written warns
+# and must not fail it.
+write_release_summary() {
+  [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] || return 0
+  local summary
+  if ! summary="$(render_release_summary "$1")" \
+      || ! printf '%s\n' "$summary" >> "$GITHUB_STEP_SUMMARY"; then
+    echo "could not write the job summary" >&2
+  fi
 }
