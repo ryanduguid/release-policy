@@ -177,6 +177,9 @@ git() {
     [ "$CASE" != missing-tag ] || return 0
     if [ "$CASE" = moved-tag ]; then printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\trefs/tags/v1.2.3^{}\n';
     else printf '%s\trefs/tags/v1.2.3^{}\n' "$GITHUB_SHA"; fi
+  # The policy checkout's commit, which the workflow requires to be its pin.
+  elif [ "$1 ${2##*/} $3 $4" = "-C scripts rev-parse HEAD" ]; then
+    printf '%s\n' cccccccccccccccccccccccccccccccccccccccc
   else echo "unexpected git request" >&2; return 1; fi
 }
 export -f git
@@ -195,7 +198,9 @@ if [ "${#signing_workflows[@]}" != 1 ] \
   failures=$((failures+1))
 fi
 expected_verify_calls="$(printf '%s\n' '-- gh call' attestation verify SHA256SUMS \
-  --repo example/fixture --signer-workflow "$signer" --source-ref refs/tags/v1.2.3)"
+  --repo example/fixture --signer-workflow "$signer" \
+  --signer-digest cccccccccccccccccccccccccccccccccccccccc \
+  --source-ref refs/tags/v1.2.3 --source-digest "$GITHUB_SHA")"
 # Runs the summary's bash block as a reader would, beside a real fixture asset.
 # The stub records each call in its own file, so printing the expected lines
 # proves nothing, and `bash -eu` makes any failing command fail the block.
