@@ -23,7 +23,7 @@ _RELEASE_TAG = re.compile(
     r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z"
 )
 _TAG_PREFIX = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
-_FAMILIES = {"archive", "python", "skills", "verify"}
+_FAMILIES = {"archive", "binary", "python", "skills", "verify"}
 # A release family publishes on a tag, so a success newer than the recorded
 # evidence means that evidence has been overtaken and a person should look.
 # The verification consumer runs on every push to its default branch, where a
@@ -59,12 +59,19 @@ RETENTION = timedelta(days=90)
 EXPIRY_MARGIN = timedelta(days=1)
 _STARTED_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 # The release-policy workflow whose certificate signs each release family's
-# provenance, read from verified attestations of the 4 October 2026 releases.
+# provenance, read from verified attestations of the 4 October 2026 releases
+# and, for the binary family, of release-policy v0.3.0 on 29 October 2026.
 _SIGNER_WORKFLOWS = {
     "archive": ".github/workflows/publish-archives.yml",
+    "binary": ".github/workflows/release-binary.yml",
     "python": ".github/workflows/release-python.yml",
     "skills": ".github/workflows/publish-archives.yml",
 }
+# The asset whose provenance is verified: each other release family's one tar
+# archive. A binary release ships a tar archive for each Unix target as well,
+# so its SHA256SUMS, which the provenance also covers and which lists every
+# archive, stands for the release.
+_PROVENANCE_ASSETS = {"binary": "SHA256SUMS"}
 SLSA_PROVENANCE = "https://slsa.dev/provenance/v1"
 
 
@@ -872,13 +879,19 @@ def _verify_provenance(canary: Canary) -> None:
     tag_sha = _tag_commit(repository, ref)
     if tag_sha != canary.evidence.head_sha:
         raise RuntimeError(f"tag {ref} points to {tag_sha!r}, not {canary.evidence.head_sha}")
+    wanted = _PROVENANCE_ASSETS.get(canary.family)
     assets = [
         asset
         for asset in release.get("assets") or []
-        if isinstance(asset, dict) and str(asset.get("name", "")).endswith(".tar.gz")
+        if isinstance(asset, dict) and (
+            str(asset.get("name", "")) == wanted if wanted
+            else str(asset.get("name", "")).endswith(".tar.gz")
+        )
     ]
     if len(assets) != 1:
-        raise RuntimeError(f"release {ref} has {len(assets)} .tar.gz assets, expected 1")
+        raise RuntimeError(
+            f"release {ref} has {len(assets)} {wanted or '.tar.gz'} assets, expected 1"
+        )
     name = str(assets[0]["name"])
     with tempfile.TemporaryDirectory() as directory:
         _run_gh(

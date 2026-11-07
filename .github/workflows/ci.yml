@@ -84,9 +84,11 @@ jobs:
           -max_total_time=60 -max_len=4096 -timeout=2 -rss_limit_mb=1024
 
   release-audit:
-    name: audit the latest release's executables
-    # The publisher's checks, repeated on this repository's latest release, so
-    # an advisory published after the release fails this run. A job of its own:
+    name: audit the binary canaries' executables
+    # The publisher's checks, repeated on each binary canary's recorded
+    # release, so an advisory published after a release fails this run. The
+    # live canary audit fails once a newer release overtakes the recorded one,
+    # so when it passes the recorded release is the latest. A job of its own:
     # after the live canary audit in checks, a failing pin check skipped it.
     if: >-
       github.event_name == 'schedule' ||
@@ -107,36 +109,14 @@ jobs:
 
       # As docs/verify-a-release.md asks of any downloader: each archive is the
       # one line of SHA256SUMS that names it, and its provenance was signed by
-      # this repository's binary release workflow for the tag.
-      - name: Download and verify the latest release's executables
+      # the binary release workflow at the recorded policy commit for the
+      # recorded tag and source commit.
+      - name: Audit each binary canary's executables against RustSec
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          latest="$RUNNER_TEMP/latest-release"
-          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
-          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          base="release-policy-${tag#v}"
-          linux="$base-x86_64-unknown-linux-musl.tar.gz"
-          windows="$base-x86_64-pc-windows-msvc.zip"
-          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$latest" \
-            --pattern "$linux" --pattern "$windows" --pattern SHA256SUMS --pattern "$base.intoto.jsonl"
-          cd "$latest"
-          for archive in "$linux" "$windows"; do
-            awk -v name="$archive" '$2 == name' SHA256SUMS > "$archive.sha256"
-            test "$(wc -l < "$archive.sha256")" -eq 1
-            sha256sum --check --strict "$archive.sha256"
-            gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY" --bundle "$base.intoto.jsonl" \
-              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-binary.yml" \
-              --source-ref "refs/tags/$tag"
-          done
-          tar -xzf "$linux" release-policy
-          unzip -q "$windows" release-policy.exe
-
-      - name: Audit the latest release's executables against RustSec
         run: >-
-          bash scripts/audit_binaries.sh "$RUNNER_TEMP/advisory-db"
-          "$RUNNER_TEMP/latest-release/release-policy" "$RUNNER_TEMP/latest-release/release-policy.exe"
+          bash scripts/audit_binary_canaries.sh canaries.json
+          "$RUNNER_TEMP/binary-canaries" "$RUNNER_TEMP/advisory-db"
 
   pin-lag:
     name: list the families owing a re-pin

@@ -392,7 +392,7 @@ fn standard(status: &'static str, evidence: Value, runs: Vec<Value>) -> impl FnM
 
 #[test]
 fn root_tags_remain_valid_with_an_omitted_or_empty_prefix() {
-    for family in ["archive", "python", "skills", "verify"] {
+    for family in ["archive", "binary", "python", "skills", "verify"] {
         let reference = if family == "verify" { "main" } else { "v1.2.3" };
         for fields in [json!({}), json!({"tag_prefix": ""})] {
             let parsed = parse(&manifest(family, reference, fields)).unwrap();
@@ -600,7 +600,7 @@ fn live_audit_orders_successes_by_start_time() {
 
 #[test]
 fn live_legacy_release_and_verify_select_only_their_expected_refs() {
-    for family in ["archive", "python", "skills", "verify"] {
+    for family in ["archive", "binary", "python", "skills", "verify"] {
         let reference = if family == "verify" { "main" } else { "v1.2.3" };
         let recorded = run_payload(SHA, 123, family, json!(reference));
         let runs = vec![
@@ -1829,7 +1829,7 @@ fn offline_validation_of_the_recorded_manifest() {
         "",
     );
     assert_eq!(out.code, 0);
-    assert_eq!(out.stdout, "canary manifest valid: 4 release families\n");
+    assert_eq!(out.stdout, "canary manifest valid: 5 release families\n");
 }
 
 #[test]
@@ -2181,6 +2181,46 @@ fn gh_cli_reads_json_and_reports_raw_read_failures() {
 }
 
 #[test]
+fn a_binary_release_verifies_sha256sums_signed_by_the_binary_workflow() {
+    let canary = parse(&manifest("binary", "v1.2.3", json!({})))
+        .unwrap()
+        .remove(0);
+    let digest = format!("sha256:{}", release_policy::common::sha256(ASSET));
+    // Its source and Unix archives are all tar archives; SHA256SUMS lists them.
+    let tars = json!([
+        {"name": "pkg-1.2.3.tar.gz", "digest": "sha256:0"},
+        {"name": "pkg-1.2.3-x86_64-unknown-linux-musl.tar.gz", "digest": "sha256:0"},
+        {"name": "pkg-1.2.3-aarch64-apple-darwin.tar.gz", "digest": "sha256:0"},
+    ]);
+    let mut assets = tars.as_array().unwrap().clone();
+    assets.push(json!({"name": "SHA256SUMS", "digest": digest}));
+    let mut rules = verifier_rules(
+        Some(json!({"draft": false, "immutable": true, "assets": assets})),
+        HEAD,
+        None,
+        ASSET,
+    );
+    rules[2]["args"][6] = json!("SHA256SUMS");
+    rules[2]["files"] = json!({"SHA256SUMS": String::from_utf8(ASSET.to_vec()).unwrap()});
+    rules[3]["args"][2] = json!("SHA256SUMS");
+    rules[3]["args"][6] = json!("ryanduguid/release-policy/.github/workflows/release-binary.yml");
+    with_gh(rules.clone(), || cc::GhCli.verify_provenance(&canary)).unwrap();
+    rules[0] = verifier_rules(
+        Some(json!({"draft": false, "immutable": true, "assets": tars})),
+        HEAD,
+        None,
+        ASSET,
+    )[0]
+    .clone();
+    assert_eq!(
+        with_gh(rules, || cc::GhCli.verify_provenance(&canary)),
+        Err(Failure::Runtime(
+            "release v1.2.3 has 0 SHA256SUMS assets, expected 1".into()
+        ))
+    );
+}
+
+#[test]
 fn archive_provenance_is_signed_by_the_archive_publisher() {
     let canary = parse(&manifest("archive", "v1.2.3", json!({})))
         .unwrap()
@@ -2285,7 +2325,7 @@ fn main_live_audit_fails_each_family_github_will_not_answer() {
             .all(|l| l.starts_with("FAIL ") || l.starts_with("WARN ")),
         "{lines:?}"
     );
-    for family in ["archive", "python", "skills", "verify"] {
+    for family in ["archive", "binary", "python", "skills", "verify"] {
         let prefix = format!("FAIL {family} (");
         assert!(
             lines.iter().any(|l| l.starts_with(&prefix)),

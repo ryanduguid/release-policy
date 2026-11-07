@@ -12,13 +12,18 @@ publishes a fixed asset set under one signer identity.
 
 from __future__ import annotations
 
+import hashlib
+import io
+import json
 import os
 import re
 import shutil
-import subprocess  # nosec B404: runs this file's own entry point and the audit script
+import subprocess  # nosec B404: runs this file's own entry point and the audit scripts
 import sys
+import tarfile
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +45,7 @@ TARGETS = (
     (WINDOWS, "windows-2025", "Windows"),
 )
 AUDIT = ROOT / "scripts" / "audit_binaries.sh"
+CANARY_AUDIT = ROOT / "scripts" / "audit_binary_canaries.sh"
 CARGO_AUDIT = "0.22.2"
 INPUTS = ("artifact-stem", "binary", "data-files", "source-directory", "tag-prefix",
           "required-checks")
@@ -283,7 +289,7 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertNotIn("working-directory:", audit)
         self.assertEqual(1, admit.count("install-action"))
 
-    def test_scheduled_ci_audits_the_latest_release_executables(self) -> None:
+    def test_scheduled_ci_audits_each_binary_canary_release(self) -> None:
         # A job of its own: as steps after the live canary audit in checks, the
         # audit was skipped whenever a consumer's pin lacked release evidence.
         ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
@@ -296,25 +302,15 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
             job)
         self.assertNotIn("needs:", job)
         install = self.step(job, "Install the pinned cargo-audit")
-        verify = self.step(job, "Download and verify the latest release's executables")
-        audit = self.step(job, "Audit the latest release's executables against RustSec")
+        audit = self.step(job, "Audit each binary canary's executables against RustSec")
         self.assert_pinned_cargo_audit(install)
-        self.assertLess(job.index(install), job.index(verify))
-        self.assertLess(job.index(verify), job.index(audit))
-        for check in (
-            'awk -v name="$archive" \'$2 == name\' SHA256SUMS > "$archive.sha256"',
-            'test "$(wc -l < "$archive.sha256")" -eq 1',
-            'sha256sum --check --strict "$archive.sha256"',
-            '--bundle "$base.intoto.jsonl"',
-            '--signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-binary.yml"',
-            '--source-ref "refs/tags/$tag"',
-        ):
-            self.assertIn(check, verify)
+        self.assertLess(job.index(install), job.index(audit))
         self.assertIn(
-            'bash scripts/audit_binaries.sh "$RUNNER_TEMP/advisory-db"\n'
-            '          "$RUNNER_TEMP/latest-release/release-policy" "$RUNNER_TEMP/latest-release/release-policy.exe"\n',
+            'bash scripts/audit_binary_canaries.sh canaries.json\n'
+            '          "$RUNNER_TEMP/binary-canaries" "$RUNNER_TEMP/advisory-db"\n',
             audit)
-        self.assertEqual(1, ci.count("audit_binaries.sh"))
+        self.assertEqual(1, ci.count("audit_binary_canaries.sh"))
+        self.assertNotIn("audit_binaries.sh", ci)
         self.assertIn("--exempt release-audit", self.mapping_block(jobs, "ci-gates", indent=2))
 
     def test_audit_script_fails_closed_without_an_ignore_list(self) -> None:
@@ -324,7 +320,8 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
             'cargo-audit audit --db "$db" --no-yanked --deny warnings bin "$@" 2>&1 | tee audit.log\n',
             script)
         self.assertIn("set -euo pipefail\n", script)
-        for text in (script, self.workflow, (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")):
+        for text in (script, self.workflow, (WORKFLOWS / "ci.yml").read_text(encoding="utf-8"),
+                     CANARY_AUDIT.read_text(encoding="utf-8")):
             for waiver in ("--ignore", "--no-fetch", "--stale", "--file", "--url"):
                 with self.subTest(waiver=waiver):
                     self.assertNotIn(waiver, text)
@@ -477,6 +474,158 @@ class AuditScriptTests(unittest.TestCase):
         self.assertEqual(1, refused.returncode)
         self.assertIn("refusing to audit with", refused.stderr)
         self.assertFalse(self.log.exists())
+
+
+# Stands in for gh: lists and downloads the fabricated release, and verifies
+# an attestation unless the case says it is unsigned. Each call is logged.
+FAKE_GH = """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$FAKE_GH_LOG"
+case "$1 $2" in
+  "release view") ls "$FAKE_RELEASE" ;;
+  "release download")
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --dir) dir="$2"; shift ;;
+        --pattern) patterns+=("$2"); shift ;;
+      esac
+      shift
+    done
+    for pattern in "${patterns[@]}"; do cp "$FAKE_RELEASE/$pattern" "$dir/"; done ;;
+  "attestation verify") [ "$FAKE_CASE" != unsigned ] ;;
+  *) exit 99 ;;
+esac
+"""
+CANARY = {
+    "current_policy_sha": "1" * 40, "family": "binary",
+    "evidence": {"head_sha": "3" * 40, "policy_sha": "2" * 40, "ref": "v1.2.3",
+                 "run_id": 123, "started_at": "2026-10-28T21:33:02Z"},
+    "policy_workflow": ".github/workflows/release-binary.yml",
+    "repository": "ryanduguid/example", "workflow_path": ".github/workflows/release.yml",
+}
+
+
+@unittest.skipUnless(os.name == "posix" and all(
+    shutil.which(tool) for tool in ("bash", "jq", "unzip", "od", "sha256sum")),
+    "the release audit runs on Linux, with bash, jq, unzip, od and sha256sum")
+class BinaryCanaryAuditTests(unittest.TestCase):
+    """The scheduled audit of each binary canary's recorded release, with gh and cargo-audit faked."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        fake_bin = self.root / "bin"
+        fake_bin.mkdir()
+        for name, text in (("gh", FAKE_GH), ("cargo-audit", FAKE_CARGO_AUDIT)):
+            (fake_bin / name).write_text(text, encoding="utf-8", newline="\n")
+            (fake_bin / name).chmod(0o755)
+        self.release = self.root / "release"
+        self.release.mkdir()
+        # Each archive holds executables beside documents and a data file;
+        # only the executables, known by their magic, are audited.
+        elf, macho, pe = b"\x7fELF fabricated", b"\xcf\xfa\xed\xfe fabricated", b"MZ fabricated"
+        documents = {"LICENSE": b"licence\n", "README.md": b"# example\n", "ca.pem": b"-----\n"}
+        self.archive("example-1.2.3-x86_64-unknown-linux-musl.tar.gz",
+                     {"example": elf, "example-helper": elf, **documents})
+        self.archive("example-1.2.3-aarch64-apple-darwin.tar.gz", {"example": macho, **documents})
+        self.archive("example-1.2.3-x86_64-pc-windows-msvc.zip", {"example.exe": pe, **documents})
+        self.archive("example-1.2.3.tar.gz", {"src.rs": elf})
+        sums = "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+                       for path in sorted(self.release.iterdir()))
+        (self.release / "SHA256SUMS").write_text(sums, encoding="utf-8", newline="\n")
+        (self.release / "example-1.2.3.intoto.jsonl").write_text("{}\n", encoding="utf-8")
+        self.manifest = self.root / "canaries.json"
+        self.write_manifest([CANARY, {**CANARY, "family": "python",
+                                      "repository": "ryanduguid/other"}])
+        self.extracted = self.root / "work" / "ryanduguid-example" / "extracted"
+        self.env = {
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "CARGO_HOME": str(self.root / "cargo-home"),
+            "FAKE_LOG": str(self.root / "audit-calls"),
+            "FAKE_GH_LOG": str(self.root / "gh-calls"),
+            "FAKE_RELEASE": str(self.release),
+        }
+
+    def archive(self, name: str, members: dict[str, bytes]) -> None:
+        path = self.release / name
+        if name.endswith(".zip"):
+            with zipfile.ZipFile(path, "w") as opened:
+                for member, data in members.items():
+                    opened.writestr(member, data)
+            return
+        with tarfile.open(path, "w:gz") as opened:
+            for member, data in members.items():
+                info = tarfile.TarInfo(member)
+                info.size, info.mode = len(data), 0o755
+                opened.addfile(info, io.BytesIO(data))
+
+    def write_manifest(self, families: list[dict[str, object]]) -> None:
+        self.manifest.write_text(json.dumps({"families": families, "schema": 1}),
+                                 encoding="utf-8")
+
+    def audit(self, case: str = "clean") -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # nosec B603 B607  # nosemgrep
+            ["bash", str(CANARY_AUDIT), str(self.manifest), str(self.root / "work"),
+             str(self.root / "advisory-db")],
+            cwd=self.root, env={**self.env, "FAKE_CASE": case},
+            check=False, capture_output=True, text=True,
+        )
+
+    def test_every_executable_of_the_recorded_release_is_verified_then_audited(self) -> None:
+        result = self.audit()
+        self.assertEqual(0, result.returncode, result.stderr)
+        arguments = (self.root / "audit-calls").read_text(encoding="utf-8").split("--listing\n")[0]
+        self.assertEqual(
+            sorted(arguments.splitlines()[7:]),
+            sorted(str(self.extracted / archive / name) for archive, name in (
+                ("example-1.2.3-x86_64-unknown-linux-musl.tar.gz", "example"),
+                ("example-1.2.3-x86_64-unknown-linux-musl.tar.gz", "example-helper"),
+                ("example-1.2.3-aarch64-apple-darwin.tar.gz", "example"),
+                ("example-1.2.3-x86_64-pc-windows-msvc.zip", "example.exe"),
+            )))
+        calls = (self.root / "gh-calls").read_text(encoding="utf-8").splitlines()
+        self.assertEqual("release view v1.2.3 --repo ryanduguid/example --json assets "
+                         "--jq .assets[].name", calls[0])
+        verifies = [call for call in calls if call.startswith("attestation verify ")]
+        self.assertEqual(3, len(verifies))
+        for call in verifies:
+            self.assertIn(
+                " --repo ryanduguid/example --bundle example-1.2.3.intoto.jsonl"
+                f" --source-ref refs/tags/v1.2.3 --source-digest {'3' * 40}"
+                " --signer-workflow ryanduguid/release-policy/.github/workflows/release-binary.yml"
+                f" --signer-digest {'2' * 40}", call)
+        self.assertFalse(any("ryanduguid/other" in call for call in calls))
+
+    def test_a_planted_advisory_fails_the_binary_family(self) -> None:
+        result = self.audit("advisory")
+        self.assertEqual(1, result.returncode)
+        self.assertIn("1 vulnerability found", result.stdout + result.stderr)
+
+    def test_an_archive_that_is_not_the_signed_one_is_never_audited(self) -> None:
+        archive = self.release / "example-1.2.3-aarch64-apple-darwin.tar.gz"
+        for case, damage in (
+            ("unsigned", lambda: None),
+            ("clean", lambda: archive.write_bytes(archive.read_bytes() + b"\0")),
+        ):
+            with self.subTest(case=case):
+                damage()
+                shutil.rmtree(self.root / "work", ignore_errors=True)
+                self.assertNotEqual(0, self.audit(case).returncode)
+                self.assertFalse((self.root / "audit-calls").exists())
+
+    def test_a_manifest_or_release_without_a_binary_canary_fails(self) -> None:
+        self.write_manifest([{**CANARY, "family": "python"}])
+        result = self.audit()
+        self.assertEqual(1, result.returncode)
+        self.assertIn("records no binary canary", result.stderr)
+        self.write_manifest([CANARY])
+        (self.release / "example-1.2.3.intoto.jsonl").unlink()
+        shutil.rmtree(self.root / "work")
+        result = self.audit()
+        self.assertEqual(1, result.returncode)
+        self.assertIn("one provenance bundle", result.stderr)
+        self.assertFalse((self.root / "audit-calls").exists())
 
 
 if __name__ == "__main__":

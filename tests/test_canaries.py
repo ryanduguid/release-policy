@@ -234,7 +234,7 @@ class TagProtectionTests(unittest.TestCase):
 
 class CanaryManifestTests(unittest.TestCase):
     def test_root_tags_remain_valid_with_an_omitted_or_empty_prefix(self) -> None:
-        for family in ("archive", "python", "skills", "verify"):
+        for family in ("archive", "binary", "python", "skills", "verify"):
             ref = "main" if family == "verify" else "v1.2.3"
             for fields in ({}, {"tag_prefix": ""}):
                 with self.subTest(family=family, fields=fields):
@@ -404,7 +404,7 @@ class CanaryManifestTests(unittest.TestCase):
         self.assertEqual(result.warnings, ())
 
     def test_live_legacy_release_and_verify_select_only_their_expected_refs(self) -> None:
-        for family in ("archive", "python", "skills", "verify"):
+        for family in ("archive", "binary", "python", "skills", "verify"):
             with self.subTest(family=family):
                 ref = "main" if family == "verify" else "v1.2.3"
                 recorded = run_payload(family=family, ref=ref)
@@ -1183,11 +1183,12 @@ class GitHubReadTests(unittest.TestCase):
 class ProvenanceVerifierTests(unittest.TestCase):
     ASSET = b"release bytes"
 
-    def canary(self) -> check_canaries.Canary:
-        return check_canaries.parse_manifest(manifest())[0]
+    def canary(self, family: str = "python") -> check_canaries.Canary:
+        return check_canaries.parse_manifest(manifest(family=family))[0]
 
     def run_verifier(self, *, release_doc: object = None, tag_sha: object = HEAD,
-                     verified: object = None, asset: bytes = ASSET) -> list[list[str]]:
+                     verified: object = None, asset: bytes = ASSET,
+                     family: str = "python") -> list[list[str]]:
         digest = "sha256:" + check_canaries.hashlib.sha256(self.ASSET).hexdigest()
         if release_doc is None:
             release_doc = {"draft": False, "immutable": True, "assets": [
@@ -1211,7 +1212,7 @@ class ProvenanceVerifierTests(unittest.TestCase):
         with mock.patch.object(check_canaries, "_gh_json", return_value=release_doc), \
                 mock.patch.object(check_canaries, "_tag_commit", return_value=tag_sha), \
                 mock.patch.object(check_canaries, "_run_gh", side_effect=run_gh):
-            check_canaries._verify_provenance(self.canary())
+            check_canaries._verify_provenance(self.canary(family))
         return calls
 
     def test_verifies_the_tarball_against_the_pinned_signer_source_and_run(self) -> None:
@@ -1226,6 +1227,25 @@ class ProvenanceVerifierTests(unittest.TestCase):
             ("--predicate-type", "https://slsa.dev/provenance/v1"),
         ):
             self.assertEqual(verify[verify.index(flag) + 1], value)
+
+    def test_a_binary_release_verifies_sha256sums_signed_by_the_binary_workflow(self) -> None:
+        digest = "sha256:" + check_canaries.hashlib.sha256(self.ASSET).hexdigest()
+        # Its source and Unix archives are all tar archives; SHA256SUMS lists them.
+        assets = [{"name": "pkg-1.2.3.tar.gz", "digest": "sha256:0"},
+                  {"name": "pkg-1.2.3-x86_64-unknown-linux-musl.tar.gz", "digest": "sha256:0"},
+                  {"name": "pkg-1.2.3-aarch64-apple-darwin.tar.gz", "digest": "sha256:0"}]
+        calls = self.run_verifier(family="binary", release_doc={
+            "draft": False, "immutable": True,
+            "assets": [*assets, {"name": "SHA256SUMS", "digest": digest}]})
+        self.assertEqual(calls[0][calls[0].index("--pattern") + 1], "SHA256SUMS")
+        verify = calls[1]
+        self.assertEqual(verify[2], str(Path(verify[2]).parent / "SHA256SUMS"))
+        self.assertEqual(
+            verify[verify.index("--signer-workflow") + 1],
+            "ryanduguid/release-policy/.github/workflows/release-binary.yml")
+        with self.assertRaisesRegex(RuntimeError, "has 0 SHA256SUMS assets, expected 1"):
+            self.run_verifier(family="binary", release_doc={
+                "draft": False, "immutable": True, "assets": assets})
 
     def test_refuses_each_broken_binding(self) -> None:
         cases = {
