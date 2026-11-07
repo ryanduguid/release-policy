@@ -504,7 +504,7 @@ jobs:
         run: cargo build --locked --release --bin release-policy
 
   # The binary release family's build path, run on this repository's own CLI
-  # for both targets. It publishes nothing; binary-sbom-check then takes the
+  # for each target. It publishes nothing; binary-sbom-check then takes the
   # artefacts as the release's admit job would.
   binary-self-check:
     timeout-minutes: 45
@@ -516,6 +516,10 @@ jobs:
         include:
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-15
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
     defaults:
@@ -546,7 +550,7 @@ jobs:
           fallback: none
 
       - name: Install the musl C toolchain
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+        if: endsWith(matrix.target, '-linux-musl')
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends musl-tools
 
       - name: Link the C runtime statically
@@ -568,7 +572,7 @@ jobs:
           version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])' | tr -d '\r')"
           bash scripts/build_binary.sh "$TARGET" release-policy "$version" release-policy \
             "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/binary" \
-            "$(git log -1 --format=%ct)"
+            "$(git log -1 --format=%ct)" ""
 
       - name: Keep the archive for the SBOM check
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -583,6 +587,8 @@ jobs:
     name: binary release SBOM check
     needs: binary-self-check
     runs-on: ubuntu-24.04
+    env:
+      TARGETS: x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-pc-windows-msvc
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -600,6 +606,18 @@ jobs:
           name: binary-self-check-x86_64-unknown-linux-musl
           path: ${{ runner.temp }}/incoming/x86_64-unknown-linux-musl
 
+      - name: Download the Linux arm64 archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-self-check-aarch64-unknown-linux-musl
+          path: ${{ runner.temp }}/incoming/aarch64-unknown-linux-musl
+
+      - name: Download the macOS arm64 archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-self-check-aarch64-apple-darwin
+          path: ${{ runner.temp }}/incoming/aarch64-apple-darwin
+
       - name: Download the Windows archive
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -610,7 +628,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
-          for target in x86_64-unknown-linux-musl x86_64-pc-windows-msvc; do
+          for target in $TARGETS; do
             python scripts/binary_release.py receive \
               --incoming "$RUNNER_TEMP/incoming/$target" --stem release-policy --version "$version" \
               --binary release-policy --target "$target" --dist "$RUNNER_TEMP/dist" \
@@ -618,22 +636,47 @@ jobs:
           done
 
       - name: Require each admitted executable's linkage as the admit job does
-        run: bash scripts/admitted_linkage.sh "$RUNNER_TEMP/extracted" release-policy
+        run: |
+          set -euo pipefail
+          read -r -a targets <<< "$TARGETS"
+          bash scripts/admitted_linkage.sh "$RUNNER_TEMP/extracted" release-policy "${targets[@]}"
 
+      # As the admit job does: each target's admitted directory, so every
+      # executable in it is described.
       - name: Generate the Linux binary's SPDX SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          file: ${{ runner.temp }}/extracted/x86_64-unknown-linux-musl/release-policy
+          path: ${{ runner.temp }}/extracted/x86_64-unknown-linux-musl
           format: spdx-json
           syft-version: v1.51.0
           output-file: ${{ runner.temp }}/linux.spdx.json
           upload-artifact: false
           upload-release-assets: false
 
+      - name: Generate the Linux arm64 binary's SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: ${{ runner.temp }}/extracted/aarch64-unknown-linux-musl
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ runner.temp }}/linux-arm64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate the macOS arm64 binary's SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: ${{ runner.temp }}/extracted/aarch64-apple-darwin
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ runner.temp }}/macos-arm64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
       - name: Generate the Windows binary's SPDX SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          file: ${{ runner.temp }}/extracted/x86_64-pc-windows-msvc/release-policy.exe
+          path: ${{ runner.temp }}/extracted/x86_64-pc-windows-msvc
           format: spdx-json
           syft-version: v1.51.0
           output-file: ${{ runner.temp }}/windows.spdx.json
@@ -641,20 +684,23 @@ jobs:
           upload-release-assets: false
 
       # cargo-auditable embeds the target's own dependency list: a direct and
-      # a transitive dependency on both, and each platform crate only on its
-      # platform.
+      # a transitive dependency on each, and each platform crate only on its
+      # platforms (cargo tree, 8 November 2026).
       - name: Require each SBOM to describe its own target's dependencies
         run: |
           set -euo pipefail
           lists() { python scripts/binary_release.py sbom-lists --sbom "$RUNNER_TEMP/$1.spdx.json" --package "$2"; }
-          for sbom in linux windows; do
+          for sbom in linux linux-arm64 macos-arm64 windows; do
             for package in release-policy regex regex-automata; do
               lists "$sbom" "$package"
             done
           done
-          lists linux rustix
+          lists linux linux-raw-sys
+          lists linux-arm64 linux-raw-sys
+          lists macos-arm64 errno
           lists windows windows-sys
-          if lists linux windows-sys || lists windows rustix; then
+          if lists linux windows-sys || lists linux-arm64 errno || lists macos-arm64 linux-raw-sys \
+              || lists windows rustix; then
             echo "an SBOM lists another platform's crate" >&2
             exit 1
           fi

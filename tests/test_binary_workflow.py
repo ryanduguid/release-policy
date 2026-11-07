@@ -32,13 +32,23 @@ import binary_release  # noqa: E402
 WORKFLOWS = ROOT / ".github" / "workflows"
 LINUX = "x86_64-unknown-linux-musl"
 WINDOWS = "x86_64-pc-windows-msvc"
+# Each target, the runner that builds it natively and its label in step names.
+TARGETS = (
+    (LINUX, "ubuntu-24.04", "Linux"),
+    ("aarch64-unknown-linux-musl", "ubuntu-24.04-arm", "Linux arm64"),
+    ("aarch64-apple-darwin", "macos-15", "macOS arm64"),
+    (WINDOWS, "windows-2025", "Windows"),
+)
 AUDIT = ROOT / "scripts" / "audit_binaries.sh"
 CARGO_AUDIT = "0.22.2"
-INPUTS = ("artifact-stem", "binary", "source-directory", "tag-prefix", "required-checks")
+INPUTS = ("artifact-stem", "binary", "data-files", "source-directory", "tag-prefix",
+          "required-checks")
 # Every release asset, as publish_binaries.sh uploads it.
 ASSETS = (
     "$zip", "$tar", "$sbom",
     "$linux.tar.gz", "$linux.spdx.json",
+    "$linux_arm64.tar.gz", "$linux_arm64.spdx.json",
+    "$macos_arm64.tar.gz", "$macos_arm64.spdx.json",
     "$windows.zip", "$windows.spdx.json",
     "$checksums", "$provenance",
 )
@@ -97,20 +107,25 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         archive_jobs = self.mapping_block(archive, "jobs", indent=0)
         self.assertEqual(self.mapping_block(archive_jobs, "checks", indent=2), self.job("checks"))
 
-    def test_build_matrix_is_the_two_fixed_targets(self) -> None:
+    def test_build_matrix_is_the_fixed_targets_each_on_its_own_runner(self) -> None:
         build = self.job("build")
+        self.assertEqual(tuple(binary_release.TARGETS), tuple(target for target, _, _ in TARGETS))
         self.assertIn(
-            "        include:\n"
-            f"          - target: {LINUX}\n"
-            "            runner: ubuntu-24.04\n"
-            f"          - target: {WINDOWS}\n"
-            "            runner: windows-2025\n",
+            "        include:\n" + "".join(
+                f"          - target: {target}\n            runner: {runner}\n"
+                for target, runner, _ in TARGETS),
             build,
         )
+        # The admit and publish jobs loop over the same targets.
+        targets = " ".join(binary_release.TARGETS)
+        for name in ("admit", "publish"):
+            with self.subTest(job=name):
+                self.assertEqual(targets, self.mapping_value(
+                    self.mapping_block(self.job(name), "env", indent=4), "TARGETS", indent=6))
         auditable = self.step(build, "Install the pinned cargo-auditable")
         self.assertIn("tool: cargo-auditable@0.7.7\n", auditable)
         self.assertIn("fallback: none\n", auditable)
-        self.assertIn(f"if: matrix.target == '{LINUX}'",
+        self.assertIn("if: endsWith(matrix.target, '-linux-musl')",
                       self.step(build, "Install the musl C toolchain"))
         static = self.step(build, "Link the C runtime statically")
         self.assertIn(f"if: matrix.target == '{WINDOWS}'", static)
@@ -120,7 +135,10 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn(
             "name: binary-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.target }}", upload)
         self.assertIn("overwrite: false", upload)
-        self.assertIn("policy/scripts/build_binary.sh", build)
+        script = self.step(build, "Test, build, package and check the executables")
+        self.assertIn("policy/scripts/build_binary.sh", script)
+        self.assertIn("DATA_FILES: ${{ inputs.data-files }}\n", script)
+        self.assertIn('"$EPOCH" "$DATA_FILES"', script)
         # The packaged documents must be the tagged blobs the publisher compares.
         exact = self.step(build, "Check out files exactly as committed")
         self.assertIn("git config --global core.autocrlf false", exact)
@@ -170,9 +188,12 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
             receive = self.step(job, "Validate and admit each target's archive")
             self.assertIn("binary_release.py\" receive", receive)
             self.assertIn('--source "$SOURCE_PATH" --root "$GITHUB_WORKSPACE/consumer"', receive)
+            self.assertIn("for target in $TARGETS; do", receive)
+            self.assertIn('--data-files "$DATA_FILES"', receive)
+            self.assertIn("DATA_FILES: ${{ inputs.data-files }}\n", receive)
             sources = self.step(job, "Build deterministic source archives")
             self.assertIn("policy/scripts/build_release_archives.py", sources)
-            for target, label in ((LINUX, "Linux"), (WINDOWS, "Windows")):
+            for target, _, label in TARGETS:
                 with self.subTest(target=target):
                     download = self.step(job, f"Download the {label} build artefact")
                     self.assertIn(
@@ -185,12 +206,15 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         admit = self.job("admit")
         linkage = self.step(admit, "Require each admitted executable's linkage")
         self.assertIn('"$GITHUB_WORKSPACE/policy/scripts/admitted_linkage.sh"', linkage)
+        self.assertIn('"$RUNNER_TEMP/extracted" "$BINARY" "${targets[@]}"', linkage)
         self.assertIn("syft-version: v1.51.0",
                       self.step(admit, "Generate an SPDX SBOM for the source ZIP archive"))
-        for target, label in ((LINUX, "Linux"), (WINDOWS, "Windows")):
+        for target, _, label in TARGETS:
             with self.subTest(target=target):
                 sbom = self.step(admit, f"Generate the {label} binary's SPDX SBOM")
-                self.assertIn(f"${{{{ runner.temp }}}}/extracted/{target}/", sbom)
+                # The whole admitted directory, so every executable is described.
+                self.assertIn(f"path: ${{{{ runner.temp }}}}/extracted/{target}\n", sbom)
+                self.assertIn(f"-{target}.spdx.json\n", sbom)
                 self.assertIn("syft-version: v1.51.0", sbom)
         self.assert_in_order(
             admit,
@@ -198,8 +222,7 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
             "Generate an SPDX SBOM for the source ZIP archive",
             "Validate and admit each target's archive",
             "Require each admitted executable's linkage",
-            "Generate the Linux binary's SPDX SBOM",
-            "Generate the Windows binary's SPDX SBOM",
+            *(f"Generate the {label} binary's SPDX SBOM" for _, _, label in TARGETS),
             "Require each binary SBOM to list the package",
             "Install the pinned cargo-audit",
             "Refuse any RustSec advisory against an admitted executable",
@@ -247,9 +270,15 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assert_pinned_cargo_audit(install)
         audit = self.step(admit, "Refuse any RustSec advisory against an admitted executable")
         self.assertIn(
-            'bash "$GITHUB_WORKSPACE/policy/scripts/audit_binaries.sh" "$RUNNER_TEMP/advisory-db"\n'
-            f'          "$RUNNER_TEMP/extracted/{LINUX}/$BINARY"\n'
-            f'          "$RUNNER_TEMP/extracted/{WINDOWS}/$BINARY.exe"\n',
+            '          for target in $TARGETS; do\n'
+            '            suffix=""\n'
+            '            [[ "$target" != *-windows-msvc ]] || suffix=.exe\n'
+            '            for name in $BINARY; do\n'
+            '              executables+=("$RUNNER_TEMP/extracted/$target/$name$suffix")\n'
+            '            done\n'
+            '          done\n'
+            '          bash "$GITHUB_WORKSPACE/policy/scripts/audit_binaries.sh" "$RUNNER_TEMP/advisory-db" \\\n'
+            '            "${executables[@]}"\n',
             audit)
         self.assertNotIn("working-directory:", audit)
         self.assertEqual(1, admit.count("install-action"))
@@ -324,16 +353,29 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn('--bundle "$base.intoto.jsonl"', publish)
         inventory = self.step(publish, "Write and verify the exact release asset inventory")
         self.assertNotIn("intoto", inventory)
+        self.assertIn('binary_release.py" assets', inventory)
+        self.assertIn('binary_release.py" assets', self.step(
+            publish, "Verify provenance and SBOM attestations before publication"))
         provenance = self.step(publish, "Attest release asset provenance")
-        self.assertEqual(8, len(re.findall(r"^            \$\{\{", provenance, re.MULTILINE)))
-        self.assertEqual(3, publish.count("sbom-path:"))
+        # Every handed-over file and SHA256SUMS.
+        subjects = re.findall(r"^            \$\{\{.*?/dist/(.*)$", provenance, re.MULTILINE)
+        base = "${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}"
+        self.assertEqual(
+            sorted([*(base + suffix for suffix in binary_release.HANDOFF.values()), "SHA256SUMS"]),
+            sorted(subjects))
+        self.assertEqual(1 + len(TARGETS), publish.count("sbom-path:"))
+        for target, _, label in TARGETS:
+            with self.subTest(target=target):
+                attest = self.step(publish, f"Attest the {label} binary's SPDX SBOM")
+                self.assertIn(f"-{target}.spdx.json\n", attest)
         self.assertIn('bash "$GITHUB_WORKSPACE/policy/scripts/publish_binaries.sh"', publish)
 
     def test_publication_script_uploads_exactly_the_inventory(self) -> None:
         self.assertIn("assets=(\n", self.publisher)
         listed = self.publisher.split("assets=(\n", 1)[1].split("\n)\n", 1)[0].split()
         self.assertEqual(sorted(ASSETS), sorted(name.strip('"') for name in listed))
-        uploads = re.findall(r'^upload_asset "(\$[a-z]+(?:\.[a-z.]+)?)" ', self.publisher, re.MULTILINE)
+        uploads = re.findall(r'^upload_asset "(\$[a-z0-9_]+(?:\.[a-z.]+)?)" ', self.publisher,
+                             re.MULTILINE)
         self.assertEqual(list(ASSETS), uploads)
         self.assertIn('. "$(dirname "$0")/publish_common.sh"', self.publisher)
         self.assertIn("finalise_release", self.publisher)

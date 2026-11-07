@@ -8,25 +8,38 @@
 # on this repository, so both exercise the same steps. It executes consumer
 # code (tests and build scripts) and must never run where a write token is.
 # The caller installs cargo-auditable and, for musl, musl-tools; the Windows
-# job sets RUSTFLAGS for the static C runtime.
+# job sets RUSTFLAGS for the static C runtime. BINARY names one or more Cargo
+# binary targets separated by spaces; DATA_FILES lists the files they need,
+# one path per line relative to the component, or is empty. Written for the
+# bash 3.2 that macOS ships.
 set -euo pipefail
 
-if [[ "$#" -ne 8 ]]; then
-  echo "usage: build_binary.sh TARGET STEM VERSION BINARY SOURCE_PATH ROOT OUTPUT_DIR EPOCH" >&2
+if [[ "$#" -ne 9 ]]; then
+  echo "usage: build_binary.sh TARGET STEM VERSION BINARY SOURCE_PATH ROOT OUTPUT_DIR EPOCH DATA_FILES" >&2
   exit 64
 fi
 
-target="$1" stem="$2" version="$3" binary="$4" source_path="$5" root="$6" output_dir="$7" epoch="$8"
+target="$1" stem="$2" version="$3" binary="$4" source_path="$5" root="$6" output_dir="$7" epoch="$8" data_files="$9"
 PYTHON="${PYTHON:-python3}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 release=("$PYTHON" "$here/binary_release.py")
 
+# llvm-readobj prints an ELF executable's program headers, which show any
+# interpreter; the other formats name their libraries in the needed list.
 case "$target" in
-  x86_64-unknown-linux-musl) suffix="" extension=".tar.gz" ;;
-  x86_64-pc-windows-msvc) suffix=".exe" extension=".zip" ;;
+  x86_64-unknown-linux-musl | aarch64-unknown-linux-musl)
+    suffix="" extension=".tar.gz" headers=(--program-headers) ;;
+  aarch64-apple-darwin) suffix="" extension=".tar.gz" headers=() ;;
+  x86_64-pc-windows-msvc) suffix=".exe" extension=".zip" headers=() ;;
   *) echo "build_binary.sh: unsupported target $target" >&2; exit 64 ;;
 esac
 [[ "$epoch" =~ ^[0-9]+$ ]] || { echo "build_binary.sh: epoch must be a Unix time" >&2; exit 64; }
+# The release workflow has already checked each name against Cargo.toml.
+read -r -a names <<< "$binary"
+bins=()
+for name in "${names[@]}"; do
+  bins+=(--bin "$name")
+done
 
 cd "$source_path"
 "${release[@]}" toolchain --source . --root "$root"
@@ -36,35 +49,38 @@ rustup target add "$target"
 rustup component add llvm-tools
 
 cargo test --locked --target "$target"
-cargo auditable build --locked --release --target "$target" --bin "$binary"
+cargo auditable build --locked --release --target "$target" "${bins[@]}"
 target_directory="$(cargo metadata --locked --format-version 1 --no-deps \
   | "$PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"
-executable="$target_directory/$target/release/$binary$suffix"
 
 mkdir -p "$output_dir"
 # Python prints a native path, with backslashes on Windows, so the name the
 # digest line records is built here rather than cut from that output.
 name="$stem-$version-$target$extension"
-"${release[@]}" package --executable "$executable" --binary "$binary" \
+"${release[@]}" package --executables "$target_directory/$target/release" --binary "$binary" \
   --target "$target" --stem "$stem" --version "$version" --source . --root "$root" \
-  --output-dir "$output_dir" --epoch "$epoch" >/dev/null
+  --output-dir "$output_dir" --epoch "$epoch" --data-files "$data_files" >/dev/null
 archive="$output_dir/$name"
 
-# Check what ships: the packaged executable, extracted afresh, not the build output.
+# Check what ships: the packaged executables, extracted afresh, not the build output.
 check="$(mktemp -d)"
 "${release[@]}" verify --archive "$archive" --binary "$binary" --target "$target" \
-  --extract-dir "$check/extracted" >/dev/null
-"${release[@]}" smoke --executable "$check/extracted/$binary$suffix" --version "$version"
+  --extract-dir "$check/extracted" --data-files "$data_files" >/dev/null
 
 host="$(rustc -vV | sed -n 's/^host: //p' | tr -d '\r')"
 readobj="$(rustc --print sysroot | tr -d '\r')/lib/rustlib/$host/bin/llvm-readobj"
-if [[ -z "$suffix" ]]; then
-  "$readobj" --file-headers --needed-libs --program-headers "$check/extracted/$binary" > "$check/readobj.txt"
+[[ -z "$suffix" ]] || readobj="$readobj.exe"
+for executable in "${names[@]}"; do
+  executable="$check/extracted/$executable$suffix"
+  "${release[@]}" smoke --executable "$executable" --version "$version"
+  "$readobj" --file-headers --needed-libs ${headers[@]+"${headers[@]}"} "$executable" > "$check/readobj.txt"
   "${release[@]}" linkage --readobj-output "$check/readobj.txt" --target "$target"
-else
-  "$readobj.exe" --file-headers --needed-libs "$check/extracted/$binary.exe" > "$check/readobj.txt"
-  "${release[@]}" linkage --readobj-output "$check/readobj.txt" --target "$target"
-fi
+done
 
-(cd "$output_dir" && sha256sum -- "$name" > "$name.sha256")
+# macOS ships shasum rather than sha256sum; both print the same line.
+if command -v sha256sum >/dev/null; then
+  (cd "$output_dir" && sha256sum -- "$name" > "$name.sha256")
+else
+  (cd "$output_dir" && shasum -a 256 -- "$name" > "$name.sha256")
+fi
 echo "$archive"
