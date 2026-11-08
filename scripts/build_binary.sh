@@ -25,7 +25,8 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 release=("$PYTHON" "$here/binary_release.py")
 
 # llvm-readobj prints an ELF executable's program headers, which show any
-# interpreter; the other formats name their libraries in the needed list.
+# interpreter; a Windows executable names its DLLs in the needed list. A macOS
+# executable's load commands are read directly (binary_release.py says why).
 case "$target" in
   x86_64-unknown-linux-musl | aarch64-unknown-linux-musl)
     suffix="" extension=".tar.gz" headers=(--program-headers) ;;
@@ -73,8 +74,12 @@ readobj="$(rustc --print sysroot | tr -d '\r')/lib/rustlib/$host/bin/llvm-readob
 for executable in "${names[@]}"; do
   executable="$check/extracted/$executable$suffix"
   "${release[@]}" smoke --executable "$executable" --version "$version"
-  "$readobj" --file-headers --needed-libs ${headers[@]+"${headers[@]}"} "$executable" > "$check/readobj.txt"
-  "${release[@]}" linkage --readobj-output "$check/readobj.txt" --target "$target"
+  if [[ "$target" == *-apple-darwin ]]; then
+    "${release[@]}" macho-linkage --executable "$executable" --target "$target"
+  else
+    "$readobj" --file-headers --needed-libs ${headers[@]+"${headers[@]}"} "$executable" > "$check/readobj.txt"
+    "${release[@]}" linkage --readobj-output "$check/readobj.txt" --target "$target"
+  fi
 done
 
 # macOS ships shasum rather than sha256sum; both print the same line.

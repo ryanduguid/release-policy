@@ -31,7 +31,8 @@ host="$(rustc "+$toolchain" -vV | sed -n 's/^host: //p' | tr -d '\r')"
 readobj="$(rustc "+$toolchain" --print sysroot | tr -d '\r')/lib/rustlib/$host/bin/llvm-readobj"
 
 for target in "$@"; do
-  # As in build_binary.sh: an ELF executable's program headers show any interpreter.
+  # As in build_binary.sh: an ELF executable's program headers show any
+  # interpreter, and a macOS executable's load commands are read directly.
   case "$target" in
     *-linux-musl) suffix="" headers=(--program-headers) ;;
     *-apple-darwin) suffix="" headers=() ;;
@@ -39,8 +40,14 @@ for target in "$@"; do
     *) echo "admitted_linkage.sh: unsupported target $target" >&2; exit 64 ;;
   esac
   for name in "${names[@]}"; do
-    "$readobj" --file-headers --needed-libs ${headers[@]+"${headers[@]}"} \
-      "$extracted/$target/$name$suffix" > "$work/readobj.txt"
+    executable="$extracted/$target/$name$suffix"
+    if [[ "$target" == *-apple-darwin ]]; then
+      "$PYTHON" "$here/binary_release.py" macho-linkage --executable "$executable" \
+        --target "$target"
+      continue
+    fi
+    "$readobj" --file-headers --needed-libs ${headers[@]+"${headers[@]}"} "$executable" \
+      > "$work/readobj.txt"
     "$PYTHON" "$here/binary_release.py" linkage --readobj-output "$work/readobj.txt" \
       --target "$target"
   done

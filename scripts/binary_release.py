@@ -6,8 +6,9 @@
 The binary release family (`release-binary.yml`) builds each target in its own
 read-only job, checks the archives with third-party tools in a read-only admit
 job and publishes from one privileged job that runs neither consumer code nor
-those tools. The build jobs call `package`, `smoke` and `linkage`. The admit
-job calls `receive`, `linkage`, `sbom-lists` and `digests`. The publisher calls
+those tools. The build jobs call `package`, `smoke`, and `linkage` or, for
+macOS, `macho-linkage`. The admit job calls `receive`, the same linkage
+command, `sbom-lists` and `digests`. The publisher calls
 `cargo-package` before anything is built, `receive` on each archive again,
 `accept` on what the admit job hands over and `assets` for the release
 inventory, so a missing, extra, unsafe or changed file stops the release.
@@ -137,7 +138,22 @@ _MACOS_SYSTEM_LIBRARY = re.compile(
     r"/usr/lib/[A-Za-z0-9_+-][A-Za-z0-9_.+-]*\.dylib"
     r"|/System/Library/Frameworks/(?P<name>[A-Za-z0-9_]+)\.framework/Versions/[A-Z0-9]+/(?P=name)"
 )
-_NEEDED = re.compile(r"NeededLibraries \[\n(?P<names>(?:[^\]\n]*\n)*?)\]", re.MULTILINE)
+# A macOS executable's linkage is read from its own load commands, not from
+# llvm-readobj, which reports each slice of a universal file separately and
+# does not show LC_DYLD_ENVIRONMENT. Values from <mach-o/loader.h>: the thin
+# 64-bit little-endian magic, CPU_TYPE_ARM64 and MH_EXECUTE, then the load
+# commands that make dyld load a library (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB,
+# LC_REEXPORT_DYLIB, LC_LAZY_LOAD_DYLIB, LC_LOAD_UPWARD_DYLIB) and those that
+# change where or how dyld looks (LC_LOAD_DYLINKER, LC_RPATH,
+# LC_DYLD_ENVIRONMENT).
+_MACHO_MAGIC_64 = b"\xcf\xfa\xed\xfe"
+_MACHO_ARM64 = 0x0100000C
+_MACHO_EXECUTE = 0x2
+_MACHO_LOAD_LIBRARY = frozenset({0xC, 0x80000018, 0x8000001F, 0x20, 0x80000023})
+_MACHO_LOAD_DYLINKER = 0xE
+_MACHO_REFUSED = {0x8000001C: "adds a run-path search path",
+                  0x27: "sets dyld environment variables"}
+_NEEDED =re.compile(r"NeededLibraries \[\n(?P<names>(?:[^\]\n]*\n)*?)\]", re.MULTILINE)
 # A runner's checkout and its temporary directory: the workflows pass paths
 # under both, and build_binary.sh passes the checkout above its own directory.
 # A consumer may also build into a CARGO_TARGET_DIR outside both.
@@ -444,8 +460,67 @@ def needed_libraries(readobj_output: str) -> tuple[str, ...]:
     return tuple(line.strip() for line in match.group("names").splitlines() if line.strip())
 
 
+def macho_linkage(executable: bytes, triple: str) -> tuple[str, ...]:
+    """The libraries a thin arm64 Mach-O executable loads, once each is one macOS ships.
+
+    A universal file is refused whole, since a loader picks a slice this
+    check would not see, and so is any command that points dyld elsewhere.
+    """
+    if not _target(triple).object_format.startswith("Mach-O"):
+        raise ValueError(f"only a macOS executable's linkage is read from it, not {triple}'s")
+    if executable[:4] != _MACHO_MAGIC_64:
+        raise ValueError("not a thin 64-bit little-endian Mach-O file")
+    malformed = ValueError("malformed Mach-O load commands")
+    if len(executable) < 32:
+        raise malformed
+    _, cputype, _, filetype, count, size = struct.unpack_from("<6I", executable)
+    if cputype != _MACHO_ARM64:
+        raise ValueError("not an arm64 Mach-O executable")
+    if filetype != _MACHO_EXECUTE:
+        raise ValueError("not a Mach-O executable file type")
+    end, offset, needed = 32 + size, 32, []
+    if end > len(executable):
+        raise malformed
+    for _ in range(count):
+        if offset + 8 > end:
+            raise malformed
+        command, length = struct.unpack_from("<2I", executable, offset)
+        if length < 8 or offset + length > end:
+            raise malformed
+        if command in _MACHO_REFUSED:
+            raise ValueError(f"the executable {_MACHO_REFUSED[command]}")
+        if command in _MACHO_LOAD_LIBRARY or command == _MACHO_LOAD_DYLINKER:
+            # Each of these commands names a path at the offset its third field holds.
+            name_at = struct.unpack_from("<I", executable, offset + 8)[0] if length >= 12 else 0
+            name, terminated, _ = executable[offset + name_at:offset + length].partition(b"\0")
+            if not 12 <= name_at < length or not terminated:
+                raise malformed
+            try:
+                text = name.decode("utf-8")
+            except UnicodeDecodeError:
+                raise malformed from None
+            if command != _MACHO_LOAD_DYLINKER:
+                needed.append(text)
+            elif text != "/usr/lib/dyld":
+                raise ValueError("the executable names a dynamic linker other than "
+                                 f"/usr/lib/dyld: {text}")
+        offset += length
+    if offset != end:
+        raise malformed
+    foreign = [name for name in needed if not _MACOS_SYSTEM_LIBRARY.fullmatch(name)]
+    if foreign:
+        raise ValueError(f"loads libraries macOS does not ship: {foreign}")
+    return tuple(needed)
+
+
 def linkage(readobj_output: str, triple: str) -> tuple[str, ...]:
     target = _target(triple)
+    if target.object_format.startswith("Mach-O"):
+        raise ValueError("a macOS executable's linkage is read from its load commands")
+    # llvm-readobj prints one block for each object in a file; one clean
+    # block must not stand for another.
+    if readobj_output.count("Format: ") != 1 or readobj_output.count("NeededLibraries [") > 1:
+        raise ValueError("llvm-readobj's output describes more than one object")
     lines = {line.strip() for line in readobj_output.splitlines()}
     if not {f"Format: {target.object_format}", f"Arch: {target.arch}"} <= lines:
         raise ValueError(f"not an {target.arch} {target.object_format} executable")
@@ -453,13 +528,6 @@ def linkage(readobj_output: str, triple: str) -> tuple[str, ...]:
     if target.object_format.startswith("elf"):
         if needed or "PT_INTERP" in readobj_output:
             raise ValueError(f"not a static executable: needs {list(needed)} or an interpreter")
-        return needed
-    if target.object_format.startswith("Mach-O"):
-        if "FileType: Executable (0x2)" not in lines:
-            raise ValueError("not a Mach-O executable file type")
-        foreign = [name for name in needed if not _MACOS_SYSTEM_LIBRARY.fullmatch(name)]
-        if foreign:
-            raise ValueError(f"loads libraries macOS does not ship: {foreign}")
         return needed
     runtime = [name for name in needed if _WINDOWS_RUNTIME.fullmatch(name)]
     if runtime:
@@ -679,6 +747,7 @@ def _parser() -> argparse.ArgumentParser:
             paths=("--incoming", "--dist", "--extract-dir", "--source", "--root"), data=True)
     command("smoke", "--version", paths=("--executable",))
     command("linkage", "--target", paths=("--readobj-output",))
+    command("macho-linkage", "--target", paths=("--executable",))
     command("sbom-lists", "--package", paths=("--sbom",))
     command("digests", "--stem", "--version", paths=("--dist",))
     command("assets", "--stem", "--version")
@@ -725,6 +794,9 @@ def _run(arguments: argparse.Namespace) -> str:
         case "linkage":
             output = _confined(arguments.readobj_output).read_bytes().decode("utf-8")
             return "\n".join(linkage(output, arguments.target))
+        case "macho-linkage":
+            executable = _confined(arguments.executable).read_bytes()
+            return "\n".join(macho_linkage(executable, arguments.target))
         case "digests":
             return "\n".join(digests(_confined(arguments.dist), arguments.stem, arguments.version))
         case "assets":

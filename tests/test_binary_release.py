@@ -79,18 +79,39 @@ MACOS_SYSTEM = (
 )
 
 
-def macho_header(filetype: int, *dylibs: str) -> bytes:
-    """An arm64 Mach-O header with dyld and one load command for each dylib."""
-    def command(kind: int, offset: int, fields: tuple[int, ...], name: str) -> bytes:
-        raw = name.encode() + b"\0"
-        size = (offset + len(raw) + 7) // 8 * 8
-        return struct.pack(f"<{2 + len(fields)}I", kind, size, *fields) + raw.ljust(size - offset, b"\0")
+ARM64, X86_64 = 0x0100000C, 0x01000007
+# Each load command that makes dyld load a library, by its <mach-o/loader.h> name.
+DYLIB_COMMANDS = {
+    "LC_LOAD_DYLIB": 0xC, "LC_LOAD_WEAK_DYLIB": 0x80000018, "LC_REEXPORT_DYLIB": 0x8000001F,
+    "LC_LAZY_LOAD_DYLIB": 0x20, "LC_LOAD_UPWARD_DYLIB": 0x80000023,
+}
 
-    commands = [command(0xE, 12, (12,), "/usr/lib/dyld")]
-    commands += [command(0xC, 24, (24, 2, 0x10000, 0x10000), dylib) for dylib in dylibs]
+
+def load_command(kind: int, name: str) -> bytes:
+    """A load command naming a path: a dylib command, else a dylinker-style one."""
+    fields = (24, 2, 0x10000, 0x10000) if kind in DYLIB_COMMANDS.values() else (12,)
+    offset = 8 + 4 * len(fields)
+    raw = name.encode() + b"\0"
+    size = (offset + len(raw) + 7) // 8 * 8
+    return struct.pack(f"<{2 + len(fields)}I", kind, size, *fields) + raw.ljust(size - offset, b"\0")
+
+
+def macho_header(filetype: int, *dylibs: str, cputype: int = ARM64,
+                 extra: tuple[bytes, ...] = ()) -> bytes:
+    """A thin Mach-O header with dyld, an LC_LOAD_DYLIB for each dylib, then `extra`."""
+    commands = [load_command(0xE, "/usr/lib/dyld"), *(load_command(0xC, d) for d in dylibs), *extra]
     body = b"".join(commands)
-    return struct.pack("<IiiIIIII", 0xFEEDFACF, 0x0100000C, 0, filetype, len(commands),
+    return struct.pack("<IiiIIIII", 0xFEEDFACF, cputype, 0, filetype, len(commands),
                        len(body), 0x200085, 0) + body
+
+
+def universal(*slices: tuple[int, bytes]) -> bytes:
+    """A universal (fat) file holding each (cputype, thin Mach-O) slice, 4 KiB aligned."""
+    arches, body = b"", b""
+    for cputype, data in slices:
+        arches += struct.pack(">iiIII", cputype, 0, 4096 + len(body), len(data), 12)
+        body += data.ljust((len(data) + 4095) // 4096 * 4096, b"\0")
+    return (struct.pack(">II", 0xCAFEBABE, len(slices)) + arches).ljust(4096, b"\0") + body
 
 
 def llvm_readobj() -> Path | None:
@@ -633,50 +654,113 @@ class CheckTests(Fixture):
         for wrong in (static, MACHO):
             with self.assertRaisesRegex(ValueError, "not an aarch64 elf64-littleaarch64 executable"):
                 binary_release.linkage(wrong, LINUX_ARM64)
+        # llvm-readobj prints a block for each slice of a universal file; one
+        # clean block must not stand for the others.
+        with self.assertRaisesRegex(ValueError, "describes more than one object"):
+            binary_release.linkage(static + static, LINUX)
 
     def test_a_macos_executable_loads_only_libraries_macos_ships(self) -> None:
-        self.assertEqual(binary_release.linkage(MACHO, MACOS_ARM64), MACOS_SYSTEM)
+        self.assertEqual(binary_release.macho_linkage(macho_header(2, *MACOS_SYSTEM), MACOS_ARM64),
+                         MACOS_SYSTEM)
         for name in ("/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib", "/usr/local/lib/libz.dylib",
                      "@rpath/libexample.dylib", "@executable_path/libexample.dylib",
                      "@loader_path/../lib/libexample.dylib", "/usr/lib/../local/lib/libz.dylib",
                      "/usr/lib/swift/libswiftCore.dylib", "libz.dylib",
                      "/System/Library/Frameworks/Security.framework/Versions/A/Other",
                      "/Library/Frameworks/Example.framework/Versions/A/Example"):
-            with self.subTest(name=name), self.assertRaisesRegex(
-                    ValueError, "loads libraries macOS does not ship"):
-                binary_release.linkage(MACHO.replace("/usr/lib/libiconv.2.dylib", name), MACOS_ARM64)
+            # Every kind of command that loads a library is read, not only LC_LOAD_DYLIB.
+            for command, kind in DYLIB_COMMANDS.items():
+                executable = macho_header(2, "/usr/lib/libSystem.B.dylib",
+                                          extra=(load_command(kind, name),))
+                with self.subTest(name=name, command=command), self.assertRaisesRegex(
+                        ValueError, "loads libraries macOS does not ship"):
+                    binary_release.macho_linkage(executable, MACOS_ARM64)
         with self.assertRaisesRegex(ValueError, "not a Mach-O executable file type"):
-            binary_release.linkage(MACHO.replace("Executable (0x2)", "Bundle (0x8)"), MACOS_ARM64)
-        for wrong in (MACHO.replace("Arch: aarch64", "Arch: x86_64"), ELF_ARM64 + "NeededLibraries [\n]\n"):
-            with self.assertRaisesRegex(ValueError, "not an aarch64 Mach-O arm64 executable"):
-                binary_release.linkage(wrong, MACOS_ARM64)
+            binary_release.macho_linkage(macho_header(8, *MACOS_SYSTEM), MACOS_ARM64)
+        with self.assertRaisesRegex(ValueError, "not an arm64 Mach-O executable"):
+            binary_release.macho_linkage(macho_header(2, cputype=X86_64), MACOS_ARM64)
+        with self.assertRaisesRegex(ValueError, "read from its load commands"):
+            binary_release.linkage(MACHO, MACOS_ARM64)
+        with self.assertRaisesRegex(ValueError, "only a macOS executable"):
+            binary_release.macho_linkage(macho_header(2), LINUX_ARM64)
 
-    def test_llvm_readobj_output_for_crafted_mach_o_headers_is_judged_the_same(self) -> None:
+    def test_a_universal_or_other_non_thin_arm64_file_is_refused(self) -> None:
+        thin = macho_header(2, "/usr/lib/libSystem.B.dylib")
+        # The reviewer's case: a clean x86_64 slice first, an arm64 slice loading
+        # a library the release does not ship second.
+        clean = macho_header(2, "/usr/lib/libSystem.B.dylib", cputype=X86_64)
+        evil = macho_header(2, "/usr/lib/libSystem.B.dylib", "@rpath/libevil.dylib")
+        fat = universal((X86_64, clean), (ARM64, evil))
+        for name, data in (
+            ("fat, clean slice first", fat),
+            ("fat, one clean slice", universal((ARM64, thin))),
+            ("fat64", struct.pack(">I", 0xCAFEBABF) + fat[4:]),
+            ("big-endian", struct.pack(">I", 0xFEEDFACF) + thin[4:]),
+            ("32-bit", struct.pack("<I", 0xFEEDFACE) + thin[4:]),
+            ("ELF", b"\x7fELF" + thin[4:]),
+            ("empty", b""),
+        ):
+            with self.subTest(name), self.assertRaisesRegex(
+                    ValueError, "not a thin 64-bit little-endian Mach-O file"):
+                binary_release.macho_linkage(data, MACOS_ARM64)
+
+    def test_load_commands_that_redirect_dyld_are_refused(self) -> None:
+        for command, refusal in (
+            (load_command(0x27, "DYLD_LIBRARY_PATH=@executable_path/lib"),
+             "sets dyld environment variables"),
+            (load_command(0x8000001C, "@executable_path/../lib"), "adds a run-path search path"),
+            (load_command(0xE, "/tmp/dyld"), "names a dynamic linker other than /usr/lib/dyld"),
+        ):
+            with self.subTest(refusal), self.assertRaisesRegex(ValueError, refusal):
+                binary_release.macho_linkage(
+                    macho_header(2, "/usr/lib/libSystem.B.dylib", extra=(command,)), MACOS_ARM64)
+
+    def test_malformed_load_commands_are_refused(self) -> None:
+        thin = macho_header(2, "/usr/lib/libSystem.B.dylib")
+        # The dyld command fills bytes 32 to 64; the dylib command starts at 64
+        # and its name, at offset 24 within it, at 88.
+        for name, data in (
+            ("short header", thin[:31]),
+            ("commands past the end", thin[:-8]),
+            ("more commands than bytes", thin[:16] + struct.pack("<I", 3) + thin[20:]),
+            ("fewer commands than bytes", thin[:16] + struct.pack("<I", 1) + thin[20:]),
+            ("zero command size", thin[:36] + struct.pack("<I", 0) + thin[40:]),
+            ("command too short for a name", thin[:68] + struct.pack("<I", 8) + thin[72:]),
+            ("name inside the header", thin[:72] + struct.pack("<I", 4) + thin[76:]),
+            ("name without a terminator", thin[:88] + b"x" * 32),
+            ("name not UTF-8", thin[:88] + b"\xff" + thin[89:]),
+        ):
+            with self.subTest(name), self.assertRaisesRegex(
+                    ValueError, "malformed Mach-O load commands"):
+                binary_release.macho_linkage(data, MACOS_ARM64)
+
+    def test_llvm_readobj_reads_the_crafted_mach_o_files_alike(self) -> None:
         readobj = llvm_readobj()
         if readobj is None:
             self.skipTest("llvm-readobj from the Rust toolchain's llvm-tools is not installed")
-        cases = (
-            (2, MACOS_SYSTEM, None),
-            (2, ("/usr/lib/libSystem.B.dylib", "/opt/homebrew/lib/libssl.3.dylib"),
-             "loads libraries macOS does not ship"),
-            (2, ("/usr/lib/libSystem.B.dylib", "@rpath/libexample.dylib"),
-             "loads libraries macOS does not ship"),
-            (8, ("/usr/lib/libSystem.B.dylib",), "not a Mach-O executable file type"),
-        )
-        for filetype, dylibs, refusal in cases:
-            path = self.base / "example"
-            path.write_bytes(macho_header(filetype, *dylibs))
-            output = subprocess.run(  # nosec B603
+        path = self.base / "example"
+
+        def read(data: bytes) -> str:
+            path.write_bytes(data)
+            return subprocess.run(  # nosec B603
                 [str(readobj), "--file-headers", "--needed-libs", str(path)],
                 capture_output=True, text=True, check=True).stdout
-            with self.subTest(dylibs=dylibs, filetype=filetype):
-                if refusal is None:
-                    self.assertEqual(binary_release.linkage(output, MACOS_ARM64),
-                                     tuple(sorted(dylibs)))
-                    self.assertEqual(output[output.index("Format:"):], MACHO[MACHO.index("Format:"):])
-                else:
-                    with self.assertRaisesRegex(ValueError, refusal):
-                        binary_release.linkage(output, MACOS_ARM64)
+
+        # The fixture above is what LLVM prints for the plain crafted file.
+        output = read(macho_header(2, *MACOS_SYSTEM))
+        self.assertEqual(output[output.index("Format:"):], MACHO[MACHO.index("Format:"):])
+        # LLVM lists the library of every dylib command the parser reads.
+        extra = tuple(load_command(kind, f"/usr/lib/lib{command}.dylib")
+                      for command, kind in DYLIB_COMMANDS.items())
+        executable = macho_header(2, *MACOS_SYSTEM, extra=extra)
+        self.assertEqual(sorted(binary_release.needed_libraries(read(executable))),
+                         sorted(binary_release.macho_linkage(executable, MACOS_ARM64)))
+        # LLVM reads the universal file too, printing one block for each slice.
+        clean = macho_header(2, "/usr/lib/libSystem.B.dylib", cputype=X86_64)
+        evil = macho_header(2, "/usr/lib/libSystem.B.dylib", "@rpath/libevil.dylib")
+        output = read(universal((X86_64, clean), (ARM64, evil)))
+        self.assertEqual(output.count("Format: Mach-O"), 2)
+        self.assertIn("@rpath/libevil.dylib", output)
 
     def test_windows_imports_only_pinned_system_dlls_and_no_c_runtime(self) -> None:
         # The imports of release-policy's own static-CRT build, 28 October 2026.
@@ -765,6 +849,10 @@ class CommandTests(Fixture):
         listing.write_text(ELF + "NeededLibraries [\n]\n", encoding="utf-8")
         self.assertEqual(self.run_main("linkage", "--readobj-output", str(listing), "--target",
                                        LINUX), (0, "\n", ""))
+        macho = self.base / "macho"
+        macho.write_bytes(macho_header(2, "/usr/lib/libSystem.B.dylib"))
+        self.assertEqual(self.run_main("macho-linkage", "--executable", str(macho), "--target",
+                                       MACOS_ARM64), (0, "/usr/lib/libSystem.B.dylib\n", ""))
         sbom = self.base / "x.spdx.json"
         sbom.write_text('{"packages": [{"name": "example"}]}', encoding="utf-8")
         self.assertEqual(self.run_main("sbom-lists", "--sbom", str(sbom), "--package", "example"),
@@ -944,6 +1032,7 @@ class PathArgumentTests(Fixture):
                     ("--incoming", "--dist", "--extract-dir", "--source", "--root")),
         "smoke": (("--version", "1.2.3"), ("--executable",)),
         "linkage": (("--target", LINUX), ("--readobj-output",)),
+        "macho-linkage": (("--target", MACOS_ARM64), ("--executable",)),
         "sbom-lists": (("--package", "example"), ("--sbom",)),
         "digests": (("--stem", "example", "--version", "1.2.3"), ("--dist",)),
         "accept": (("--stem", "example", "--version", "1.2.3", "--digest", "source-zip="),

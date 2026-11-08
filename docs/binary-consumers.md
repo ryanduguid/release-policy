@@ -72,10 +72,14 @@ names its TLS and DNS tests here; the release workflow cannot know them.
    `NOTICE` where present, extracts the archive again, smoke-tests each
    executable's `--version` and inspects its linkage. On Linux it may load no
    dynamic library and name no interpreter. On macOS, which has no static
-   executables, it must be an executable file that loads only libraries
-   macOS ships, by absolute path: one directly in `/usr/lib` or a framework
-   in `/System/Library/Frameworks`, never one through `@rpath`,
-   `@executable_path` or `@loader_path`, or from Homebrew or `/usr/local`. On
+   executables, it must be a thin arm64 executable file, never a universal
+   one, that loads only libraries macOS ships, by absolute path: one directly
+   in `/usr/lib` or a framework in `/System/Library/Frameworks`, never one
+   through `@rpath`, `@executable_path` or `@loader_path`, or from Homebrew or
+   `/usr/local`. Its load commands are read directly, so every kind of library
+   load counts, and one that adds a run-path search path, sets dyld
+   environment variables or names a dynamic linker other than `/usr/lib/dyld`
+   is refused. On
    Windows it may import only DLLs in a pinned set of Windows system
    components, never a C runtime DLL. The archive and its `.sha256` line go
    to `admit` and the publisher as a uniquely named artefact of the run.
