@@ -30,7 +30,7 @@ release=("$PYTHON" "$here/binary_release.py")
 case "$target" in
   x86_64-unknown-linux-musl | aarch64-unknown-linux-musl)
     suffix="" extension=".tar.gz" headers=(--program-headers) ;;
-  aarch64-apple-darwin) suffix="" extension=".tar.gz" headers=() ;;
+  aarch64-apple-darwin) suffix="" extension=".tar.gz" ;;
   x86_64-pc-windows-msvc) suffix=".exe" extension=".zip" headers=() ;;
   *) echo "build_binary.sh: unsupported target $target" >&2; exit 64 ;;
 esac

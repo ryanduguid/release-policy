@@ -8,7 +8,9 @@
 # could replace an archive after its own check. This runs on the bytes the
 # admit job admitted, which the publisher admits again and requires to be the
 # same, with llvm-readobj from a toolchain pinned here rather than by the
-# consumer, and from outside the consumer tree. EXTRACTED_ROOT holds one
+# consumer, and from outside the consumer tree. A macOS executable goes
+# through `binary_release.py macho-linkage` instead, which reads its load
+# commands directly. EXTRACTED_ROOT holds one
 # directory for each TARGET; BINARY names the executables, separated by spaces.
 set -euo pipefail
 
@@ -35,7 +37,7 @@ for target in "$@"; do
   # interpreter, and a macOS executable's load commands are read directly.
   case "$target" in
     *-linux-musl) suffix="" headers=(--program-headers) ;;
-    *-apple-darwin) suffix="" headers=() ;;
+    *-apple-darwin) suffix="" ;;
     *-windows-msvc) suffix=".exe" headers=() ;;
     *) echo "admitted_linkage.sh: unsupported target $target" >&2; exit 64 ;;
   esac

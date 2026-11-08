@@ -62,7 +62,7 @@ while IFS=$'\t' read -r -u 3 repository tag commit policy; do
   cd "$release"
   gh attestation verify SHA256SUMS "${pins[@]}"
   archives=()
-  while read -r _ name; do
+  while read -r _ name || [[ -n "$name" ]]; do
     case "$name" in
       *-x86_64-unknown-linux-musl.tar.gz | *-aarch64-unknown-linux-musl.tar.gz \
         | *-aarch64-apple-darwin.tar.gz | *-x86_64-pc-windows-msvc.zip) archives+=("$name") ;;

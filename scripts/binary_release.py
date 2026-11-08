@@ -153,7 +153,7 @@ _MACHO_LOAD_LIBRARY = frozenset({0xC, 0x80000018, 0x8000001F, 0x20, 0x80000023})
 _MACHO_LOAD_DYLINKER = 0xE
 _MACHO_REFUSED = {0x8000001C: "adds a run-path search path",
                   0x27: "sets dyld environment variables"}
-_NEEDED =re.compile(r"NeededLibraries \[\n(?P<names>(?:[^\]\n]*\n)*?)\]", re.MULTILINE)
+_NEEDED = re.compile(r"NeededLibraries \[\n(?P<names>(?:[^\]\n]*\n)*?)\]", re.MULTILINE)
 # A runner's checkout and its temporary directory: the workflows pass paths
 # under both, and build_binary.sh passes the checkout above its own directory.
 # A consumer may also build into a CARGO_TARGET_DIR outside both.

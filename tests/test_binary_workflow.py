@@ -640,6 +640,18 @@ class BinaryCanaryAuditTests(unittest.TestCase):
                 self.assertNotEqual(0, self.audit(case).returncode)
                 self.assertFalse((self.root / "audit-calls").exists())
 
+    def test_a_last_sha256sums_line_without_a_newline_is_read(self) -> None:
+        sums = self.release / "SHA256SUMS"
+        lines = sums.read_text(encoding="utf-8").splitlines()
+        linux = [line for line in lines if line.endswith("-x86_64-unknown-linux-musl.tar.gz")]
+        sums.write_text("\n".join([*(line for line in lines if line not in linux), *linux]),
+                        encoding="utf-8", newline="\n")
+        result = self.audit()
+        self.assertEqual(0, result.returncode, result.stderr)
+        archive = self.extracted / "example-1.2.3-x86_64-unknown-linux-musl.tar.gz"
+        self.assertIn(f"{archive / 'example-helper'}\n",
+                      (self.root / "audit-calls").read_text(encoding="utf-8"))
+
     def test_an_archive_without_an_executable_fails(self) -> None:
         self.archive("example-1.2.3-aarch64-apple-darwin.tar.gz",
                      {"LICENSE": b"licence\n", "README.md": b"# example\n"})
