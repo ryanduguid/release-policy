@@ -20,14 +20,14 @@ release-policy is a set of reusable GitHub Actions workflows for repository main
 A consumer calls one with `uses:`, pinned to a full commit SHA of this repository. Before adopting, check 3 limits:
 
 - **PyPI:** PyPI cannot name a reusable workflow as a Trusted Publisher ([pypi/warehouse#11096](https://github.com/pypi/warehouse/issues/11096)), so the [publish step](docs/pypi-publishing.md) runs in the consumer, not here.
-- **Targets:** `release-binary.yml` builds x86_64 Linux and Windows only. [Alternatives](#alternatives) says when another tool fits better.
+- **Targets:** `release-binary.yml` builds Linux (x86_64 and arm64, static musl), macOS arm64 and Windows x86_64 only; Intel macOS is not built. [Alternatives](#alternatives) says when another tool fits better.
 - **SLSA:** The release workflows are designed to support SLSA Build Level 3, but no audit has shown that a release reaches it. [SLSA Build Level](docs/guarantees-and-evidence.md#slsa-build-level) says what is unverified and why verification needs `--signer-workflow`.
 
 | Workflow | Use it to | Guide |
 | --- | --- | --- |
 | `release-python.yml` | Build, attest and hand a Python package to PyPI | [Packaged Python](docs/python-consumers.md) |
 | `release-archive.yml` | Publish a checksummed, attested source archive | [Source archives](docs/archive-consumers.md) |
-| `release-binary.yml` | Build and publish Linux and Windows Rust executables | [Rust binaries](docs/binary-consumers.md) |
+| `release-binary.yml` | Build and publish Linux, macOS arm64 and Windows Rust executables | [Rust binaries](docs/binary-consumers.md) |
 | `release-skills.yml`, `verify-skills.yml` | Verify and release an agent skill pack | [Skill verification and releases](docs/skill-consumers.md) |
 | `virustotal-release.yml` | Scan a release's assets with VirusTotal | [VirusTotal release scans](docs/virustotal-consumers.md) |
 | `attribution-policy.yml` | Fail PR text and commits that carry AI attribution credits | [Attribution checks](docs/attribution-consumers.md) |
@@ -107,7 +107,7 @@ To run that audit on demand, dispatch CI with `live-canary-audit` selected. The 
 
 ## Alternatives
 
-release-policy fits maintainers who want reusable workflows pinned to a commit SHA, with the weight on release gates, attestations and recorded canaries. Use another tool if you want installers, Homebrew publishing or binaries beyond x86_64 Linux and Windows. As read on 5 November 2026:
+release-policy fits maintainers who want reusable workflows pinned to a commit SHA, with the weight on release gates, attestations and recorded canaries. Use another tool if you want installers, Homebrew publishing or binaries beyond Linux, macOS arm64 and Windows x86_64, such as Intel macOS. As read on 5 November 2026:
 
 - [dist](https://github.com/axodotdev/cargo-dist) (formerly cargo-dist) builds binaries, makes tarballs and installers, and can publish Homebrew formulae to your own tap.
 - [GoReleaser](https://goreleaser.com/) builds and releases Go, Rust, TypeScript, Python and Zig projects for multiple platforms and architectures, and can publish to package managers including Homebrew, Scoop and Winget.

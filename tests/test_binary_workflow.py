@@ -213,13 +213,17 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         linkage = self.step(admit, "Require each admitted executable's linkage")
         self.assertIn('"$GITHUB_WORKSPACE/policy/scripts/admitted_linkage.sh"', linkage)
         self.assertIn('"$RUNNER_TEMP/extracted" "$BINARY" "${targets[@]}"', linkage)
+        stage = self.step(admit, "Stage each target's executables for its SBOM")
+        self.assertIn('cp "$RUNNER_TEMP/extracted/$target/$name$suffix" "$RUNNER_TEMP/sbom/$target/"\n',
+                      stage)
         self.assertIn("syft-version: v1.51.0",
                       self.step(admit, "Generate an SPDX SBOM for the source ZIP archive"))
         for target, _, label in TARGETS:
             with self.subTest(target=target):
                 sbom = self.step(admit, f"Generate the {label} binary's SPDX SBOM")
-                # The whole admitted directory, so every executable is described.
-                self.assertIn(f"path: ${{{{ runner.temp }}}}/extracted/{target}\n", sbom)
+                # The target's executables alone: a data file such as a lock file
+                # in the admitted directory would add packages it does not ship.
+                self.assertIn(f"path: ${{{{ runner.temp }}}}/sbom/{target}\n", sbom)
                 self.assertIn(f"-{target}.spdx.json\n", sbom)
                 self.assertIn("syft-version: v1.51.0", sbom)
         self.assert_in_order(
@@ -228,6 +232,7 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
             "Generate an SPDX SBOM for the source ZIP archive",
             "Validate and admit each target's archive",
             "Require each admitted executable's linkage",
+            "Stage each target's executables for its SBOM",
             *(f"Generate the {label} binary's SPDX SBOM" for _, _, label in TARGETS),
             "Require each binary SBOM to list the package",
             "Install the pinned cargo-audit",
