@@ -662,6 +662,10 @@ class CheckTests(Fixture):
     def test_a_macos_executable_loads_only_libraries_macos_ships(self) -> None:
         self.assertEqual(binary_release.macho_linkage(macho_header(2, *MACOS_SYSTEM), MACOS_ARM64),
                          MACOS_SYSTEM)
+        # A command that names no library, here LC_UUID, is passed over.
+        uuid = struct.pack("<II16s", 0x1B, 24, bytes(range(16)))
+        self.assertEqual(binary_release.macho_linkage(
+            macho_header(2, *MACOS_SYSTEM, extra=(uuid,)), MACOS_ARM64), MACOS_SYSTEM)
         for name in ("/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib", "/usr/local/lib/libz.dylib",
                      "@rpath/libexample.dylib", "@executable_path/libexample.dylib",
                      "@loader_path/../lib/libexample.dylib", "/usr/lib/../local/lib/libz.dylib",
