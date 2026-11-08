@@ -491,14 +491,17 @@ case "$1 $2" in
       shift
     done
     for pattern in "${patterns[@]}"; do cp "$FAKE_RELEASE/$pattern" "$dir/"; done ;;
-  "attestation verify") [ "$FAKE_CASE" != unsigned ] ;;
+  "attestation verify")
+    [ "$FAKE_CASE" != unsigned ] && { [ "$FAKE_CASE" != unsigned-sums ] || [ "$3" != SHA256SUMS ]; } ;;
   *) exit 99 ;;
 esac
 """
-CANARY = {
-    "current_policy_sha": "1" * 40, "family": "binary",
-    "evidence": {"head_sha": "3" * 40, "policy_sha": "2" * 40, "ref": "v1.2.3",
-                 "run_id": 123, "started_at": "2026-10-28T21:33:02Z"},
+EVIDENCE: dict[str, object] = {
+    "head_sha": "3" * 40, "policy_sha": "2" * 40, "ref": "v1.2.3", "run_id": 123,
+    "started_at": "2026-10-28T21:33:02Z",
+}
+CANARY: dict[str, object] = {
+    "current_policy_sha": "1" * 40, "family": "binary", "evidence": EVIDENCE,
     "policy_workflow": ".github/workflows/release-binary.yml",
     "repository": "ryanduguid/example", "workflow_path": ".github/workflows/release.yml",
 }
@@ -530,9 +533,7 @@ class BinaryCanaryAuditTests(unittest.TestCase):
         self.archive("example-1.2.3-aarch64-apple-darwin.tar.gz", {"example": macho, **documents})
         self.archive("example-1.2.3-x86_64-pc-windows-msvc.zip", {"example.exe": pe, **documents})
         self.archive("example-1.2.3.tar.gz", {"src.rs": elf})
-        sums = "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
-                       for path in sorted(self.release.iterdir()))
-        (self.release / "SHA256SUMS").write_text(sums, encoding="utf-8", newline="\n")
+        self.write_sums()
         (self.release / "example-1.2.3.intoto.jsonl").write_text("{}\n", encoding="utf-8")
         self.manifest = self.root / "canaries.json"
         self.write_manifest([CANARY, {**CANARY, "family": "python",
@@ -559,6 +560,12 @@ class BinaryCanaryAuditTests(unittest.TestCase):
                 info = tarfile.TarInfo(member)
                 info.size, info.mode = len(data), 0o755
                 opened.addfile(info, io.BytesIO(data))
+
+    def write_sums(self) -> None:
+        sums = "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
+                       for path in sorted(self.release.iterdir())
+                       if path.name.endswith((".tar.gz", ".zip")))
+        (self.release / "SHA256SUMS").write_text(sums, encoding="utf-8", newline="\n")
 
     def write_manifest(self, families: list[dict[str, object]]) -> None:
         self.manifest.write_text(json.dumps({"families": families, "schema": 1}),
@@ -588,7 +595,9 @@ class BinaryCanaryAuditTests(unittest.TestCase):
         self.assertEqual("release view v1.2.3 --repo ryanduguid/example --json assets "
                          "--jq .assets[].name", calls[0])
         verifies = [call for call in calls if call.startswith("attestation verify ")]
-        self.assertEqual(3, len(verifies))
+        # SHA256SUMS first, since its lines name the archives, then each archive.
+        self.assertEqual(4, len(verifies))
+        self.assertTrue(verifies[0].startswith("attestation verify SHA256SUMS "), verifies[0])
         for call in verifies:
             self.assertIn(
                 " --repo ryanduguid/example --bundle example-1.2.3.intoto.jsonl"
@@ -613,6 +622,45 @@ class BinaryCanaryAuditTests(unittest.TestCase):
                 shutil.rmtree(self.root / "work", ignore_errors=True)
                 self.assertNotEqual(0, self.audit(case).returncode)
                 self.assertFalse((self.root / "audit-calls").exists())
+
+    def test_the_archives_are_those_the_signed_sha256sums_lists(self) -> None:
+        # The release's asset listing is not signed, so it cannot drop an archive.
+        for case, damage in (
+            ("unsigned-sums", lambda: None),
+            ("clean", lambda: (self.release / "example-1.2.3-aarch64-apple-darwin.tar.gz").unlink()),
+        ):
+            with self.subTest(case=case):
+                damage()
+                shutil.rmtree(self.root / "work", ignore_errors=True)
+                self.assertNotEqual(0, self.audit(case).returncode)
+                self.assertFalse((self.root / "audit-calls").exists())
+
+    def test_an_archive_without_an_executable_fails(self) -> None:
+        self.archive("example-1.2.3-aarch64-apple-darwin.tar.gz",
+                     {"LICENSE": b"licence\n", "README.md": b"# example\n"})
+        self.write_sums()
+        result = self.audit()
+        self.assertEqual(1, result.returncode)
+        self.assertIn("no executable in example-1.2.3-aarch64-apple-darwin.tar.gz", result.stderr)
+        self.assertFalse((self.root / "audit-calls").exists())
+
+    def test_a_malformed_canary_entry_fails_before_github_is_asked(self) -> None:
+        evidence = EVIDENCE
+        for name, entry in (
+            ("no policy digest", {**CANARY, "evidence": {
+                key: value for key, value in evidence.items() if key != "policy_sha"}}),
+            ("empty source digest", {**CANARY, "evidence": {**evidence, "head_sha": ""}}),
+            ("short source digest", {**CANARY, "evidence": {**evidence, "head_sha": "3" * 39}}),
+            ("tag not a version", {**CANARY, "evidence": {**evidence, "ref": "main"}}),
+            ("repository not owner/name", {**CANARY, "repository": "example"}),
+        ):
+            with self.subTest(name):
+                self.write_manifest([entry])
+                shutil.rmtree(self.root / "work", ignore_errors=True)
+                result = self.audit()
+                self.assertEqual(1, result.returncode)
+                self.assertIn("malformed binary canary", result.stderr)
+                self.assertFalse((self.root / "gh-calls").exists())
 
     def test_a_manifest_or_release_without_a_binary_canary_fails(self) -> None:
         self.write_manifest([{**CANARY, "family": "python"}])
