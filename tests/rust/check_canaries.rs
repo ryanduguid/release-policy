@@ -2332,6 +2332,7 @@ fn unrelated() -> Value {
 
 /// The reads of a pin that a history rewrite took off main; `tags: None` fails.
 struct Rewrite {
+    failed_read: Option<String>,
     ruleset: Value,
     tags: Option<Value>,
     tag_status: Value,
@@ -2342,6 +2343,7 @@ struct Rewrite {
 
 fn rewrite() -> Rewrite {
     Rewrite {
+        failed_read: None,
         ruleset: ruleset(json!({"include": ["refs/tags/v*"], "exclude": []})),
         tags: Some(json!([{"name": "v0.3.0", "commit": {"sha": TAG_SHA}}])),
         tag_status: json!("behind"),
@@ -2355,7 +2357,9 @@ fn rewritten(answers: Rewrite) -> (CheckResult, Vec<String>) {
     let history_page = format!("{POLICY}/commits?sha=main&per_page=100&page=");
     let mut fake = Fake {
         json: move |endpoint: &str| {
-            if endpoint == format!("{POLICY}/compare/main...{SHA}") {
+            if answers.failed_read.as_deref() == Some(endpoint) {
+                Reply::Fail("HTTP 502", None)
+            } else if endpoint == format!("{POLICY}/compare/main...{SHA}") {
                 match &answers.main_compare {
                     Ok(value) => body(value.clone()),
                     Err(message) => Reply::Fail(message, None),
@@ -2409,6 +2413,32 @@ fn a_locked_tag_admits_a_rewritten_pin_whose_tree_main_kept() {
     assert_eq!(result.notices, vec![admitted()]);
     assert!(requests.contains(&format!("{POLICY}/rulesets?targets=tag&per_page=100")));
     assert!(requests.contains(&format!("{POLICY}/compare/{TAG_SHA}...{SHA}")));
+}
+
+#[test]
+fn an_unreadable_admission_dependency_refuses_the_pin_and_stops_the_search() {
+    for path in [
+        format!("compare/{TAG_SHA}...{SHA}"),
+        format!("git/commits/{SHA}"),
+        "commits?sha=main&per_page=100&page=1".to_owned(),
+    ] {
+        let endpoint = format!("{POLICY}/{path}");
+        let (result, requests) = rewritten(Rewrite {
+            failed_read: Some(endpoint.clone()),
+            ..rewrite()
+        });
+        assert_eq!(
+            result.errors,
+            vec![format!(
+                "python (ryanduguid/example): current pin {SHA} is not reachable from release-policy main (compare status 'diverged'), and no locked release tag admits it: could not read release-policy tags or history: HTTP 502"
+            )]
+        );
+        assert!(result.notices.is_empty());
+        assert_eq!(
+            requests.iter().rfind(|request| request.starts_with(POLICY)),
+            Some(&endpoint)
+        );
+    }
 }
 
 #[test]

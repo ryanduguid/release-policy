@@ -91,6 +91,32 @@ fn unbuffered_stdout_fails_at_the_print() {
 }
 
 #[test]
+fn unbuffered_redirected_stdout_keeps_the_complete_output() {
+    let directory = support::tempdir();
+    let output = support::cli_env(
+        directory.path(),
+        &[
+            "python-release",
+            "tag",
+            "--tag",
+            "example/v1.2.3",
+            "--tag-prefix",
+            "example",
+            "--format",
+            "lines",
+        ],
+        "",
+        &[("PYTHONUNBUFFERED", "1")],
+    );
+    assert_eq!(output.code, 0, "{}", output.stderr);
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        output.stdout,
+        "1.2.3\nv1.2.3\nexample/v1.2.3\nexample-v1.2.3\n"
+    );
+}
+
+#[test]
 fn an_unwritable_diagnostic_loses_the_original_code() {
     let bad_tag = [
         "python-release",
@@ -169,4 +195,83 @@ fn a_closed_stdout_prints_nothing() {
             );
         }
     }
+}
+
+/// A terminal can stay open yet refuse a nonblocking write while output is stopped.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_terminal_write_failure_keeps_the_buffered_shutdown_status() {
+    let output = Command::new("python3")
+        .args([
+            "-c",
+            r#"import fcntl, os, pty, subprocess, sys, termios
+binary = sys.argv[1]
+for args, broken_stdout in [(['--help'], True), (['--bogus'], False)]:
+    master, slave = pty.openpty()
+    try:
+        fcntl.fcntl(slave, fcntl.F_SETFL, os.O_NONBLOCK)
+        termios.tcflow(slave, termios.TCOOFF)
+        env = dict(os.environ)
+        env.pop('PYTHONUNBUFFERED', None)
+        result = subprocess.run([binary, *args],
+            stdout=slave if broken_stdout else subprocess.PIPE,
+            stderr=subprocess.PIPE if broken_stdout else slave,
+            env=env, timeout=10)
+        assert result.returncode == 120, (args, result)
+        if broken_stdout:
+            assert result.stderr == b'Exception ignored while flushing sys.stdout:\nBlockingIOError: [Errno 11] write could not complete without blocking\n', result
+        else:
+            assert result.stdout == b'', result
+    finally:
+        os.close(slave)
+        os.close(master)
+"#,
+            env!("CARGO_BIN_EXE_release-policy"),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_terminal_receives_every_line_of_buffered_stdout() {
+    let output = Command::new("python3")
+        .args([
+            "-c",
+            r#"import errno, os, pty, select, subprocess, sys
+master, slave = pty.openpty()
+try:
+    env = dict(os.environ)
+    env.pop('PYTHONUNBUFFERED', None)
+    result = subprocess.run([sys.argv[1], 'python-release', 'tag',
+        '--tag', 'example/v1.2.3', '--tag-prefix', 'example', '--format', 'lines'],
+        stdout=slave, stderr=subprocess.PIPE, env=env, timeout=10)
+    assert result.returncode == 0, result
+    assert result.stderr == b'', result
+    os.close(slave)
+    slave = None
+    content = b''
+    while True:
+        assert select.select([master], [], [], 10)[0], 'terminal read timed out'
+        try:
+            chunk = os.read(master, 4096)
+        except OSError as error:
+            if error.errno == errno.EIO:
+                break
+            raise
+        if not chunk:
+            break
+        content += chunk
+    assert content.replace(b'\r\n', b'\n') == b'1.2.3\nv1.2.3\nexample/v1.2.3\nexample-v1.2.3\n', content
+finally:
+    if slave is not None:
+        os.close(slave)
+    os.close(master)
+"#,
+            env!("CARGO_BIN_EXE_release-policy"),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
 }

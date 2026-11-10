@@ -220,9 +220,9 @@ pub fn parse_index(document: &Json) -> Result<Vec<Review>> {
     if !field(root, "schema").py_eq(&Json::Int(1.into())) {
         return Err("review index schema must be 1".into());
     }
-    let Json::Array(entries) = field(root, "reviews") else {
-        return Err("review index reviews must be a list".into());
-    };
+    let entries = field(root, "reviews")
+        .as_array()
+        .ok_or("review index reviews must be a list")?;
     let mut reviews = Vec::new();
     let mut seen: Vec<String> = Vec::new();
     for (position, raw_entry) in entries.iter().enumerate() {
@@ -859,9 +859,10 @@ pub fn check_known_unknowns(
 
 /// Index a document parse_index has already accepted by review id.
 fn entries_by_id(document: &Json) -> Vec<(&str, &Json)> {
-    let Some(Json::Array(entries)) = document.get("reviews") else {
-        unreachable!("parse_index accepted the document")
-    };
+    let entries = document
+        .get("reviews")
+        .and_then(Json::as_array)
+        .expect("parse_index accepted the document");
     entries
         .iter()
         .map(|e| (e.get("id").and_then(Json::as_str).unwrap(), e))
