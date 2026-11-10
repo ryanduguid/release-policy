@@ -134,6 +134,7 @@ make_repo
 run_case  "clean tree accepted"          gate_clean_tree
 echo dirty >> RELEASE_NOTES.md
 expect_fail "dirty tree rejected"        gate_clean_tree
+GIT_DIR="$PWD/missing" expect_fail "a failed git status fails" gate_clean_tree
 
 # --- API gates via stub gh ---
 make_repo
@@ -156,7 +157,9 @@ case "$*" in
   *"repos/ryanduguid/example/compare/${STUB_COMPARE_RANGE:-none}")
     printf '%s\n' "${STUB_COMPARE:?}"
     [[ -z "${STUB_COMPARE_FAIL:-}" ]] || exit 1 ;;
-  *releases*)           printf '%s'   "${STUB_RELEASE_IDS:-}" ;;
+  *releases*)
+    printf '%s' "${STUB_RELEASE_IDS:-}"
+    [[ -z "${STUB_RELEASE_FAIL:-}" ]] || exit 1 ;;
   *) echo "stub gh: unexpected args: $*" >&2; exit 64 ;;
 esac
 STUB
@@ -295,6 +298,8 @@ export STUB_RELEASE_IDS=""
 run_case  "no existing release"           gate_no_existing_release "v1.2.3" "ryanduguid/example"
 export STUB_RELEASE_IDS="12345"
 expect_fail "existing release rejected"   gate_no_existing_release "v1.2.3" "ryanduguid/example"
+STUB_RELEASE_IDS="" STUB_RELEASE_FAIL=1 expect_fail "a failed release listing fails" \
+  gate_no_existing_release "v1.2.3" "ryanduguid/example"
 unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
 
 # --- name/version derivation ---
@@ -522,6 +527,53 @@ GITHUB_OUTPUT="$moved_archive_out" expect_fail "archive entrypoint fails after a
     "packages/example-toolkit" "example-toolkit"
 run_case "a refused archive entrypoint writes no outputs" test ! -s "$moved_archive_out"
 unset GH STUB_MAIN_SHA STUB_RELEASE_IDS STUB_COMPARE STUB_COMPARE_RANGE
+
+# --- entrypoints stop at a failed gate when called as a condition ---
+# expect_fail calls each entrypoint inside `if`, where Bash ignores set -e.
+make_repo
+cat > pyproject.toml <<'EOF'
+[project]
+name = "demo-pkg"
+version = "1.2.3"
+EOF
+printf '1.2.3\n' > VERSION
+git add -A && git commit --quiet -m "release metadata"
+git tag -a v1.2.3 -m "release v1.2.3"
+head_sha="$(git rev-parse HEAD)"
+export GH="$stub_dir/gh" STUB_MAIN_SHA="$head_sha" STUB_RELEASE_IDS=""
+python_gates() {
+  run_release_gates "v1.2.3" "$head_sha" "ryanduguid/example" "pyproject" "pyproject.toml"
+}
+archive_gates() {
+  run_archive_release_gates "v1.2.3" "$head_sha" "ryanduguid/example" "demo-pkg" "VERSION"
+}
+run_case "Python entrypoint passes the gate fixture" python_gates
+run_case "archive entrypoint passes the gate fixture" archive_gates
+STUB_RELEASE_IDS="12345" expect_fail "Python entrypoint stops at an existing release" python_gates
+STUB_RELEASE_IDS="12345" expect_fail "archive entrypoint stops at an existing release" archive_gates
+STUB_RELEASE_FAIL=1 expect_fail "Python entrypoint stops at a failed release listing" python_gates
+STUB_RELEASE_FAIL=1 expect_fail "archive entrypoint stops at a failed release listing" archive_gates
+# Main is stubbed at the earlier commit too, so only the tag commit gate differs.
+parent_sha="$(git rev-parse HEAD~1)"
+head_sha="$parent_sha" STUB_MAIN_SHA="$parent_sha" \
+  expect_fail "Python entrypoint stops at a tag on another commit" python_gates
+head_sha="$parent_sha" STUB_MAIN_SHA="$parent_sha" \
+  expect_fail "archive entrypoint stops at a tag on another commit" archive_gates
+git tag -f v1.2.3 >/dev/null   # lightweight
+expect_fail "Python entrypoint stops at a lightweight tag" python_gates
+expect_fail "archive entrypoint stops at a lightweight tag" archive_gates
+git tag -f -a v1.2.3 -m "release v1.2.3" >/dev/null
+printf 'dirty\n' >> RELEASE_NOTES.md
+expect_fail "Python entrypoint stops at a dirty tree" python_gates
+expect_fail "archive entrypoint stops at a dirty tree" archive_gates
+printf '# v9.9.9\n\nWrong header.\n' > RELEASE_NOTES.md
+git commit --quiet -am "wrong notes header"
+git tag -f -a v1.2.3 -m "release v1.2.3" >/dev/null
+head_sha="$(git rev-parse HEAD)"
+export STUB_MAIN_SHA="$head_sha"
+expect_fail "Python entrypoint stops at a wrong notes header" python_gates
+expect_fail "archive entrypoint stops at a wrong notes header" archive_gates
+unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
 
 # Windows CI runs each publication family on its own runner and sets this.
 if [[ "${GATES_SKIP_PUBLICATION:-0}" != 1 ]]; then

@@ -114,7 +114,12 @@ gate_notes_header() {
 }
 
 gate_clean_tree() {
-  if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  local changes
+  changes="$(git status --porcelain --untracked-files=no)" || {
+    echo "gate_clean_tree: could not read the working tree status" >&2
+    return 1
+  }
+  if [[ -n "$changes" ]]; then
     echo "gate_clean_tree: working tree has tracked modifications" >&2
     return 1
   fi
@@ -207,7 +212,10 @@ gate_no_existing_release() {
   local tag="$1" repo="$2" ids
   ids="$("$GH" api --paginate -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$repo/releases?per_page=100" \
-    --jq ".[] | select(.tag_name == \"$tag\") | .id")"
+    --jq ".[] | select(.tag_name == \"$tag\") | .id")" || {
+    echo "gate_no_existing_release: could not list releases for $repo" >&2
+    return 1
+  }
   if [[ -n "$ids" ]]; then
     echo "gate_no_existing_release: a release for $tag already exists; refusing to replace it" >&2
     return 1
@@ -283,16 +291,16 @@ run_release_gates() {
   { read -r source_directory; read -r tag_prefix; } < <(
     validate_release_inputs "$supplied_source" "$supplied_prefix"
   )
-  gate_tag_format "$tag" "$tag_prefix"
+  gate_tag_format "$tag" "$tag_prefix" || return 1
   { read -r tag_version; read -r version_tag; read -r full_tag; read -r artifact_tag; } < <(
     derive_release_tag "$tag" "$tag_prefix"
   )
-  gate_annotated_tag "$tag"
-  gate_tag_commit_matches "$tag" "$head_sha"
+  gate_annotated_tag "$tag" || return 1
+  gate_tag_commit_matches "$tag" "$head_sha" || return 1
   gate_main_contains "$head_sha" "$repo" "$source_directory" || return 1
-  gate_notes_header "$version_tag" "$source_directory"
-  gate_clean_tree
-  gate_no_existing_release "$tag" "$repo"
+  gate_notes_header "$version_tag" "$source_directory" || return 1
+  gate_clean_tree || return 1
+  gate_no_existing_release "$tag" "$repo" || return 1
   { read -r stem; read -r version; } < <(
     derive_name_version "$version_parser" "$version_file" "$source_directory"
   )
@@ -326,16 +334,16 @@ run_archive_release_gates() {
   { read -r source_directory; read -r tag_prefix; } < <(
     validate_release_inputs "$supplied_source" "$supplied_prefix"
   )
-  gate_tag_format "$tag" "$tag_prefix"
+  gate_tag_format "$tag" "$tag_prefix" || return 1
   { read -r tag_version; read -r version_tag; read -r full_tag; read -r artifact_tag; } < <(
     derive_release_tag "$tag" "$tag_prefix"
   )
-  gate_annotated_tag "$tag"
-  gate_tag_commit_matches "$tag" "$head_sha"
+  gate_annotated_tag "$tag" || return 1
+  gate_tag_commit_matches "$tag" "$head_sha" || return 1
   gate_main_contains "$head_sha" "$repo" "$source_directory" || return 1
-  gate_notes_header "$version_tag" "$source_directory"
-  gate_clean_tree
-  gate_no_existing_release "$tag" "$repo"
+  gate_notes_header "$version_tag" "$source_directory" || return 1
+  gate_clean_tree || return 1
+  gate_no_existing_release "$tag" "$repo" || return 1
   { read -r stem; read -r version; } < <(
     derive_archive_metadata "$artifact_stem" "$version_file" "$source_directory"
   )
