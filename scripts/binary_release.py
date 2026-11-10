@@ -153,6 +153,7 @@ _MACHO_LOAD_LIBRARY = frozenset({0xC, 0x80000018, 0x8000001F, 0x20, 0x80000023})
 _MACHO_LOAD_DYLINKER = 0xE
 _MACHO_REFUSED = {0x8000001C: "adds a run-path search path",
                   0x27: "sets dyld environment variables"}
+_MACHO_MALFORMED = "malformed Mach-O load commands"
 _NEEDED = re.compile(r"NeededLibraries \[\n(?P<names>(?:[^\]\n]*\n)*?)\]", re.MULTILINE)
 # A runner's checkout and its temporary directory: the workflows pass paths
 # under both, and build_binary.sh passes the checkout above its own directory.
@@ -460,6 +461,34 @@ def needed_libraries(readobj_output: str) -> tuple[str, ...]:
     return tuple(line.strip() for line in match.group("names").splitlines() if line.strip())
 
 
+def _macho_load_commands(executable: bytes) -> tuple[int, int]:
+    """The load command count of a thin arm64 Mach-O executable, and where its commands end."""
+    if executable[:4] != _MACHO_MAGIC_64:
+        raise ValueError("not a thin 64-bit little-endian Mach-O file")
+    if len(executable) < 32:
+        raise ValueError(_MACHO_MALFORMED)
+    _, cputype, _, filetype, count, size = struct.unpack_from("<6I", executable)
+    if cputype != _MACHO_ARM64:
+        raise ValueError("not an arm64 Mach-O executable")
+    if filetype != _MACHO_EXECUTE:
+        raise ValueError("not a Mach-O executable file type")
+    if 32 + size > len(executable):
+        raise ValueError(_MACHO_MALFORMED)
+    return count, 32 + size
+
+
+def _macho_path(executable: bytes, offset: int, length: int) -> str:
+    """The path a library or dylinker command names, at the offset its third field holds."""
+    name_at = struct.unpack_from("<I", executable, offset + 8)[0] if length >= 12 else 0
+    name, terminated, _ = executable[offset + name_at:offset + length].partition(b"\0")
+    if not 12 <= name_at < length or not terminated:
+        raise ValueError(_MACHO_MALFORMED)
+    try:
+        return name.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError(_MACHO_MALFORMED) from None
+
+
 def macho_linkage(executable: bytes, triple: str) -> tuple[str, ...]:
     """The libraries a thin arm64 Mach-O executable loads, once each is one macOS ships.
 
@@ -468,45 +497,26 @@ def macho_linkage(executable: bytes, triple: str) -> tuple[str, ...]:
     """
     if not _target(triple).object_format.startswith("Mach-O"):
         raise ValueError(f"only a macOS executable's linkage is read from it, not {triple}'s")
-    if executable[:4] != _MACHO_MAGIC_64:
-        raise ValueError("not a thin 64-bit little-endian Mach-O file")
-    malformed = ValueError("malformed Mach-O load commands")
-    if len(executable) < 32:
-        raise malformed
-    _, cputype, _, filetype, count, size = struct.unpack_from("<6I", executable)
-    if cputype != _MACHO_ARM64:
-        raise ValueError("not an arm64 Mach-O executable")
-    if filetype != _MACHO_EXECUTE:
-        raise ValueError("not a Mach-O executable file type")
-    end, offset, needed = 32 + size, 32, []
-    if end > len(executable):
-        raise malformed
+    count, end = _macho_load_commands(executable)
+    offset, needed = 32, []
     for _ in range(count):
         if offset + 8 > end:
-            raise malformed
+            raise ValueError(_MACHO_MALFORMED)
         command, length = struct.unpack_from("<2I", executable, offset)
         if length < 8 or offset + length > end:
-            raise malformed
+            raise ValueError(_MACHO_MALFORMED)
         if command in _MACHO_REFUSED:
             raise ValueError(f"the executable {_MACHO_REFUSED[command]}")
-        if command in _MACHO_LOAD_LIBRARY or command == _MACHO_LOAD_DYLINKER:
-            # Each of these commands names a path at the offset its third field holds.
-            name_at = struct.unpack_from("<I", executable, offset + 8)[0] if length >= 12 else 0
-            name, terminated, _ = executable[offset + name_at:offset + length].partition(b"\0")
-            if not 12 <= name_at < length or not terminated:
-                raise malformed
-            try:
-                text = name.decode("utf-8")
-            except UnicodeDecodeError:
-                raise malformed from None
-            if command != _MACHO_LOAD_DYLINKER:
-                needed.append(text)
-            elif text != "/usr/lib/dyld":
+        if command in _MACHO_LOAD_LIBRARY:
+            needed.append(_macho_path(executable, offset, length))
+        elif command == _MACHO_LOAD_DYLINKER:
+            text = _macho_path(executable, offset, length)
+            if text != "/usr/lib/dyld":
                 raise ValueError("the executable names a dynamic linker other than "
                                  f"/usr/lib/dyld: {text}")
         offset += length
     if offset != end:
-        raise malformed
+        raise ValueError(_MACHO_MALFORMED)
     foreign = [name for name in needed if not _MACOS_SYSTEM_LIBRARY.fullmatch(name)]
     if foreign:
         raise ValueError(f"loads libraries macOS does not ship: {foreign}")
