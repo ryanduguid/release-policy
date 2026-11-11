@@ -35,6 +35,13 @@ impl Json {
         }
     }
 
+    pub fn as_array(&self) -> Option<&[Json]> {
+        match self {
+            Json::Array(items) => Some(items),
+            _ => None,
+        }
+    }
+
     pub fn str_obj(value: &str) -> Json {
         Json::Str(value.to_string())
     }

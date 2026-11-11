@@ -180,24 +180,6 @@ pub fn load_terms(path: &Path) -> Result<Vec<Term>> {
 /// Every file under the supplied paths, in pathlib's order: deduplicated and
 /// sorted as `Path` objects compare, which on Windows ignores case.
 pub fn candidate_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
-    fn walk(path: &Path, out: &mut Vec<PathBuf>, ancestors: &mut BTreeSet<PathBuf>) -> Result<()> {
-        // Track ancestry to avoid cycles while collecting candidate paths.
-        let identity = absolute(path)?;
-        if !ancestors.insert(identity.clone()) {
-            return Ok(());
-        }
-        let entries = std::fs::read_dir(path).map_err(|e| io_error(e, path))?;
-        for entry in entries {
-            let child = entry.map_err(|e| io_error(e, path))?.path();
-            if child.is_file() {
-                out.push(child);
-            } else if child.is_dir() && !symlink(&child) {
-                walk(&child, out, ancestors)?;
-            }
-        }
-        ancestors.remove(&identity);
-        Ok(())
-    }
     let mut found = Vec::new();
     for supplied in paths {
         // Path() drops '.' components and repeated separators.
@@ -222,6 +204,25 @@ pub fn candidate_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
         .collect::<Vec<_>>();
     unique.sort_by_cached_key(|p| py::path_sort_key(p));
     Ok(unique)
+}
+
+fn walk(path: &Path, out: &mut Vec<PathBuf>, ancestors: &mut BTreeSet<PathBuf>) -> Result<()> {
+    // Track ancestry to avoid cycles while collecting candidate paths.
+    let identity = absolute(path)?;
+    if !ancestors.insert(identity.clone()) {
+        return Ok(());
+    }
+    let entries = std::fs::read_dir(path).map_err(|e| io_error(e, path))?;
+    for entry in entries {
+        let child = entry.map_err(|e| io_error(e, path))?.path();
+        if child.is_file() {
+            out.push(child);
+        } else if child.is_dir() && !symlink(&child) {
+            walk(&child, out, ancestors)?;
+        }
+    }
+    ancestors.remove(&identity);
+    Ok(())
 }
 
 fn glob(pattern: &str, path: &str) -> bool {
@@ -502,13 +503,9 @@ pub fn check_candidate(
             None
         };
         if let Some(text) = text {
-            checked.findings.extend(scan_text(
-                &text,
-                &py::as_posix(&path),
-                terms,
-                terms_label,
-                &STRUCTURAL_PATTERNS,
-            )?);
+            let path_label = py::as_posix(&path);
+            let findings = scan_text(&text, &path_label, terms, terms_label, &STRUCTURAL_PATTERNS)?;
+            checked.findings.extend(findings);
         } else {
             checked.unscanned.push(path);
         }
@@ -519,6 +516,19 @@ pub fn check_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn walking_a_current_ancestor_keeps_the_recursive_context_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("notes.md"), "candidate").unwrap();
+        let ancestor = absolute(directory.path()).unwrap();
+        let mut ancestors = BTreeSet::from([ancestor.clone()]);
+        let sentinel = PathBuf::from("already-found.md");
+        let mut found = vec![sentinel.clone()];
+        walk(&directory.path().join("."), &mut found, &mut ancestors).unwrap();
+        assert_eq!(found, [sentinel]);
+        assert_eq!(ancestors, BTreeSet::from([ancestor]));
+    }
 
     #[test]
     fn glob_matches_fnmatch_classes_and_literals() {

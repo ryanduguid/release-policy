@@ -676,6 +676,10 @@ pub fn path_sort_key(path: &Path) -> Vec<String> {
 pub fn resolve(path: &Path) -> PathBuf {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let resolved = std::fs::canonicalize(&absolute).unwrap_or(absolute);
+    without_verbatim_prefix(resolved)
+}
+
+fn without_verbatim_prefix(resolved: PathBuf) -> PathBuf {
     let text = resolved.to_string_lossy();
     if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
         PathBuf::from(format!(r"\\{rest}"))
@@ -886,6 +890,7 @@ mod tests {
             (1.5e300, "1.5e+300"),
             (123456789.123, "123456789.123"),
             (5e-324, "5e-324"),
+            (2f64.powi(-44), "5.684341886080802e-14"),
             (1.0, "1.0"),
         ] {
             assert_eq!(float_repr(value), expected);
@@ -1023,6 +1028,23 @@ mod tests {
         assert_eq!(oserror_str(&error, "f.txt", OsStyle::Native), "boom");
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn file_errors_use_the_c_runtime_errno_and_message() {
+        for (code, errno, message) in [
+            (4, 24, "Too many open files"),
+            (6, 9, "Bad file descriptor"),
+            (8, 12, "Not enough space"),
+            (80, 17, "File exists"),
+            (12345, 22, "Invalid argument"),
+        ] {
+            assert_eq!(
+                oserror_str(&io::Error::from_raw_os_error(code), "f.txt", OsStyle::Errno),
+                format!("[Errno {errno}] {message}: 'f.txt'")
+            );
+        }
+    }
+
     #[test]
     fn pypath_joins_anchors_parents_and_names_like_pathlib() {
         assert_eq!(PyPath::new("a/b/c.txt").name(), "c.txt");
@@ -1087,6 +1109,36 @@ mod tests {
     fn pypath_displays_through_the_formatter() {
         let path = PyPath::new("a/b");
         assert_eq!(format!("{path}"), path.display());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_rooted_join_keeps_the_windows_drive() {
+        assert_eq!(
+            PyPath::new(r"C:\base\nested").join(r"\other").display(),
+            r"C:\other"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn incomplete_unc_and_drive_relative_paths_keep_their_anchors() {
+        assert_eq!(PyPath::new(r"\\server").display(), r"\server");
+        assert_eq!(PyPath::new(r"C:relative").display(), r"C:relative");
+    }
+
+    #[test]
+    fn resolved_paths_drop_verbatim_drive_and_unc_prefixes() {
+        for (path, expected) in [
+            (r"\\?\C:\folder\file", r"C:\folder\file"),
+            (r"\\?\UNC\server\share\file", r"\\server\share\file"),
+            ("relative/file", "relative/file"),
+        ] {
+            assert_eq!(
+                without_verbatim_prefix(PathBuf::from(path)),
+                PathBuf::from(expected)
+            );
+        }
     }
 
     #[test]
@@ -1164,9 +1216,14 @@ mod tests {
         #[cfg(unix)]
         {
             let errno = if cfg!(target_os = "macos") { 63 } else { 36 };
+            let prefixes = [
+                format!("[Errno {errno}] File name too long"),
+                format!("[Errno {errno}] Filename too long"),
+            ];
             assert!(
-                error.starts_with(&format!("[Errno {errno}] File name too long"))
-                    || error.starts_with(&format!("[Errno {errno}] Filename too long")),
+                prefixes
+                    .iter()
+                    .any(|prefix| error.starts_with(prefix.as_str())),
                 "{error}"
             );
             assert!(parent.is_dir());
@@ -1178,19 +1235,10 @@ mod tests {
         // CPython 3.15's repr for doubles chosen to exercise ties between two
         // equally short spellings: bits in hex, then the repr.
         assert_eq!(float_repr(1.0 + 2f64.powi(-17)), "1.0000076293945312");
-        let wrong: Vec<String> = include_str!("../tests/data/float_repr.txt")
-            .lines()
-            .filter_map(|line| {
-                let (bits, expected) = line.split_once(' ').expect("bits and repr");
-                let actual = float_repr(f64::from_bits(u64::from_str_radix(bits, 16).unwrap()));
-                (actual != expected).then(|| format!("{bits}: python {expected}, rust {actual}"))
-            })
-            .collect();
-        assert!(
-            wrong.is_empty(),
-            "{} wrong: {:?}",
-            wrong.len(),
-            &wrong[..wrong.len().min(10)]
-        );
+        for line in include_str!("../tests/data/float_repr.txt").lines() {
+            let (bits, expected) = line.split_once(' ').expect("bits and repr");
+            let actual = float_repr(f64::from_bits(u64::from_str_radix(bits, 16).unwrap()));
+            assert_eq!(actual, expected, "{bits}");
+        }
     }
 }

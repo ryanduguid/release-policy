@@ -259,8 +259,8 @@ def workflow_modes(text: str) -> set[str] | None:
     tail = headers[0].split(":", 1)[1].strip()
     if not tail or tail.startswith("#"):
         body = block(lines, "on", 0)
-        if body is None:
-            return None
+        # The unique plain header above is exactly the header block() reads.
+        assert body is not None
         events: set[str] = set()
         for line in body:
             if not line.strip() or line.lstrip().startswith("#"):

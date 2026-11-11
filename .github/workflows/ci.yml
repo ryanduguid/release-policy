@@ -102,7 +102,7 @@ jobs:
           persist-credentials: false
 
       - name: Install the pinned cargo-audit
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: cargo-audit@0.22.2
           fallback: none
@@ -347,7 +347,7 @@ jobs:
         run: bash tests/test_determinism.sh
 
       - name: Install the release toolchain's uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "0.13.5"
           enable-cache: false
@@ -446,8 +446,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install the pinned cargo-llvm-cov
-        if: matrix.os == 'ubuntu-latest'
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: cargo-llvm-cov@0.9.1
           fallback: none
@@ -458,22 +457,32 @@ jobs:
       - name: Lint the CLI and its tests
         run: cargo clippy --locked --all-targets -- -D warnings
 
-      - name: Run the CLI tests
-        if: matrix.os != 'ubuntu-latest'
-        run: cargo test --locked
-
       # The floor is the measured line coverage, rounded down (92.15% on
       # 19 October 2026). Raise it with the tests, never lower it to pass.
       - name: Run the CLI tests with line coverage
-        if: matrix.os == 'ubuntu-latest'
-        run: cargo llvm-cov --locked --lcov --output-path coverage-rust.lcov --fail-under-lines 92
+        run: cargo llvm-cov --locked --lcov --output-path coverage-rust-${{ runner.os }}.lcov --fail-under-lines 92
+
+      - name: Use repository-relative coverage paths
+        shell: pwsh
+        run: |
+          $report = "coverage-rust-$env:RUNNER_OS.lcov"
+          $prefix = $env:GITHUB_WORKSPACE.Replace([IO.Path]::DirectorySeparatorChar, '/').TrimEnd('/') + '/'
+          $lines = Get-Content -LiteralPath $report | ForEach-Object {
+            if ($_.StartsWith('SF:')) {
+              $path = $_.Substring(3).Replace([IO.Path]::DirectorySeparatorChar, '/')
+              if (-not $path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Coverage source is outside the repository'
+              }
+              'SF:' + $path.Substring($prefix.Length)
+            } else { $_ }
+          }
+          $lines | Set-Content -LiteralPath $report -Encoding utf8
 
       - name: Keep the Rust coverage report for the Codecov upload
-        if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-rust
-          path: coverage-rust.lcov
+          name: coverage-rust-${{ runner.os }}
+          path: coverage-rust-${{ runner.os }}.lcov
           retention-days: 1
 
       # A second, release-profile compile that no CI step uses, so pull requests
@@ -524,7 +533,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install the pinned cargo-auditable
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: cargo-auditable@0.7.7
           fallback: none
@@ -726,11 +735,12 @@ jobs:
           name: coverage-codecov
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: coverage-rust
+          pattern: coverage-rust-*
+          merge-multiple: true
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           use_oidc: true
-          files: coverage-codecov.xml,coverage-rust.lcov
+          files: coverage-codecov.xml,coverage-rust-Linux.lcov,coverage-rust-Windows.lcov
           disable_search: true
           fail_ci_if_error: true
 
