@@ -181,6 +181,13 @@ class GateReaderTests(unittest.TestCase):
         with patch.object(checker, "git", side_effect=["new.yml", destination, source]), patch.object(checker, "base_workflow_paths", return_value=[".github/workflows/old.yml"]):
             self.assertEqual(checker.base_jobs(".github/workflows/new.yml", "replacement", workflow("  replacement:\n    name: protected\n")), {"existing", "original"})
 
+    def test_plain_event_headers_keep_their_readable_block(self):
+        for header in ("on:", "on: # comment", "'on':", '"on":'):
+            for body, expected in (("", None), ("\n  # invocation comment\n  workflow_call:\n    inputs: {}\n", {"callable"}),
+                                   ("\n  push:\n    branches: [main]\n", {"standalone"})):
+                with self.subTest(header=header, body=body):
+                    self.assertEqual(checker.workflow_modes(header + body), expected)
+
     def test_event_forms_and_unknown_namespaces(self):
         for events, expected in (("pull_request", {"standalone"}), ("[push, workflow_call]", {"standalone", "callable"}), ("\n  workflow_call:\n    inputs: {}", {"callable"}), ("*alias", None), ("{workflow_call: {}}", None)):
             with self.subTest(events=events):
