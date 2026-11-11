@@ -139,11 +139,10 @@ fn python_stdout(unbuffered: bool) -> Box<dyn Write + Send> {
     if terminal {
         return Box::new(std::io::LineWriter::new(stdout));
     }
-    if unbuffered {
-        let handle = std::os::windows::io::AsHandle::as_handle(&stdout).try_clone_to_owned();
-        if let Ok(handle) = handle {
-            return Box::new(std::fs::File::from(handle));
-        }
+    if unbuffered
+        && let Ok(handle) = std::os::windows::io::AsHandle::as_handle(&stdout).try_clone_to_owned()
+    {
+        return Box::new(std::fs::File::from(handle));
     }
     Box::new(std::io::BufWriter::with_capacity(BUFFER_SIZE, stdout))
 }
@@ -274,7 +273,14 @@ pub fn shutdown(code: i32) -> i32 {
         .unwrap_or_else(PoisonError::into_inner)
         .take();
     if let Err(error) = pending.map_or_else(|| stdout().flush(), Err) {
-        let (kind, message) = stream_error(&error);
+        let (kind, message) = match (error.kind(), error.raw_os_error()) {
+            // BufferedWriter reports an incomplete flush rather than strerror.
+            (std::io::ErrorKind::WouldBlock, Some(errno)) if !cfg!(windows) => (
+                "BlockingIOError",
+                format!("[Errno {errno}] write could not complete without blocking"),
+            ),
+            _ => stream_error(&error),
+        };
         let text = format!("Exception ignored while flushing sys.stdout:\n{kind}: {message}\n");
         let _ = write_stderr(&text_bytes(&text));
         code = 120;
@@ -422,6 +428,27 @@ mod tests {
 
     #[test]
     fn windows_errors_read_as_the_c_runtime_reported_them() {
+        for (code, kind, text) in [
+            (
+                2,
+                "FileNotFoundError",
+                "[Errno 2] No such file or directory",
+            ),
+            (4, "OSError", "[Errno 24] Too many open files"),
+            (10, "OSError", "[Errno 7] Arg list too long"),
+            (17, "OSError", "[Errno 18] Improper link"),
+            (80, "FileExistsError", "[Errno 17] File exists"),
+            (
+                89,
+                "BlockingIOError",
+                "[Errno 11] Resource temporarily unavailable",
+            ),
+            (128, "ChildProcessError", "[Errno 10] No child processes"),
+            (145, "OSError", "[Errno 41] Directory not empty"),
+            (1113, "OSError", "[Errno 42] Illegal byte sequence"),
+        ] {
+            assert_eq!(crt_error(code), (kind, text.into()), "Windows error {code}");
+        }
         assert_eq!(
             crt_error(232),
             ("OSError", "[Errno 22] Invalid argument".into())
@@ -457,9 +484,137 @@ mod tests {
     }
 
     #[test]
+    fn a_stream_error_without_an_os_code_keeps_its_message() {
+        assert_eq!(
+            stream_error(&std::io::Error::other("synthetic stream failure")),
+            ("OSError", "synthetic stream failure".into())
+        );
+    }
+
+    #[test]
     fn a_failed_terminal_usage_message_fails_again_at_exit() {
         usage_failed(std::io::Error::from_raw_os_error(232), false);
         assert_eq!(shutdown(2), if *UNBUFFERED { 2 } else { 120 });
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stdout_survives_descriptor_exhaustion() {
+        use std::io::BufRead;
+        use std::process::Stdio;
+
+        const CHILD: &str = "RELEASE_POLICY_TEST_EXHAUSTED_DESCRIPTORS";
+        if std::env::var_os(CHILD).is_none() {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "common::tests::stdout_survives_descriptor_exhaustion",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            assert!(
+                String::from_utf8(output.stdout)
+                    .unwrap()
+                    .contains("stdout survives")
+            );
+            return;
+        }
+
+        // Keep the descriptor limit local to this test process. The helper
+        // restores it before any assertion and before LLVM writes its profile.
+        let mut helper = Command::new("python3")
+            .args([
+                "-c",
+                r#"import os, resource, select, sys
+parent = os.getppid()
+original = resource.prlimit(parent, resource.RLIMIT_NOFILE)
+try:
+    resource.prlimit(parent, resource.RLIMIT_NOFILE, (0, original[1]))
+    print('ready', flush=True)
+    select.select([sys.stdin], [], [], 10)
+finally:
+    resource.prlimit(parent, resource.RLIMIT_NOFILE, original)
+"#,
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut ready = String::new();
+        let readiness =
+            std::io::BufReader::new(helper.stdout.take().unwrap()).read_line(&mut ready);
+        let written = {
+            let mut output = python_stdout(false);
+            output
+                .write_all(b"stdout survives\n")
+                .and_then(|()| output.flush())
+        };
+        // EOF also restores the limit if a write or readiness check failed.
+        drop(helper.stdin.take());
+        let restored = helper.wait().unwrap();
+        assert!(restored.success());
+        readiness.unwrap();
+        assert_eq!(ready, "ready\n");
+        written.unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stdout_wraps_a_hidden_windows_console() {
+        use std::io::IsTerminal;
+        use std::os::windows::process::CommandExt;
+
+        const CHILD: &str = "RELEASE_POLICY_TEST_CONSOLE";
+        const RECEIPT: &str = "RELEASE_POLICY_TEST_CONSOLE_RECEIPT";
+        if std::env::var_os(CHILD).is_some() {
+            assert!(std::io::stdout().is_terminal());
+            for unbuffered in [false, true] {
+                let mut output = python_stdout(unbuffered);
+                output.write_all("console \u{2713}\n".as_bytes()).unwrap();
+                output.flush().unwrap();
+            }
+            std::fs::write(
+                std::env::var_os(RECEIPT).unwrap(),
+                b"console writes flushed",
+            )
+            .unwrap();
+            return;
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("console.ps1");
+        let receipt = directory.path().join("console.txt");
+        std::fs::write(
+            &script,
+            r#"$ErrorActionPreference = 'Stop'
+$child = Start-Process -FilePath $args[0] -ArgumentList @('--exact', 'common::tests::stdout_wraps_a_hidden_windows_console', '--nocapture') -WindowStyle Hidden -PassThru
+if (-not $child.WaitForExit(10000)) {
+    $child.Kill($true)
+    throw 'Console test exceeded its deadline'
+}
+$child.Refresh()
+if (-not $child.HasExited -or $null -eq $child.ExitCode) {
+    throw 'Console test did not report an exit code'
+}
+exit $child.ExitCode
+"#,
+        )
+        .unwrap();
+        let output = Command::new("pwsh")
+            .args(["-NoProfile", "-NonInteractive", "-File"])
+            .arg(script)
+            .arg(std::env::current_exe().unwrap())
+            .env(CHILD, "1")
+            .env(RECEIPT, &receipt)
+            // Hide the launcher; Start-Process gives the child its own console.
+            .creation_flags(0x0800_0000)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(std::fs::read(receipt).unwrap(), b"console writes flushed");
     }
 
     #[test]

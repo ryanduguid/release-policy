@@ -649,10 +649,8 @@ pub fn write_candidate_inventory(
     };
     write_bytes(&directory.join(MANIFEST), &manifest_bytes(&inventory))?;
     expected.insert(MANIFEST.into());
-    write_bytes(
-        &directory.join(CHECKSUMS),
-        checksums(directory, &expected)?.as_bytes(),
-    )?;
+    let sums = checksums(directory, &expected)?;
+    write_bytes(&directory.join(CHECKSUMS), sums.as_bytes())?;
     Ok(inventory)
 }
 

@@ -68,15 +68,16 @@ fn integer(v: &Json) -> Option<BigInt> {
         _ => None,
     }
 }
-fn typename(v: &Json) -> &'static str {
+/// A null or missing API field is absent; present fields retain Python's type label.
+fn field_kind(v: &Json) -> Option<&'static str> {
     match v {
-        Json::Null => "NoneType",
-        Json::Bool(_) => "bool",
-        Json::Str(_) => "str",
-        Json::Array(_) => "list",
-        Json::Object(_) => "dict",
-        Json::Int(_) => "int",
-        Json::Float(_) => "float",
+        Json::Null => None,
+        Json::Bool(_) => Some("bool"),
+        Json::Str(_) => Some("str"),
+        Json::Array(_) => Some("list"),
+        Json::Object(_) => Some("dict"),
+        Json::Int(_) => Some("int"),
+        Json::Float(_) => Some("float"),
     }
 }
 /// `value.get(key)`, with an absent key or a non-mapping read as `None`.
@@ -84,19 +85,18 @@ fn at<'a>(v: &'a Json, key: &str) -> &'a Json {
     v.get(key).unwrap_or(&Json::Null)
 }
 fn text<'a>(v: &'a Json, field: &str, where_: &str) -> Result<&'a str> {
-    if *v == Json::Null {
+    let Some(kind) = field_kind(v) else {
         return Ok("");
-    }
-    v.as_str().ok_or_else(||format!("{where_}: {field} is {}, not text; refusing to judge a listing that cannot be read in full",typename(v)))
+    };
+    v.as_str().ok_or_else(||format!("{where_}: {field} is {kind}, not text; refusing to judge a listing that cannot be read in full"))
 }
 fn full_name(v: &Json, field: &str, where_: &str) -> Result<String> {
-    if *v == Json::Null {
+    let Some(kind) = field_kind(v) else {
         return Ok(String::new());
-    }
+    };
     if !matches!(v, Json::Object(_)) {
         return Err(format!(
-            "{where_}: {field} is {}, not a repository; refusing to judge a listing that cannot be read in full",
-            typename(v)
+            "{where_}: {field} is {kind}, not a repository; refusing to judge a listing that cannot be read in full"
         ));
     }
     Ok(py::casefold(text(

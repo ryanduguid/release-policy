@@ -24,8 +24,9 @@ cargo test --locked
 cargo build --locked --release --bin release-policy
 ```
 
-On Linux CI measures line coverage with `cargo llvm-cov` and fails below the
-floor written in the workflow. The `rust-fuzzing` job runs the cargo-fuzz
+On Linux and Windows CI measures line coverage with `cargo llvm-cov` and fails
+below the floor written in the workflow. Codecov combines both reports using
+repository-relative paths. The `rust-fuzzing` job runs the cargo-fuzz
 target in `fuzz/` over the same corpus as the Python fuzzer.
 
 `tests/rust/data/python_goldens.json` records the Python scripts' answers for

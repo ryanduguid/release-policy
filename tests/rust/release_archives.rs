@@ -641,15 +641,24 @@ fn failed_tree_and_timestamp_reads_are_unexpected_errors() {
     repo.write("component/VERSION", "1.2.3\n");
     let commit = repo.commit("tree");
     let mut real = archives::system_git(repo.root());
-    for (refused_call, expected) in [
+    for (refused_call, qualifier, expected) in [
         (
             "ls-tree",
+            "--full-tree",
             format!(
                 "unexpected error: Command 'git ls-tree --full-tree -z {commit} -- component' returned non-zero exit status 1."
             ),
         ),
         (
+            "ls-tree",
+            "-r",
+            format!(
+                "unexpected error: Command 'git ls-tree -r -z --name-only --full-tree {commit} -- component/' returned non-zero exit status 1."
+            ),
+        ),
+        (
             "show",
+            "",
             "unexpected error: Command 'git show' returned non-zero exit status 1.".to_owned(),
         ),
     ] {
@@ -661,7 +670,9 @@ fn failed_tree_and_timestamp_reads_are_unexpected_errors() {
             &root.join("outside").join("archive"),
             "component",
             &mut |args, env| {
-                if args.iter().any(|a| a == refused_call) {
+                if args.first().is_some_and(|a| a == refused_call)
+                    && (qualifier.is_empty() || args.get(1).is_some_and(|a| a == qualifier))
+                {
                     return Ok((false, String::new()));
                 }
                 real(args, env)

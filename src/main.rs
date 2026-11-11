@@ -286,7 +286,7 @@ fn execute(cli: Cli) -> Result<i32> {
     Ok(0)
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     // The compatibility readers can accept nested Python-sized data. Execute and
     // destroy it on the same explicitly sized stack on Windows and Linux.
     let result = std::thread::Builder::new()
@@ -297,15 +297,14 @@ fn main() {
         })
         .unwrap()
         .join();
-    let code = match result {
-        Ok(Ok(code)) => code,
-        Ok(Err(error)) => {
+    let code = match result.unwrap_or(Ok(1)) {
+        Ok(code) => code,
+        Err(error) => {
             print(&format!("release-policy: {error}\n"), true);
             1
         }
-        Err(_) => 1,
     };
-    std::process::exit(shutdown(code));
+    std::process::ExitCode::from(shutdown(code) as u8)
 }
 
 /// Help, version or a usage error, written as argparse wrote its messages:
