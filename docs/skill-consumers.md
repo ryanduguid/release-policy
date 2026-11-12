@@ -41,7 +41,10 @@ Use the separate release adapter for annotated version tags:
             .github/workflows/verify.yml: verify (3.14)
 
 Replace `<full-40-char-commit-sha>` with a reviewed literal 40-character
-commit before committing either consumer workflow.
+commit before committing either consumer workflow. This prints the commit of
+this repository's latest release:
+
+    gh api repos/ryanduguid/release-policy/commits/$(gh api repos/ryanduguid/release-policy/releases/latest --jq .tag_name) --jq .sha
 
 `required-checks` is required by the release adapter and has the same meaning
 as for the [packaged-Python workflow](python-consumers.md): the named consumer

@@ -1,7 +1,14 @@
 ## Using the source-archive release workflow
 
-Source-only callers use the separate family workflow:
+Source-only callers use the separate family workflow
+(`.github/workflows/release.yml` in the consumer):
 
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
     jobs:
       release:
         permissions:
@@ -14,6 +21,11 @@ Source-only callers use the separate family workflow:
           artifact-stem: accounting-excel-toolkit
           required-checks: |
             .github/workflows/ci.yml: test (3.14)
+
+Replace `<full-40-char-commit-sha>` with a commit you have reviewed. This
+prints the commit of this repository's latest release:
+
+    gh api repos/ryanduguid/release-policy/commits/$(gh api repos/ryanduguid/release-policy/releases/latest --jq .tag_name) --jq .sha
 
 The root defaults above also apply to source archives. A nested source-only
 component uses:

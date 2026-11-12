@@ -19,7 +19,12 @@ Tests, linters, security checks and human review remain necessary.
    `.github/workflows/pr-review-consumer.yml`. This filename also works in
    release-policy, whose `pr-review.yml` defines the reusable workflow.
    Replace the all-zero SHA with the
-   reviewed full SHA. Copy `examples/pr-review-trigger.yml` as
+   reviewed full SHA. This prints the commit of this repository's latest
+   release:
+
+       gh api repos/ryanduguid/release-policy/commits/$(gh api repos/ryanduguid/release-policy/releases/latest --jq .tag_name) --jq .sha
+
+   Copy `examples/pr-review-trigger.yml` as
    `.github/workflows/pr-review-trigger.yml`. Inspect and commit these files
    through the consumer's normal review process.
 4. Check the consumer's Actions policy permits the pinned actions and reusable

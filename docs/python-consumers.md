@@ -21,6 +21,11 @@ Caller workflow (`.github/workflows/release.yml` in the consumer):
             .github/workflows/ci.yml: lint
             .github/workflows/ci.yml: test (3.14)
 
+Replace `<full-40-char-commit-sha>` with a commit you have reviewed. This
+prints the commit of this repository's latest release:
+
+    gh api repos/ryanduguid/release-policy/commits/$(gh api repos/ryanduguid/release-policy/releases/latest --jq .tag_name) --jq .sha
+
 Root callers need no other inputs: `source-directory` defaults to `.` and
 `tag-prefix` defaults to an empty string, so their package paths and `vX.Y.Z`
 tags are unchanged.
