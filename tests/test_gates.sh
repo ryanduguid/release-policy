@@ -192,6 +192,11 @@ run_case  "main matches"                  gate_main_matches "$head_commit" "ryan
 expect_fail "main mismatch"               gate_main_matches "$old_commit" "ryanduguid/example"
 STUB_MAIN_FAIL=1 expect_fail "a failed main read fails even when it printed the head" \
   gate_main_matches "$head_commit" "ryanduguid/example"
+STUB_MAIN_FAIL=1 expect_fail "an empty expected commit fails when main cannot be read" \
+  gate_main_matches "" "ryanduguid/example"
+STUB_MAIN_REF='{"ref":"refs/heads/main","object":{"type":"commit","sha":"aaaa"}}' \
+  expect_fail "an abbreviated expected commit fails even when main reads the same" \
+  gate_main_matches "aaaa" "ryanduguid/example"
 run_case "main head is contained" \
   gate_main_contains "$head_commit" "ryanduguid/example" "."
 compare_response ahead "$old_commit" "packages/other-tool/source.py" "README.md" \

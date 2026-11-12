@@ -129,6 +129,10 @@ gate_clean_tree() {
 # main's current caller workflow, policy pin and required-checks list.
 gate_main_matches() {
   local expected="$1" repo="$2" main_sha
+  if [[ ! "$expected" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "gate_main_matches: '$expected' is not a full commit SHA" >&2
+    return 1
+  fi
   main_sha="$("$GH" api -H "X-GitHub-Api-Version: 2026-03-10" \
     "repos/$repo/git/ref/heads/main" --jq '.object.sha')" || main_sha=""
   if [[ "$main_sha" != "$expected" ]]; then
