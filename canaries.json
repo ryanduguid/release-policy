@@ -15,6 +15,20 @@
       "workflow_path": ".github/workflows/release.yml"
     },
     {
+      "current_policy_sha": "5094c69ebf14523e4787000e5ff3cdcb03c10f6e",
+      "evidence": {
+        "head_sha": "c401d69de80d7d679ae02359daf6f19f44f908b6",
+        "policy_sha": "5094c69ebf14523e4787000e5ff3cdcb03c10f6e",
+        "ref": "v0.3.0",
+        "run_id": 40772869568,
+        "started_at": "2026-10-28T21:33:02Z"
+      },
+      "family": "binary",
+      "policy_workflow": ".github/workflows/release-binary.yml",
+      "repository": "ryanduguid/release-policy",
+      "workflow_path": ".github/workflows/release.yml"
+    },
+    {
       "current_policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
       "evidence": {
         "head_sha": "cdb9a9c0ed08ca57ce178e9124600456c3d26a8e",

@@ -17,6 +17,8 @@ import json
 import os
 import runpy
 import shutil
+import struct
+import subprocess  # nosec B404: runs llvm-readobj on crafted headers when it is installed
 import sys
 import tarfile
 import tempfile
@@ -32,12 +34,99 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import binary_release  # noqa: E402
 
 LINUX = "x86_64-unknown-linux-musl"
+LINUX_ARM64 = "aarch64-unknown-linux-musl"
+MACOS_ARM64 = "aarch64-apple-darwin"
 WINDOWS = "x86_64-pc-windows-msvc"
 EPOCH = 1_790_000_000
 PACKAGE = '[package]\nname = "example"\nversion = "1.2.3"\npublish = false\n'
 # The header lines llvm-readobj prints for each target's executable.
 ELF = "File: example\nFormat: elf64-x86-64\nArch: x86_64\nAddressSize: 64bit\n"
+ELF_ARM64 = "File: example\nFormat: elf64-littleaarch64\nArch: aarch64\nAddressSize: 64bit\n"
 COFF = "File: example.exe\nFormat: COFF-x86-64\nArch: x86_64\nAddressSize: 64bit\n"
+# What llvm-readobj 1.99.1 printed for a crafted arm64 Mach-O executable that
+# loads 2 system libraries and 2 system frameworks (see macho_header below).
+MACHO = """File: example
+Format: Mach-O arm64
+Arch: aarch64
+AddressSize: 64bit
+MachHeader {
+  Magic: Magic64 (0xFEEDFACF)
+  CpuType: Arm64 (0x100000C)
+  CpuSubType: CPU_SUBTYPE_ARM64_ALL (0x0)
+  FileType: Executable (0x2)
+  NumOfLoadCommands: 5
+  SizeOfLoadCommands: 344
+  Flags [ (0x200085)
+    MH_DYLDLINK (0x4)
+    MH_NOUNDEFS (0x1)
+    MH_PIE (0x200000)
+    MH_TWOLEVEL (0x80)
+  ]
+  Reserved: 0x0
+}
+NeededLibraries [
+  /System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation
+  /System/Library/Frameworks/Security.framework/Versions/A/Security
+  /usr/lib/libSystem.B.dylib
+  /usr/lib/libiconv.2.dylib
+]
+"""
+MACOS_SYSTEM = (
+    "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+    "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+    "/usr/lib/libSystem.B.dylib",
+    "/usr/lib/libiconv.2.dylib",
+)
+
+
+ARM64, X86_64 = 0x0100000C, 0x01000007
+# Each load command that makes dyld load a library, by its <mach-o/loader.h> name.
+DYLIB_COMMANDS = {
+    "LC_LOAD_DYLIB": 0xC, "LC_LOAD_WEAK_DYLIB": 0x80000018, "LC_REEXPORT_DYLIB": 0x8000001F,
+    "LC_LAZY_LOAD_DYLIB": 0x20, "LC_LOAD_UPWARD_DYLIB": 0x80000023,
+}
+
+
+def load_command(kind: int, name: str) -> bytes:
+    """A load command naming a path: a dylib command, else a dylinker-style one."""
+    fields = (24, 2, 0x10000, 0x10000) if kind in DYLIB_COMMANDS.values() else (12,)
+    offset = 8 + 4 * len(fields)
+    raw = name.encode() + b"\0"
+    size = (offset + len(raw) + 7) // 8 * 8
+    return struct.pack(f"<{2 + len(fields)}I", kind, size, *fields) + raw.ljust(size - offset, b"\0")
+
+
+def macho_header(filetype: int, *dylibs: str, cputype: int = ARM64,
+                 extra: tuple[bytes, ...] = ()) -> bytes:
+    """A thin Mach-O header with dyld, an LC_LOAD_DYLIB for each dylib, then `extra`."""
+    commands = [load_command(0xE, "/usr/lib/dyld"), *(load_command(0xC, d) for d in dylibs), *extra]
+    body = b"".join(commands)
+    return struct.pack("<IiiIIIII", 0xFEEDFACF, cputype, 0, filetype, len(commands),
+                       len(body), 0x200085, 0) + body
+
+
+def universal(*slices: tuple[int, bytes]) -> bytes:
+    """A universal (fat) file holding each (cputype, thin Mach-O) slice, 4 KiB aligned."""
+    arches, body = b"", b""
+    for cputype, data in slices:
+        arches += struct.pack(">iiIII", cputype, 0, 4096 + len(body), len(data), 12)
+        body += data.ljust((len(data) + 4095) // 4096 * 4096, b"\0")
+    return (struct.pack(">II", 0xCAFEBABE, len(slices)) + arches).ljust(4096, b"\0") + body
+
+
+def llvm_readobj() -> Path | None:
+    """The llvm-readobj of the installed Rust toolchain, when it has llvm-tools."""
+    if shutil.which("rustc") is None:
+        return None
+    rustc = subprocess.run(["rustc", "-vV"], capture_output=True, text=True, check=False)  # nosec B603 B607
+    host = next((line[6:].strip() for line in rustc.stdout.splitlines() if line.startswith("host: ")), "")
+    sysroot = subprocess.run(["rustc", "--print", "sysroot"], capture_output=True, text=True,  # nosec B603 B607
+                             check=False).stdout.strip()
+    for name in ("llvm-readobj", "llvm-readobj.exe"):
+        path = Path(sysroot) / "lib" / "rustlib" / host / "bin" / name
+        if path.is_file():
+            return path
+    return None
 
 
 class Fixture(unittest.TestCase):
@@ -52,12 +141,14 @@ class Fixture(unittest.TestCase):
         (self.source / "README.md").write_bytes(b"# example\n")
         self.executable = self.base / "example"
         self.executable.write_bytes(b"\x7fELF fabricated")
+        (self.base / "example.exe").write_bytes(b"\x7fELF fabricated")
 
-    def build(self, triple: str, output: str = "dist") -> Path:
+    def build(self, triple: str, output: str = "dist", binary: str = "example",
+              data_files: str = "") -> Path:
         return binary_release.package(
-            executable=self.executable, binary="example", triple=triple, stem="example",
+            executables=self.base, binary=binary, triple=triple, stem="example",
             version="1.2.3", source=self.source, root=self.root, epoch=EPOCH,
-            output_dir=self.base / output,
+            output_dir=self.base / output, data_files=data_files,
         )
 
 
@@ -88,7 +179,7 @@ class PackageTests(Fixture):
 
     def test_an_early_epoch_is_clamped_to_the_zip_minimum(self) -> None:
         archive = binary_release.package(
-            executable=self.executable, binary="example", triple=WINDOWS, stem="example",
+            executables=self.base, binary="example", triple=WINDOWS, stem="example",
             version="1.2.3", source=self.source, root=self.root, epoch=0,
             output_dir=self.base / "dist",
         )
@@ -105,12 +196,71 @@ class PackageTests(Fixture):
         for stem, version, triple, message in (
             ("Example", "1.2.3", LINUX, "artifact-stem"),
             ("example", "1.2", LINUX, "version"),
-            ("example", "1.2.3", "aarch64-apple-darwin", "unsupported target"),
+            ("example", "1.2.3", "x86_64-apple-darwin", "unsupported target"),
         ):
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                 binary_release.asset_name(stem, version, triple)
         with self.assertRaisesRegex(ValueError, "binary is not valid"):
             binary_release.member_names("../x", LINUX, ())
+
+    def test_each_unix_target_ships_an_executable_tar_archive(self) -> None:
+        for triple in (LINUX_ARM64, MACOS_ARM64):
+            with self.subTest(triple=triple):
+                archive = self.build(triple, triple)
+                self.assertEqual(archive.name, f"example-1.2.3-{triple}.tar.gz")
+                with tarfile.open(archive, mode="r:gz") as opened:
+                    self.assertEqual([(m.name, m.mode) for m in opened.getmembers()], [
+                        ("example", 0o755), ("LICENSE", 0o644), ("README.md", 0o644)])
+
+    def test_several_executables_and_declared_data_files_ship_together(self) -> None:
+        (self.base / "example-helper").write_bytes(b"helper")
+        (self.source / "certs").mkdir()
+        (self.source / "certs" / "ca-bundle.pem").write_bytes(b"certificates\n")
+        archive = self.build(LINUX, binary="example example-helper",
+                             data_files="\n  certs/ca-bundle.pem\n\n")
+        with tarfile.open(archive, mode="r:gz") as opened:
+            self.assertEqual([(m.name, m.mode) for m in opened.getmembers()], [
+                ("example", 0o755), ("example-helper", 0o755), ("LICENSE", 0o644),
+                ("README.md", 0o644), ("ca-bundle.pem", 0o644)])
+            self.assertEqual(member_bytes(opened, "ca-bundle.pem"), b"certificates\n")
+
+    def test_bad_binary_lists_and_data_files_are_refused(self) -> None:
+        for binary, message in (("", "one or more distinct"), ("a a", "one or more distinct"),
+                                ("a b/c", "binary is not valid")):
+            with self.subTest(binary=binary), self.assertRaisesRegex(ValueError, message):
+                binary_release.binaries(binary)
+        for listing, message in (
+            ("../ca.pem", "data file is not valid"), ("/etc/ca.pem", "data file is not valid"),
+            ("certs/../ca.pem", "data file is not valid"), (".env", "data file is not valid"),
+            ("certs\\ca.pem", "data file is not valid"),
+            ("a/ca.pem\nb/ca.pem", "would ship as ca.pem, a name already taken"),
+            ("docs/LICENSE", "would ship as LICENSE"), ("NOTICE", "would ship as NOTICE"),
+        ):
+            with self.subTest(listing=listing), self.assertRaisesRegex(ValueError, message):
+                binary_release.data_names(listing)
+        with self.assertRaisesRegex(ValueError, "cannot hold"):
+            binary_release.member_names("example", LINUX, ("LICENSE",), ("example",))
+        with self.assertRaisesRegex(ValueError, "at most 12 distinct members"):
+            binary_release.member_names(" ".join(f"tool{n}" for n in range(11)), LINUX,
+                                        ("LICENSE", "README.md"))
+        (self.base / "outside.pem").write_bytes(b"x")
+        (self.source / "certs").mkdir()
+        for entry, make in (
+            ("certs/missing.pem", None),
+            ("certs", None),
+            ("linked.pem", lambda path: path.symlink_to(self.base / "outside.pem")),
+            ("through/outside.pem", lambda path: path.parent.symlink_to(self.base,
+                                                                         target_is_directory=True)),
+        ):
+            path = self.source / entry
+            if make is not None:
+                try:
+                    make(path)
+                except OSError:
+                    continue  # this platform refuses unprivileged links
+            with self.subTest(entry=entry), self.assertRaisesRegex(
+                    ValueError, f"data file {entry} is not a regular file"):
+                binary_release.find_data_files(self.source, entry)
 
 
 class VerifyTests(Fixture):
@@ -158,12 +308,34 @@ class VerifyTests(Fixture):
             binary_release.verify(archive=self.tar(missing_readme), binary="example",
                                   triple=LINUX, extract_dir=None)
 
+    def test_every_named_executable_and_data_file_must_ship(self) -> None:
+        helper = (self.info("example-helper", 0o755), b"h")
+        exe = (self.info("example", 0o755), b"x")
+        docs = [(self.info("LICENSE"), b"l"), (self.info("README.md"), b"r")]
+        pem = (self.info("ca.pem"), b"c")
+        both, data = "example example-helper", "certs/ca.pem"
+        self.assertEqual(
+            binary_release.verify(archive=self.tar([exe, helper, *docs, pem]), binary=both,
+                                  triple=MACOS_ARM64, extract_dir=None, data_files=data),
+            ("example", "example-helper", "LICENSE", "README.md", "ca.pem"))
+        for message, members, binary, listing in (
+            ("the executable example-helper is missing", [exe, *docs, pem], both, data),
+            ("the data file ca.pem is missing", [exe, helper, *docs], both, data),
+            ("expected", [exe, helper, *docs, pem], both, ""),
+            ("example-helper is not executable",
+             [exe, (self.info("example-helper"), b"h"), *docs, pem], both, data),
+        ):
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                binary_release.verify(archive=self.tar(members), binary=binary,
+                                      triple=MACOS_ARM64, extract_dir=None, data_files=listing)
+
     def test_too_many_or_oversized_members_are_refused_before_reading(self) -> None:
         exe = (self.info("example", 0o755), b"x")
-        docs = [(self.info(name), b"d") for name in ("LICENSE", "NOTICE", "README.md", "extra")]
-        with self.assertRaisesRegex(ValueError, "extra exceeds the archive's member count"):
-            binary_release.verify(archive=self.tar([exe, *docs]), binary="example", triple=LINUX,
-                                  extract_dir=None)
+        docs = [(self.info(name), b"d") for name in ("LICENSE", "NOTICE", "README.md")]
+        extra = [(self.info(f"extra{n}"), b"e") for n in range(binary_release.MAX_MEMBERS - 3)]
+        with self.assertRaisesRegex(ValueError, "extra8 exceeds the archive's member count"):
+            binary_release.verify(archive=self.tar([exe, *docs, *extra]), binary="example",
+                                  triple=LINUX, extract_dir=None)
         with mock.patch.object(binary_release, "MAX_MEMBER_BYTES", 0):
             with self.assertRaisesRegex(ValueError, "example exceeds"):
                 binary_release.verify(archive=self.tar([exe]), binary="example", triple=LINUX,
@@ -197,9 +369,10 @@ class VerifyTests(Fixture):
     def test_a_zip_directory_is_bounded_before_zipfile_reads_it(self) -> None:
         path = self.base / "many.zip"
         with zipfile.ZipFile(path, "w") as archive:
-            for name in ("example.exe", "LICENSE", "README.md", "NOTICE", "extra"):
+            for name in ("example.exe", "LICENSE", "README.md", "NOTICE",
+                         *(f"extra{n}" for n in range(binary_release.MAX_MEMBERS - 3))):
                 archive.writestr(name, b"x")
-        with self.assertRaisesRegex(ValueError, "lists 5 members"):
+        with self.assertRaisesRegex(ValueError, "lists 13 members"):
             binary_release.verify(archive=path, binary="example", triple=WINDOWS,
                                   extract_dir=None)
         archive = self.build(WINDOWS)
@@ -324,19 +497,21 @@ class ToolchainTests(Fixture):
 
 
 class ReceiveTests(Fixture):
-    def artefact(self, triple: str = LINUX) -> Path:
+    def artefact(self, triple: str = LINUX, binary: str = "example",
+                 data_files: str = "") -> Path:
         incoming = self.base / f"incoming-{triple}"
-        archive = self.build(triple, incoming.name)
+        archive = self.build(triple, incoming.name, binary, data_files)
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         (incoming / f"{archive.name}.sha256").write_text(f"{digest}  {archive.name}\n",
                                                          encoding="utf-8")
         return incoming
 
-    def receive(self, incoming: Path, triple: str = LINUX) -> Path:
+    def receive(self, incoming: Path, triple: str = LINUX, binary: str = "example",
+                data_files: str = "") -> Path:
         return binary_release.receive(
-            incoming=incoming, stem="example", version="1.2.3", binary="example",
+            incoming=incoming, stem="example", version="1.2.3", binary=binary,
             triple=triple, dist=self.base / "dist", extract_dir=self.base / "extracted",
-            source=self.source, root=self.root,
+            source=self.source, root=self.root, data_files=data_files,
         )
 
     def test_a_matching_artefact_is_admitted_and_extracted(self) -> None:
@@ -369,6 +544,44 @@ class ReceiveTests(Fixture):
             self.assertFalse(admitted.exists())
             shutil.rmtree(incoming)
             shutil.rmtree(self.base / "extracted")
+
+    def test_declared_data_files_must_be_the_tagged_ones(self) -> None:
+        (self.base / "example-helper").write_bytes(b"helper")
+        (self.source / "certs").mkdir()
+        pem = self.source / "certs" / "ca.pem"
+        pem.write_bytes(b"certificates\n")
+        both, data = "example example-helper", "certs/ca.pem"
+        incoming = self.artefact(MACOS_ARM64, both, data)
+        self.receive(incoming, MACOS_ARM64, both, data)
+        self.assertEqual((self.base / "extracted" / "ca.pem").read_bytes(), b"certificates\n")
+        shutil.rmtree(self.base / "dist")
+        shutil.rmtree(self.base / "extracted")
+        pem.write_bytes(b"other certificates\n")
+        with self.assertRaisesRegex(ValueError, "'s ca.pem differs from the tagged ca.pem"):
+            self.receive(incoming, MACOS_ARM64, both, data)
+        self.assertFalse((self.base / "dist" / "example-1.2.3-aarch64-apple-darwin.tar.gz").exists())
+
+    def test_a_tampered_archive_of_each_target_is_refused(self) -> None:
+        for triple in binary_release.TARGETS:
+            name = binary_release.asset_name("example", "1.2.3", triple)
+            with self.subTest(triple=triple):
+                incoming = self.artefact(triple)
+                # The build job's digest line stays; its archive is rebuilt
+                # around a different executable.
+                (incoming / name).unlink()
+                replaced = self.base / "replaced"
+                replaced.mkdir()
+                for executable in ("example", "example.exe"):
+                    (replaced / executable).write_bytes(b"replaced")
+                binary_release.package(
+                    executables=replaced, binary="example", triple=triple, stem="example",
+                    version="1.2.3", source=self.source, root=self.root, epoch=EPOCH,
+                    output_dir=incoming)
+                shutil.rmtree(replaced)
+                with self.assertRaisesRegex(ValueError, "does not match its recorded digest"):
+                    self.receive(incoming, triple)
+                self.assertFalse((self.base / "dist" / name).exists())
+                shutil.rmtree(incoming)
 
     def test_extra_missing_mismatched_or_malformed_inputs_are_refused(self) -> None:
         name = "example-1.2.3-x86_64-unknown-linux-musl.tar.gz"
@@ -431,8 +644,127 @@ class CheckTests(Fixture):
         with self.assertRaisesRegex(ValueError, "no NeededLibraries list"):
             binary_release.linkage(ELF, LINUX)
         for wrong in (static.replace("Arch: x86_64", "Arch: aarch64"), COFF + "NeededLibraries [\n]\n"):
-            with self.assertRaisesRegex(ValueError, "not an x86-64 elf64-x86-64 executable"):
+            with self.assertRaisesRegex(ValueError, "not an x86_64 elf64-x86-64 executable"):
                 binary_release.linkage(wrong, LINUX)
+        arm64 = ELF_ARM64 + "NeededLibraries [\n]\nProgramHeaders [\n]\n"
+        self.assertEqual(binary_release.linkage(arm64, LINUX_ARM64), ())
+        with self.assertRaisesRegex(ValueError, "not a static executable"):
+            binary_release.linkage(arm64.replace("[\n]\nProgram", "[\n  libc.so\n]\nProgram"),
+                                   LINUX_ARM64)
+        for wrong in (static, MACHO):
+            with self.assertRaisesRegex(ValueError, "not an aarch64 elf64-littleaarch64 executable"):
+                binary_release.linkage(wrong, LINUX_ARM64)
+        # llvm-readobj prints a block for each slice of a universal file; one
+        # clean block must not stand for the others.
+        with self.assertRaisesRegex(ValueError, "describes more than one object"):
+            binary_release.linkage(static + static, LINUX)
+
+    def test_a_macos_executable_loads_only_libraries_macos_ships(self) -> None:
+        self.assertEqual(binary_release.macho_linkage(macho_header(2, *MACOS_SYSTEM), MACOS_ARM64),
+                         MACOS_SYSTEM)
+        # A command that names no library, here LC_UUID, is passed over.
+        uuid = struct.pack("<II16s", 0x1B, 24, bytes(range(16)))
+        self.assertEqual(binary_release.macho_linkage(
+            macho_header(2, *MACOS_SYSTEM, extra=(uuid,)), MACOS_ARM64), MACOS_SYSTEM)
+        for name in ("/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib", "/usr/local/lib/libz.dylib",
+                     "@rpath/libexample.dylib", "@executable_path/libexample.dylib",
+                     "@loader_path/../lib/libexample.dylib", "/usr/lib/../local/lib/libz.dylib",
+                     "/usr/lib/swift/libswiftCore.dylib", "libz.dylib",
+                     "/System/Library/Frameworks/Security.framework/Versions/A/Other",
+                     "/Library/Frameworks/Example.framework/Versions/A/Example"):
+            # Every kind of command that loads a library is read, not only LC_LOAD_DYLIB.
+            for command, kind in DYLIB_COMMANDS.items():
+                executable = macho_header(2, "/usr/lib/libSystem.B.dylib",
+                                          extra=(load_command(kind, name),))
+                with self.subTest(name=name, command=command), self.assertRaisesRegex(
+                        ValueError, "loads libraries macOS does not ship"):
+                    binary_release.macho_linkage(executable, MACOS_ARM64)
+        with self.assertRaisesRegex(ValueError, "not a Mach-O executable file type"):
+            binary_release.macho_linkage(macho_header(8, *MACOS_SYSTEM), MACOS_ARM64)
+        with self.assertRaisesRegex(ValueError, "not an arm64 Mach-O executable"):
+            binary_release.macho_linkage(macho_header(2, cputype=X86_64), MACOS_ARM64)
+        with self.assertRaisesRegex(ValueError, "read from its load commands"):
+            binary_release.linkage(MACHO, MACOS_ARM64)
+        with self.assertRaisesRegex(ValueError, "only a macOS executable"):
+            binary_release.macho_linkage(macho_header(2), LINUX_ARM64)
+
+    def test_a_universal_or_other_non_thin_arm64_file_is_refused(self) -> None:
+        thin = macho_header(2, "/usr/lib/libSystem.B.dylib")
+        # The reviewer's case: a clean x86_64 slice first, an arm64 slice loading
+        # a library the release does not ship second.
+        clean = macho_header(2, "/usr/lib/libSystem.B.dylib", cputype=X86_64)
+        evil = macho_header(2, "/usr/lib/libSystem.B.dylib", "@rpath/libevil.dylib")
+        fat = universal((X86_64, clean), (ARM64, evil))
+        for name, data in (
+            ("fat, clean slice first", fat),
+            ("fat, one clean slice", universal((ARM64, thin))),
+            ("fat64", struct.pack(">I", 0xCAFEBABF) + fat[4:]),
+            ("big-endian", struct.pack(">I", 0xFEEDFACF) + thin[4:]),
+            ("32-bit", struct.pack("<I", 0xFEEDFACE) + thin[4:]),
+            ("ELF", b"\x7fELF" + thin[4:]),
+            ("empty", b""),
+        ):
+            with self.subTest(name), self.assertRaisesRegex(
+                    ValueError, "not a thin 64-bit little-endian Mach-O file"):
+                binary_release.macho_linkage(data, MACOS_ARM64)
+
+    def test_load_commands_that_redirect_dyld_are_refused(self) -> None:
+        for command, refusal in (
+            (load_command(0x27, "DYLD_LIBRARY_PATH=@executable_path/lib"),
+             "sets dyld environment variables"),
+            (load_command(0x8000001C, "@executable_path/../lib"), "adds a run-path search path"),
+            (load_command(0xE, "/tmp/dyld"), "names a dynamic linker other than /usr/lib/dyld"),
+        ):
+            with self.subTest(refusal), self.assertRaisesRegex(ValueError, refusal):
+                binary_release.macho_linkage(
+                    macho_header(2, "/usr/lib/libSystem.B.dylib", extra=(command,)), MACOS_ARM64)
+
+    def test_malformed_load_commands_are_refused(self) -> None:
+        thin = macho_header(2, "/usr/lib/libSystem.B.dylib")
+        # The dyld command fills bytes 32 to 64; the dylib command starts at 64
+        # and its name, at offset 24 within it, at 88.
+        for name, data in (
+            ("short header", thin[:31]),
+            ("commands past the end", thin[:-8]),
+            ("more commands than bytes", thin[:16] + struct.pack("<I", 3) + thin[20:]),
+            ("fewer commands than bytes", thin[:16] + struct.pack("<I", 1) + thin[20:]),
+            ("zero command size", thin[:36] + struct.pack("<I", 0) + thin[40:]),
+            ("command too short for a name", thin[:68] + struct.pack("<I", 8) + thin[72:]),
+            ("name inside the header", thin[:72] + struct.pack("<I", 4) + thin[76:]),
+            ("name without a terminator", thin[:88] + b"x" * 32),
+            ("name not UTF-8", thin[:88] + b"\xff" + thin[89:]),
+        ):
+            with self.subTest(name), self.assertRaisesRegex(
+                    ValueError, "malformed Mach-O load commands"):
+                binary_release.macho_linkage(data, MACOS_ARM64)
+
+    def test_llvm_readobj_reads_the_crafted_mach_o_files_alike(self) -> None:
+        readobj = llvm_readobj()
+        if readobj is None:
+            self.skipTest("llvm-readobj from the Rust toolchain's llvm-tools is not installed")
+        path = self.base / "example"
+
+        def read(data: bytes) -> str:
+            path.write_bytes(data)
+            return subprocess.run(  # nosec B603
+                [str(readobj), "--file-headers", "--needed-libs", str(path)],
+                capture_output=True, text=True, check=True).stdout
+
+        # The fixture above is what LLVM prints for the plain crafted file.
+        output = read(macho_header(2, *MACOS_SYSTEM))
+        self.assertEqual(output[output.index("Format:"):], MACHO[MACHO.index("Format:"):])
+        # LLVM lists the library of every dylib command the parser reads.
+        extra = tuple(load_command(kind, f"/usr/lib/lib{command}.dylib")
+                      for command, kind in DYLIB_COMMANDS.items())
+        executable = macho_header(2, *MACOS_SYSTEM, extra=extra)
+        self.assertEqual(sorted(binary_release.needed_libraries(read(executable))),
+                         sorted(binary_release.macho_linkage(executable, MACOS_ARM64)))
+        # LLVM reads the universal file too, printing one block for each slice.
+        clean = macho_header(2, "/usr/lib/libSystem.B.dylib", cputype=X86_64)
+        evil = macho_header(2, "/usr/lib/libSystem.B.dylib", "@rpath/libevil.dylib")
+        output = read(universal((X86_64, clean), (ARM64, evil)))
+        self.assertEqual(output.count("Format: Mach-O"), 2)
+        self.assertIn("@rpath/libevil.dylib", output)
 
     def test_windows_imports_only_pinned_system_dlls_and_no_c_runtime(self) -> None:
         # The imports of release-policy's own static-CRT build, 28 October 2026.
@@ -490,7 +822,7 @@ class CommandTests(Fixture):
         self.assertEqual(self.run_main("toolchain", "--source", str(self.source), "--root",
                                        str(self.root)), (0, "1.99.1\n", ""))
         package = ("package", "--binary", "example", "--target", LINUX, "--stem", "example",
-                   "--version", "1.2.3", "--executable", str(self.executable), "--source",
+                   "--version", "1.2.3", "--executables", str(self.base), "--source",
                    str(self.source), "--root", str(self.root), "--output-dir",
                    str(self.base / "incoming"), "--epoch")
         self.assertEqual(self.run_main(*package, "soon"),
@@ -502,6 +834,11 @@ class CommandTests(Fixture):
             self.run_main("verify", "--archive", str(archive), "--binary", "example", "--target",
                           LINUX),
             (0, "example\nLICENSE\nREADME.md\n", ""),
+        )
+        self.assertEqual(
+            self.run_main("verify", "--archive", str(archive), "--binary", "example", "--target",
+                          LINUX, "--data-files", "certs/ca.pem"),
+            (1, "", "binary_release: the data file ca.pem is missing\n"),
         )
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
         Path(f"{archive}.sha256").write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
@@ -516,6 +853,10 @@ class CommandTests(Fixture):
         listing.write_text(ELF + "NeededLibraries [\n]\n", encoding="utf-8")
         self.assertEqual(self.run_main("linkage", "--readobj-output", str(listing), "--target",
                                        LINUX), (0, "\n", ""))
+        macho = self.base / "macho"
+        macho.write_bytes(macho_header(2, "/usr/lib/libSystem.B.dylib"))
+        self.assertEqual(self.run_main("macho-linkage", "--executable", str(macho), "--target",
+                                       MACOS_ARM64), (0, "/usr/lib/libSystem.B.dylib\n", ""))
         sbom = self.base / "x.spdx.json"
         sbom.write_text('{"packages": [{"name": "example"}]}', encoding="utf-8")
         self.assertEqual(self.run_main("sbom-lists", "--sbom", str(sbom), "--package", "example"),
@@ -542,7 +883,8 @@ class CommandTests(Fixture):
 
 
 class HandoffTests(Fixture):
-    ARCHIVES = ("source-zip", "source-tar", "linux-archive", "windows-archive")
+    ARCHIVES = ("source-zip", "source-tar", "linux-archive", "linux-arm64-archive",
+                "macos-arm64-archive", "windows-archive")
     run_main = CommandTests.run_main
 
     def setUp(self) -> None:
@@ -583,6 +925,14 @@ class HandoffTests(Fixture):
         self.assertEqual(binary_release.asset_name("example", "1.2.3", WINDOWS),
                          self.names["windows-archive"])
         self.assertEqual("example-1.2.3.spdx.json", self.names["source-sbom"])
+        # Archives first, so `accept` copies no SBOM until every archive matches.
+        self.assertEqual(self.ARCHIVES, tuple(self.names)[:len(self.ARCHIVES)])
+        for target in binary_release.TARGETS.values():
+            with self.subTest(target=target.triple):
+                self.assertEqual(binary_release.asset_name("example", "1.2.3", target.triple),
+                                 self.names[f"{target.role}-archive"])
+                self.assertEqual(f"example-1.2.3-{target.triple}.spdx.json",
+                                 self.names[f"{target.role}-sbom"])
         self.hand_off()
         outputs = binary_release.digests(self.incoming, "example", "1.2.3")
         self.assertEqual(tuple(self.outputs()), outputs)
@@ -668,6 +1018,8 @@ class HandoffTests(Fixture):
         digests = [argument for output in self.outputs() for argument in ("--digest", output)]
         self.assertEqual(self.run_main(*accept, *digests),
                          (0, "\n".join(self.names.values()) + "\n", ""))
+        self.assertEqual(self.run_main("assets", *release),
+                         (0, "\n".join(self.names.values()) + "\n", ""))
 
 
 class PathArgumentTests(Fixture):
@@ -677,13 +1029,14 @@ class PathArgumentTests(Fixture):
         "toolchain": ((), ("--source", "--root")),
         "package": (("--binary", "example", "--target", LINUX, "--stem", "example",
                      "--version", "1.2.3", "--epoch", str(EPOCH)),
-                    ("--executable", "--source", "--root", "--output-dir")),
+                    ("--executables", "--source", "--root", "--output-dir")),
         "verify": (("--binary", "example", "--target", LINUX), ("--archive", "--extract-dir")),
         "receive": (("--stem", "example", "--version", "1.2.3", "--binary", "example",
                      "--target", LINUX),
                     ("--incoming", "--dist", "--extract-dir", "--source", "--root")),
         "smoke": (("--version", "1.2.3"), ("--executable",)),
         "linkage": (("--target", LINUX), ("--readobj-output",)),
+        "macho-linkage": (("--target", MACOS_ARM64), ("--executable",)),
         "sbom-lists": (("--package", "example"), ("--sbom",)),
         "digests": (("--stem", "example", "--version", "1.2.3"), ("--dist",)),
         "accept": (("--stem", "example", "--version", "1.2.3", "--digest", "source-zip="),
@@ -746,6 +1099,12 @@ class PathArgumentTests(Fixture):
                               "--binary", "example"),
                 (1, "", "binary_release: Cargo.toml must not be a symbolic link\n"),
             )
+
+
+def member_bytes(archive: tarfile.TarFile, name: str) -> bytes:
+    member = archive.extractfile(name)
+    assert member is not None
+    return member.read()
 
 
 if __name__ == "__main__":

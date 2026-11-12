@@ -61,8 +61,9 @@
   not a verification gate. Another component may become latest while the
   exact published release and its assets are being verified.
 - Once a release is published and verified, the run's job summary lists each
-  asset with its SHA-256 digest and the `gh attestation verify` command for the
-  family's signer. If the digest inventory cannot be read or validated, or the
+  asset with its SHA-256 digest and the `gh attestation verify` command,
+  pinned to the family's signer workflow, the policy commit, the tag and the
+  source commit. If the digest inventory cannot be read or validated, or the
   summary cannot be written, the run logs a warning instead of a complete
   summary and the release still stands.
 - Consumers pin this repository by full commit SHA and upgrade by reviewed
@@ -135,7 +136,7 @@ leaves released pins working without loosening the evidence checks, while any
 other pin off `main` still fails.
 
 The freshness rule differs by family, because the consumers differ. An
-archive, Python or skills release runs on a tag, so a success newer than the
+archive, binary, Python or skills release runs on a tag, so a success newer than the
 recorded evidence means a release happened that nobody wrote down, and the
 audit fails until a person records it. The verification consumer runs on every
 push to its default branch, so a newer success is the ordinary state; the
@@ -149,17 +150,20 @@ Bypass actors are checked only when the token can see them; otherwise the audit
 reports a notice that they were not checked.
 
 Each live audit also verifies the recorded release's signed SLSA provenance for
-the three release families. It reads the release by tag and requires it to be
+the 4 release families. It reads the release by tag and requires it to be
 published and immutable, requires the tag to resolve to the recorded commit,
-downloads the release's `.tar.gz` asset and compares its SHA-256 with the digest
-GitHub reports, then runs `gh attestation verify` with the signer workflow and
-the recorded policy pin as `--signer-digest`, the tag as `--source-ref` and the
-commit as `--source-digest`. The verified certificate must name exactly the
-recorded run. The archive and skills releases are signed by
-`publish-archives.yml`, Python releases by `release-python.yml`. The same audit
-reads the published releases and requires the newest release in the family's
-tag namespace, by publication time, to be the recorded tag, because a release
-can be published without a successful run to show for it.
+downloads the release's `.tar.gz` asset (for a binary release, its
+`SHA256SUMS`) and compares its SHA-256 with the digest GitHub reports, then runs
+`gh attestation verify` with the signer workflow and the recorded policy pin as
+`--signer-digest`, the tag as `--source-ref` and the commit as
+`--source-digest`. The verified certificate must name exactly the recorded run.
+The archive and skills releases are signed by `publish-archives.yml`, binary
+releases by `release-binary.yml` and Python releases by `release-python.yml`.
+The same audit reads the published releases and requires the newest release in
+the family's tag namespace, by publication time, to be the recorded tag,
+because a release can be published without a successful run to show for it.
+A scheduled job of its own audits each binary canary's executables against a
+fresh RustSec advisory database, as the README describes.
 
 From 1 October 2026 GitHub deletes workflow runs after the repository's
 retention period, at most 90 days for a public repository, so every recorded

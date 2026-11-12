@@ -20,6 +20,8 @@ zip="$dist/$base.zip"
 tar="$dist/$base.tar.gz"
 sbom="$dist/$base.spdx.json"
 linux="$dist/$base-x86_64-unknown-linux-musl"
+linux_arm64="$dist/$base-aarch64-unknown-linux-musl"
+macos_arm64="$dist/$base-aarch64-apple-darwin"
 windows="$dist/$base-x86_64-pc-windows-msvc"
 checksums="$dist/SHA256SUMS"
 # The signed provenance bundle the workflow wrote after attestation.
@@ -28,6 +30,8 @@ provenance="$dist/$base.intoto.jsonl"
 assets=(
   "$zip" "$tar" "$sbom"
   "$linux.tar.gz" "$linux.spdx.json"
+  "$linux_arm64.tar.gz" "$linux_arm64.spdx.json"
+  "$macos_arm64.tar.gz" "$macos_arm64.spdx.json"
   "$windows.zip" "$windows.spdx.json"
   "$checksums" "$provenance"
 )
@@ -42,6 +46,10 @@ upload_asset "$tar" application/gzip Deterministic%20source%20tar%20archive
 upload_asset "$sbom" application/spdx+json SPDX%202.3%20source%20SBOM
 upload_asset "$linux.tar.gz" application/gzip Linux%20x86_64%20musl%20executable
 upload_asset "$linux.spdx.json" application/spdx+json SPDX%202.3%20Linux%20executable%20SBOM
+upload_asset "$linux_arm64.tar.gz" application/gzip Linux%20arm64%20musl%20executable
+upload_asset "$linux_arm64.spdx.json" application/spdx+json SPDX%202.3%20Linux%20arm64%20executable%20SBOM
+upload_asset "$macos_arm64.tar.gz" application/gzip macOS%20arm64%20executable
+upload_asset "$macos_arm64.spdx.json" application/spdx+json SPDX%202.3%20macOS%20arm64%20executable%20SBOM
 upload_asset "$windows.zip" application/zip Windows%20x86_64%20executable
 upload_asset "$windows.spdx.json" application/spdx+json SPDX%202.3%20Windows%20executable%20SBOM
 upload_asset "$checksums" text/plain SHA-256%20checksums

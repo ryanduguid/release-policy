@@ -10,14 +10,14 @@ use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use std::path::Path;
 use std::sync::LazyLock;
 
-const FAMILIES: [&str; 4] = ["archive", "python", "skills", "verify"];
+const FAMILIES: [&str; 5] = ["archive", "binary", "python", "skills", "verify"];
 // A release family publishes on a tag, so a success newer than the recorded
 // evidence means that evidence has been overtaken and a person should look.
 // The verification consumer runs on every push to its default branch, where a
 // newer success is the ordinary state: requiring identity there made the
 // manifest stale within a day of every consumer push and proved nothing the
 // current-pin check does not prove directly.
-const RELEASE_FAMILIES: [&str; 3] = ["archive", "python", "skills"];
+const RELEASE_FAMILIES: [&str; 4] = ["archive", "binary", "python", "skills"];
 // Successful runs are read page by page until the relevant namespaced run
 // appears, because a repository with busy sibling namespaces can hide the
 // recorded run behind newer successes from other namespaces. Ten pages of a
@@ -45,12 +45,21 @@ const POLICY_REPOSITORY: &str = "ryanduguid/release-policy";
 const RETENTION_DAYS: i64 = 90;
 const EXPIRY_MARGIN_DAYS: i64 = 1;
 // The release-policy workflow whose certificate signs each release family's
-// provenance, read from verified attestations of the 4 October 2026 releases.
+// provenance, read from verified attestations of the 4 October 2026 releases
+// and, for the binary family, of release-policy v0.3.0 on 29 October 2026.
 fn signer_workflow(family: &str) -> &'static str {
     match family {
+        "binary" => ".github/workflows/release-binary.yml",
         "python" => ".github/workflows/release-python.yml",
         _ => ".github/workflows/publish-archives.yml",
     }
+}
+// The asset whose provenance is verified: each other release family's one tar
+// archive. A binary release ships a tar archive for each Unix target as well,
+// so its SHA256SUMS, which the provenance also covers and which lists every
+// archive, stands for the release.
+fn provenance_asset(family: &str) -> Option<&'static str> {
+    (family == "binary").then_some("SHA256SUMS")
 }
 pub const SLSA_PROVENANCE: &str = "https://slsa.dev/provenance/v1";
 
@@ -1400,19 +1409,20 @@ impl Live for GhCli {
                 )));
             }
         };
+        let wanted = provenance_asset(&canary.family);
         let assets = listed
             .into_iter()
             .filter(|a| {
+                let name = a.get("name").map_or(String::new(), Json::py_str);
                 matches!(a, Json::Object(_))
-                    && a.get("name")
-                        .map_or(String::new(), Json::py_str)
-                        .ends_with(".tar.gz")
+                    && wanted.map_or(name.ends_with(".tar.gz"), |wanted| name == wanted)
             })
             .collect::<Vec<_>>();
         if assets.len() != 1 {
             return Err(Failure::Runtime(format!(
-                "release {reference} has {} .tar.gz assets, expected 1",
-                assets.len()
+                "release {reference} has {} {} assets, expected 1",
+                assets.len(),
+                wanted.unwrap_or(".tar.gz")
             )));
         }
         let name = assets[0].get("name").unwrap().py_str();

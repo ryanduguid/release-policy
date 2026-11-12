@@ -245,8 +245,12 @@ finalise_release() {
 # exactly the assets finalise_release checked, so a reader never sees a partial
 # table. The caller's `if` suspends errexit here, so each failure returns itself.
 render_release_summary() {
-  local digests name digest
+  local digests name digest policy
   digests="$(cat /tmp/expected-digests)" || return 1
+  # The policy checkout beside this script, which the workflow has already
+  # required to be the commit it runs, so it is the signer digest.
+  policy="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse HEAD)" || return 1
+  [[ "$policy" =~ ^[0-9a-f]{40}$ ]] || return 1
   [[ "$(cut -f1 <<< "$digests")" = "$expected_assets" ]] || return 1
   printf '## Release %s\n\n| Asset | SHA-256 |\n| --- | --- |\n' "$tag"
   while IFS=$'\t' read -r name digest; do
@@ -260,7 +264,8 @@ render_release_summary() {
   # shellcheck disable=SC2016 # The reader's shell expands ASSET.
   printf 'gh attestation verify "$ASSET" --repo %s \\\n' "$GITHUB_REPOSITORY"
   printf '  --signer-workflow ryanduguid/release-policy/.github/workflows/%s.yml \\\n' "$1"
-  printf '  --source-ref refs/tags/%s\n```\n' "$tag"
+  printf '  --signer-digest %s \\\n' "$policy"
+  printf '  --source-ref refs/tags/%s --source-digest %s\n```\n' "$tag" "$expected_commit"
 }
 
 # Runs last, so a job summary never reports a release that failed. The release

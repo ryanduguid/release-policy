@@ -1211,15 +1211,19 @@ mod tests {
         // The missing parent is reported as such first, so it is created
         // before the over-long name is refused.
         // The message is the C library's strerror, as in Python: glibc says
-        // 'File name too long', musl 'Filename too long'.
+        // 'File name too long', musl 'Filename too long'. ENAMETOOLONG is 36
+        // on Linux but 63 on macOS, which keeps the BSD numbering.
         #[cfg(unix)]
         {
+            let errno = if cfg!(target_os = "macos") { 63 } else { 36 };
             let prefixes = [
-                "[Errno 36] File name too long",
-                "[Errno 36] Filename too long",
+                format!("[Errno {errno}] File name too long"),
+                format!("[Errno {errno}] Filename too long"),
             ];
             assert!(
-                prefixes.iter().any(|prefix| error.starts_with(prefix)),
+                prefixes
+                    .iter()
+                    .any(|prefix| error.starts_with(prefix.as_str())),
                 "{error}"
             );
             assert!(parent.is_dir());
