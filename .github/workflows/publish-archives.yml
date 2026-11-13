@@ -224,6 +224,8 @@ jobs:
           expected_before="$(printf '%s\n' "${assets[@]}" | LC_ALL=C sort)"
           actual_before="$(find dist -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
           test "$actual_before" = "$expected_before"
+          # Later steps glob <base>-*.zip, so every entry of that name must be a listed file.
+          test -z "$(find dist -maxdepth 1 -name "$base-*.zip" ! -type f)"
           (
             cd dist
             sha256sum -- "${assets[@]}" > SHA256SUMS

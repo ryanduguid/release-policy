@@ -603,7 +603,9 @@ git update-index --add \
   --cacheinfo "100644,$blob,skills/quoted-skill/SKILL.md" \
   --cacheinfo "100644,$blob,skills/quoted-skill/caf"$'\xc3\xa9'"/SKILL.md" \
   --cacheinfo "100644,$blob,skills/case-skill/SKILL.md" \
-  --cacheinfo "100644,$blob,skills/case-skill/references/skill.md"
+  --cacheinfo "100644,$blob,skills/case-skill/references/skill.md" \
+  --cacheinfo "100644,$blob,skills/attr-skill/SKILL.md" \
+  --cacheinfo "100644,$blob,skills/attr-skill/references/.gitattributes"
 # A listing longer than a pipe buffer, with SKILL.md sorted first.
 {
   printf '100644 %s\tskills/big-skill/SKILL.md\n' "$blob"
@@ -640,6 +642,8 @@ run_case "skill archives refuse a nested SKILL.md git would quote" \
   skills_refuse "exactly one SKILL.md" skills/quoted-skill
 run_case "skill archives refuse a nested lower-case skill.md" \
   skills_refuse "exactly one SKILL.md" skills/case-skill
+run_case "skill archives refuse a .gitattributes, which git archive applies" \
+  skills_refuse "holds a .gitattributes file" skills/attr-skill
 run_case "skill archives refuse an executable" \
   skills_refuse "an executable, link or submodule" skills/run-skill
 run_case "skill archives refuse a symbolic link" \

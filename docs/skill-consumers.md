@@ -77,7 +77,7 @@ match the `name` in `SKILL.md`, which the release does not check.
 The release refuses the whole list if an entry is not a safe relative path, is
 outside the source directory, has a folder name that is not lower-case and
 hyphenated or repeats another's, has no tracked files, holds an executable,
-symbolic link or submodule, has no `SKILL.md` at its top or has another, in
+symbolic link, submodule or `.gitattributes` file, has no `SKILL.md` at its top or has another, in
 any letter case, below it. It also refuses a ZIP over 32 MB, VirusTotal's
 upload limit. `virustotal-release.yml` uploads one asset every 16 seconds and
 stops after 30 minutes, so it cannot scan a release of more than about 100

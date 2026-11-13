@@ -380,8 +380,8 @@ run_archive_release_gates() {
 # Prints each directory once checked, and refuses the whole list on any bad
 # entry: an unsafe path, a folder name that is not lower-case hyphenated, a
 # repeated folder name, a directory with no tracked files at the commit, an
-# executable, symbolic link or submodule inside it, or a SKILL.md missing from
-# its top or present below in any letter case.
+# executable, symbolic link, submodule or .gitattributes inside it, or a
+# SKILL.md missing from its top or present below in any letter case.
 validate_skill_archives() {
   local commit="$1" source_directory="$2" list="$3" directory name entries paths count seen=" "
   while IFS= read -r directory; do
@@ -418,6 +418,12 @@ validate_skill_archives() {
       return 1
     fi
     paths="$(cut -f2- <<<"$entries")"
+    # git archive of the directory applies its own attributes, so export-ignore
+    # there could drop SKILL.md from a ZIP these checks passed.
+    if grep -q '\(^\|/\)\.gitattributes$' <<<"$paths"; then
+      echo "validate_skill_archives: $directory holds a .gitattributes file" >&2
+      return 1
+    fi
     # Any letter case: OpenAI also reads skill.md, and a case-insensitive file
     # system would merge the two.
     count="$(grep -ci '\(^\|/\)skill\.md$' <<<"$paths" || true)"
