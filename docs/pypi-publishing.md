@@ -147,14 +147,21 @@ with the candidate's SHA-256 digest, and unless the provenance PyPI's Integrity
 API serves for each file names the caller repository and `release.yml` as its
 publisher, was signed at the release commit, and verifies against the
 candidate file with `pypi-attestations`. A missing or extra file, a digest
-mismatch, missing or unverifiable provenance, and a failed request all fail
-it. Only a version or file PyPI does not list yet is read again, for up to 5
-minutes. The job installs the verifier from the hash-pinned
+mismatch, missing or unverifiable provenance, a redirect away from
+`https://pypi.org` and a failed request all fail it. Only a version or file
+PyPI does not list yet is read again, every 15 seconds for up to 5 minutes.
+The job installs the verifier from the hash-pinned
 `requirements-pypi-verify.txt` and holds no `id-token` scope, so nothing it
 installs can mint a publishing token. It cannot undo an upload: any other
 failure means PyPI serves something this run did not build or cannot prove it
 did, so investigate before anyone installs the release. After a failed
 request, re-run the job.
+
+A pass rests on what the check trusts: PyPI's TLS certificate as the runner's
+Python validates it, the digests PyPI's JSON API reports (the job does not
+download the files from PyPI), and Sigstore's root of trust as the pinned
+`sigstore` package ships it and refreshes it through TUF. It is one reading
+taken after the upload and does not watch for a later deletion or yank.
 
 ### One-time PyPI setup, per distribution
 

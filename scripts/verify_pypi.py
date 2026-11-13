@@ -14,8 +14,8 @@ unless every attestation bundle names the GitHub publisher REPOSITORY and
 WORKFLOW, every attestation's signing certificate names COMMIT as its source
 commit, and pypi-attestations verifies every attestation against the local
 file. A missing file, extra file, digest mismatch, missing or unverifiable
-provenance, or failed request fails; only a release or file PyPI does not
-serve yet is read again, for up to 5 minutes.
+provenance, redirect away from https://pypi.org or failed request fails; only
+a release or file PyPI does not serve yet is read again, for up to 5 minutes.
 """
 
 from __future__ import annotations
@@ -29,10 +29,12 @@ import subprocess
 import sys
 import tempfile
 import time
+from http.client import HTTPMessage
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import IO, Callable, Sequence
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 _PYPI = "https://pypi.org"
 _INTEGRITY_ACCEPT = "application/vnd.pypi.integrity.v1+json"
@@ -52,10 +54,25 @@ Fetch = Callable[[str, str], bytes | None]
 Verify = Callable[[Path, Path, str], None]
 
 
+class _PyPIRedirects(HTTPRedirectHandler):
+    """Follow a redirect only to another https://pypi.org URL."""
+
+    def redirect_request(
+        self, req: Request, fp: IO[bytes], code: int, msg: str, headers: HTTPMessage, newurl: str
+    ) -> Request | None:
+        if urlsplit(newurl)[:2] != ("https", "pypi.org"):
+            fp.close()
+            raise ValueError(f"{req.full_url} redirected to {newurl}, outside https://pypi.org")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_open = build_opener(_PyPIRedirects()).open
+
+
 def fetch(url: str, accept: str) -> bytes | None:
     """GET a PyPI URL; None when PyPI answers 404, ValueError on any other failure."""
     try:
-        with urlopen(Request(url, headers={"Accept": accept}), timeout=60) as response:
+        with _open(Request(url, headers={"Accept": accept}), timeout=60) as response:
             body: bytes = response.read(_MAX_RESPONSE_BYTES + 1)
     except HTTPError as error:
         if error.code == 404:
@@ -79,6 +96,8 @@ def verify_attestations(file: Path, provenance: Path, repository: str) -> None:
         result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=600)
     except subprocess.TimeoutExpired as error:
         raise ValueError(f"pypi-attestations did not finish verifying {file.name}") from error
+    except OSError as error:
+        raise ValueError(f"pypi-attestations could not be run: {error}") from error
     if result.returncode != 0:
         reason = (result.stderr.strip().splitlines() or ["no message"])[-1]
         raise ValueError(f"provenance for {file.name} does not verify: {reason}")
@@ -111,6 +130,7 @@ def _elements(data: bytes) -> list[tuple[int, bytes]]:
 
 def certificate_commit(der: bytes) -> str | None:
     """Return the source commit a signing certificate names, or None if it names none."""
+    commits: list[str] = []
     try:
         ((_, certificate),) = _elements(der)
         _, tbs = _elements(certificate)[0]
@@ -124,10 +144,13 @@ def certificate_commit(der: bytes) -> str | None:
                     ((text_tag, text),) = _elements(parts[-1][1])
                     if text_tag != 0x0C:
                         raise ValueError("source commit is not a UTF8String")
-                    return text.decode("utf-8")
+                    commits.append(text.decode("utf-8"))
     except (ValueError, IndexError) as error:
         raise ValueError(f"signing certificate is not readable: {error}") from error
-    return None
+    # RFC 5280 section 4.2: a certificate must not include an extension twice.
+    if len(commits) > 1:
+        raise ValueError("signing certificate names its source commit more than once")
+    return commits[0] if commits else None
 
 
 def _served_files(raw: bytes, label: str) -> dict[str, str]:

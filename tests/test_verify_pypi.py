@@ -11,12 +11,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.server
 import io
 import json
 import subprocess
 import tempfile
+import threading
 import unittest
+import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
+from http.client import HTTPMessage
 from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError, URLError
@@ -293,6 +297,15 @@ class CertificateTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "signing certificate is not readable"):
                     verify_pypi.certificate_commit(data)
 
+    def test_refuses_a_certificate_that_names_its_source_commit_twice(self) -> None:
+        good = der(0x30, der(0x06, DIGEST_OID) + der(0x04, der(0x0C, COMMIT.encode())))
+        other = der(0x30, der(0x06, DIGEST_OID) + der(0x04, der(0x0C, b"2" * 40)))
+        for label, extensions in (("same commit", good + good), ("good then other", good + other)):
+            tbs = der(0x30, der(0x02, b"\x01") + der(0xA3, der(0x30, extensions)))
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(ValueError, "names its source commit more than once"):
+                    verify_pypi.certificate_commit(der(0x30, tbs))
+
 
 class FetchTests(unittest.TestCase):
     def open(self, body: bytes = b"{}") -> mock.MagicMock:
@@ -301,7 +314,7 @@ class FetchTests(unittest.TestCase):
         return response
 
     def test_returns_the_body_and_sends_only_the_accept_header(self) -> None:
-        with mock.patch.object(verify_pypi, "urlopen", return_value=self.open()) as opened:
+        with mock.patch.object(verify_pypi, "_open", return_value=self.open()) as opened:
             self.assertEqual(verify_pypi.fetch("https://pypi.org/a", "application/json"), b"{}")
         request = opened.call_args.args[0]
         self.assertEqual(request.full_url, "https://pypi.org/a")
@@ -312,19 +325,50 @@ class FetchTests(unittest.TestCase):
         def error(code: int) -> HTTPError:
             return HTTPError("https://pypi.org/a", code, "status", {}, None)  # type: ignore[arg-type]
 
-        with mock.patch.object(verify_pypi, "urlopen", side_effect=error(404)):
+        with mock.patch.object(verify_pypi, "_open", side_effect=error(404)):
             self.assertIsNone(verify_pypi.fetch("https://pypi.org/a", "application/json"))
         for failure, message in ((error(503), "answered HTTP 503"),
                                  (URLError("no route"), "could not be read: .*no route"),
                                  (TimeoutError("timed out"), "could not be read: timed out")):
             with self.subTest(message=message):
-                with mock.patch.object(verify_pypi, "urlopen", side_effect=failure):
+                with mock.patch.object(verify_pypi, "_open", side_effect=failure):
                     with self.assertRaisesRegex(ValueError, message):
                         verify_pypi.fetch("https://pypi.org/a", "application/json")
         large = self.open(b"x" * (16 * 1024 * 1024 + 1))
-        with mock.patch.object(verify_pypi, "urlopen", return_value=large):
+        with mock.patch.object(verify_pypi, "_open", return_value=large):
             with self.assertRaisesRegex(ValueError, "more than 16 MiB"):
                 verify_pypi.fetch("https://pypi.org/a", "application/json")
+
+    def test_refuses_a_redirect_outside_pypi_without_following_it(self) -> None:
+        reached: list[str] = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                reached.append(self.path)
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/other")
+                self.end_headers()
+
+            def log_message(self, *_: object) -> None:
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        url = f"http://127.0.0.1:{server.server_port}/pypi/demo-pkg/1.2.3/json"
+        with self.assertRaisesRegex(ValueError, "redirected to .*/other, outside https://pypi.org"):
+            verify_pypi.fetch(url, "application/json")
+        self.assertEqual(reached, ["/pypi/demo-pkg/1.2.3/json"])
+
+    def test_follows_a_redirect_within_pypi(self) -> None:
+        request = urllib.request.Request("https://pypi.org/pypi/Demo_Pkg/1.2.3/json")
+        followed = verify_pypi._PyPIRedirects().redirect_request(
+            request, io.BytesIO(), 301, "Moved", HTTPMessage(),
+            "https://pypi.org/pypi/demo-pkg/1.2.3/json")
+        self.assertIsNotNone(followed)
+        self.assertEqual(followed.full_url, "https://pypi.org/pypi/demo-pkg/1.2.3/json")  # type: ignore[union-attr]
 
 
 class VerifyAttestationsTests(unittest.TestCase):
@@ -355,6 +399,10 @@ class VerifyAttestationsTests(unittest.TestCase):
         stalled = subprocess.TimeoutExpired(["python"], 600)
         with mock.patch.object(verify_pypi.subprocess, "run", side_effect=stalled):
             with self.assertRaisesRegex(ValueError, "did not finish verifying"):
+                verify_pypi.verify_attestations(self.file, self.provenance, REPOSITORY)
+        missing = FileNotFoundError("No such file or directory: 'python'")
+        with mock.patch.object(verify_pypi.subprocess, "run", side_effect=missing):
+            with self.assertRaisesRegex(ValueError, "pypi-attestations could not be run"):
                 verify_pypi.verify_attestations(self.file, self.provenance, REPOSITORY)
 
 
