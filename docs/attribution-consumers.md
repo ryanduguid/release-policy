@@ -33,7 +33,9 @@ The commit must be available on GitHub before a consumer uses it. Review the
 policy revision and migrate each consumer separately. Do not use a branch or
 tag to select the workflow. This repository's own caller uses the local path
 `./.github/workflows/attribution-policy.yml`, so it always runs the revision it
-ships.
+ships. This prints the commit of this repository's latest release:
+
+    gh api repos/ryanduguid/release-policy/commits/$(gh api repos/ryanduguid/release-policy/releases/latest --jq .tag_name) --jq .sha
 
 Keep the consumer's `No AI attribution` workflow to one job:
 

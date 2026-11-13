@@ -46,6 +46,11 @@ workflows instead:
         secrets:
           vt-api-key: ${{ secrets.VT_API_KEY }}
 
+Replace `<full-40-char-commit-sha>` with a commit you have reviewed. This
+prints the commit of this repository's latest release:
+
+    gh api repos/ryanduguid/release-policy/commits/$(gh api repos/ryanduguid/release-policy/releases/latest --jq .tag_name) --jq .sha
+
 List every release workflow's `name` under `workflows`. For releases created
 by hand, trigger on `release: types: [published]` and pass
 `github.event.release.tag_name` as the tag. Use `workflow_dispatch` to scan a

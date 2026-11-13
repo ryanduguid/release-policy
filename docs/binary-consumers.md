@@ -2,8 +2,15 @@
 
 A Rust component that ships executables calls `release-binary.yml`. One tag
 gets one immutable release holding the deterministic source archives and an
-executable for each fixed target:
+executable for each fixed target (`.github/workflows/release.yml` in the
+consumer):
 
+    name: Release
+    on:
+      push:
+        tags: ["v*"]
+    permissions:
+      contents: read
     jobs:
       release:
         permissions:
@@ -16,6 +23,15 @@ executable for each fixed target:
           artifact-stem: example-tool
           required-checks: |
             .github/workflows/ci.yml: test
+
+Replace `<full-40-char-commit-sha>` with a commit you have reviewed. This
+prints the commit of this repository's latest release:
+
+    gh api repos/ryanduguid/release-policy/commits/$(gh api repos/ryanduguid/release-policy/releases/latest --jq .tag_name) --jq .sha
+
+Release v0.3.0, the latest on 13 November 2026, predates the Linux arm64 and
+macOS arm64 targets, `data-files` and several names in `binary`; use those
+only with a later commit.
 
 `binary` names the Cargo binary target when it differs from `artifact-stem`,
 or several targets separated by spaces; each archive ships all of them.
