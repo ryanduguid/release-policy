@@ -26,7 +26,14 @@ import build_release_archives as release_archives  # noqa: E402
 # The consumer-facing adapter takes no version-file input; the privileged core
 # it calls keeps its own, defaulted to VERSION.
 ADAPTER_INPUTS = ("artifact-stem", "source-directory", "tag-prefix", "required-checks")
-CORE_INPUTS = ("required-checks", "artifact-stem", "source-directory", "tag-prefix", "version-file")
+CORE_INPUTS = (
+    "required-checks",
+    "artifact-stem",
+    "source-directory",
+    "tag-prefix",
+    "version-file",
+    "skill-archives",
+)
 
 
 def _sha256(path: Path) -> str:
@@ -1018,7 +1025,8 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             upload,
         )
         self.assertIn("overwrite: false", upload)
-        self.assertEqual(4, len(set(action_asset_paths)))
+        # The 4 fixed assets and the skill upload ZIP glob.
+        self.assertEqual(5, len(set(action_asset_paths)))
         self.assertNotIn("consumer/dist/", core)
         self.assertIn(
             "working-directory: ${{ steps.inputs.outputs.source-path }}",
@@ -1065,7 +1073,7 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn('--bundle "$base.intoto.jsonl"', verify)
         self.assertNotIn("intoto", inventory)
         self.assertIn('provenance="$dist/$base.intoto.jsonl"', publication_script)
-        self.assertIn('"$checksums" "$provenance")', publication_script)
+        self.assertIn('"$checksums" "$provenance" "${skill_zips[@]}")', publication_script)
         self.assertIn(
             'upload_asset "$provenance" application/jsonl', publication_script
         )
