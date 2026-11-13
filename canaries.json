@@ -45,11 +45,11 @@
     {
       "current_policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
       "evidence": {
-        "head_sha": "09743d381e260d7060426e0b4a5a71608cdd84b4",
-        "policy_sha": "0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c",
-        "ref": "v0.5.0",
-        "run_id": 40595535947,
-        "started_at": "2026-10-27T22:32:01Z"
+        "head_sha": "252816621a74b7a885c29f451c2a3ab1fabd9925",
+        "policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
+        "ref": "v0.7.0",
+        "run_id": 43530289196,
+        "started_at": "2026-11-13T23:52:27Z"
       },
       "family": "skills",
       "policy_workflow": ".github/workflows/release-skills.yml",
