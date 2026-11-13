@@ -145,11 +145,37 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn("policy/scripts/build_binary.sh", script)
         self.assertIn("DATA_FILES: ${{ inputs.data-files }}\n", script)
         self.assertIn('"$EPOCH" "$DATA_FILES"', script)
+        self.assertIn("RELEASE_SOURCE_COMMIT: ${{ github.sha }}\n", script)
         # The packaged documents must be the tagged blobs the publisher compares.
         exact = self.step(build, "Check out files exactly as committed")
         self.assertIn("git config --global core.autocrlf false", exact)
         self.assertLess(build.index(exact),
                         build.index(self.step(build, "Check out the tagged consumer source")))
+
+    @unittest.skipUnless(shutil.which("bash"), "bash required")
+    def test_the_build_exports_only_a_full_release_source_commit(self) -> None:
+        step = self.step(self.job("build"), "Test, build, package and check the executables")
+        script = re.search(r"(?s)\n        run: \|\n((?:          .*\n)+)", step)
+        assert script is not None
+        workspace = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        stub = workspace / "policy" / "scripts" / "build_binary.sh"
+        stub.parent.mkdir(parents=True)
+        stub.write_text('printf %s "$RELEASE_SOURCE_COMMIT" > "$GITHUB_WORKSPACE/seen"\n',
+                        encoding="utf-8")
+        for commit, built in (("a" * 40, True), ("", False), ("a" * 39, False), ("A" * 40, False)):
+            with self.subTest(commit=commit):
+                (workspace / "seen").unlink(missing_ok=True)
+                result = subprocess.run(  # nosec B603 B607  # nosemgrep
+                    ["bash", "-c", re.sub(r"(?m)^ {10}", "", script.group(1))],
+                    env={**os.environ, **dict.fromkeys(
+                        ("TARGET", "STEM", "VERSION", "BINARY", "SOURCE_PATH", "RUNNER_TEMP",
+                         "EPOCH", "DATA_FILES"), "x"),
+                         "GITHUB_WORKSPACE": str(workspace), "RELEASE_SOURCE_COMMIT": commit},
+                    check=False, capture_output=True, text=True)
+                self.assertEqual(built, result.returncode == 0, result.stderr)
+                seen = workspace / "seen"
+                self.assertEqual(commit if built else None,
+                                 seen.read_text(encoding="utf-8") if seen.exists() else None)
 
     def assert_in_order(self, job: str, *names: str) -> None:
         positions = [job.index(self.step(job, name)) for name in names]

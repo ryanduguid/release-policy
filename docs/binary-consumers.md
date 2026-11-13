@@ -71,6 +71,21 @@ names its TLS and DNS tests here; the release workflow cannot know them.
 - `RELEASE_NOTES.md` with the version header the [release gates](../scripts/gates.sh)
   require.
 
+## Recording the released commit
+
+The build step sets `RELEASE_SOURCE_COMMIT` to the released commit, which the
+`checks` job required to be `main`'s head, and refuses to build unless it is
+40 lowercase hexadecimal characters. `cargo test` and the build both see it, so
+a crate can record it at compile time:
+
+    const SOURCE_COMMIT: &str = match option_env!("RELEASE_SOURCE_COMMIT") {
+        Some(commit) => commit,
+        None => "unknown",
+    };
+
+Builds outside this workflow, and callers pinned to a policy commit from
+before this change, leave it unset.
+
 ## What the workflow does
 
 1. `checks` holds only `actions: read` and `contents: read`, never fetches the
