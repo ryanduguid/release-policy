@@ -28,8 +28,8 @@ on:
         default: VERSION
       skill-archives:
         description: >-
-          Tracked skill directories, one per line, each shipped as its own
-          upload ZIP named <stem>-<version>-<directory name>.zip.
+          Tracked skill directories, one per line, each shipped as its own upload ZIP,
+          or one <parent>/* line whose directories' ZIPs ship in one bundle ZIP.
         required: false
         type: string
         default: ""
@@ -183,18 +183,30 @@ jobs:
           # Each skill upload ZIP is built from the tagged tree like the
           # source archives; only its ZIP ships.
           . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
-          skills="$(validate_skill_archives "$commit" \
+          skills="$(expand_skill_archives "$commit" \
             "${{ steps.inputs.outputs.source-directory }}" "$SKILL_ARCHIVES")"
+          # A <parent>/* line, which expand_skill_archives has checked is the only
+          # line, ships the same ZIPs inside one bundle: one asset to scan.
+          skill_zips="$dist"
+          if [[ "$SKILL_ARCHIVES" == *"/*"* ]]; then
+            skill_zips="$RUNNER_TEMP/skill-bundle"
+            mkdir -- "$skill_zips"
+          fi
           while IFS= read -r skill; do
             [[ -n "$skill" ]] || continue
             python "$GITHUB_WORKSPACE/policy/scripts/build_release_archives.py" \
               --commit "$commit" --prefix "${skill##*/}/" --source-directory "$skill" \
               --output-base "$RUNNER_TEMP/skill-archives/$stem-$version-${skill##*/}"
-            mv -- "$RUNNER_TEMP/skill-archives/$stem-$version-${skill##*/}.zip" "$dist/"
+            mv -- "$RUNNER_TEMP/skill-archives/$stem-$version-${skill##*/}.zip" "$skill_zips/"
           done <<<"$skills"
+          if [[ "$skill_zips" != "$dist" ]]; then
+            python "$GITHUB_WORKSPACE/policy/scripts/build_skill_bundle.py" \
+              --mtime "$(git show -s --format=%ct "$commit")" \
+              --output "$dist/$stem-$version-skills.bundle.zip" "$skill_zips"/*.zip
+          fi
           # VirusTotal's upload limit, so the release scan still covers each one.
           if [[ -n "$(find "$dist" -maxdepth 1 -name "$stem-$version-*.zip" -size +32M)" ]]; then
-            echo "a skill upload ZIP is over 32 MB" >&2
+            echo "a skill upload ZIP or bundle is over 32 MB" >&2
             exit 1
           fi
 
@@ -219,7 +231,11 @@ jobs:
           assets=("$base.zip" "$base.tar.gz" "$base.spdx.json")
           while IFS= read -r skill; do
             skill="${skill%$'\r'}"
-            [[ -z "$skill" ]] || assets+=("$base-${skill##*/}.zip")
+            case "$skill" in
+              "") ;;
+              */\*) assets+=("$base-skills.bundle.zip") ;;
+              *) assets+=("$base-${skill##*/}.zip") ;;
+            esac
           done <<<"$SKILL_ARCHIVES"
           expected_before="$(printf '%s\n' "${assets[@]}" | LC_ALL=C sort)"
           actual_before="$(find dist -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"

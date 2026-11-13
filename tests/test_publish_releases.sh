@@ -11,7 +11,7 @@ trap 'rm -rf "$FIXTURE"' EXIT
 export FIXTURE
 family="${1:-archives}"
 case "$family" in
-  archives) asset_names=(example-1.2.3.zip example-1.2.3.tar.gz example-1.2.3.spdx.json SHA256SUMS example-1.2.3.intoto.jsonl example-1.2.3-example-skill.zip) ;;
+  archives) asset_names=(example-1.2.3.zip example-1.2.3.tar.gz example-1.2.3.spdx.json SHA256SUMS example-1.2.3.intoto.jsonl example-1.2.3-example-skill.zip example-1.2.3-skills.bundle.zip) ;;
   binaries) asset_names=(example-1.2.3.zip example-1.2.3.tar.gz example-1.2.3.spdx.json example-1.2.3-x86_64-unknown-linux-musl.tar.gz example-1.2.3-x86_64-unknown-linux-musl.spdx.json example-1.2.3-aarch64-unknown-linux-musl.tar.gz example-1.2.3-aarch64-unknown-linux-musl.spdx.json example-1.2.3-aarch64-apple-darwin.tar.gz example-1.2.3-aarch64-apple-darwin.spdx.json example-1.2.3-x86_64-pc-windows-msvc.zip example-1.2.3-x86_64-pc-windows-msvc.spdx.json SHA256SUMS example-1.2.3.intoto.jsonl) ;;
   python) asset_names=(example-1.2.3-py3-none-any.whl example-1.2.3.tar.gz example-1.2.3.spdx.json release-manifest.json SHA256SUMS example-1.2.3.intoto.jsonl) ;;
   *) exit 64 ;;
@@ -101,6 +101,9 @@ gh() {
         # A skill upload ZIP is the only labelled asset whose label names it.
         example-1.2.3-example-skill.zip)
           [[ "$endpoint" = *"&label=Upload%20ZIP%20for%20skill%20example-skill" ]] || return 1
+          expected_media=application/zip ;;
+        example-1.2.3-skills.bundle.zip)
+          [[ "$endpoint" = *"&label=Bundle%20of%20skill%20upload%20ZIPs" ]] || return 1
           expected_media=application/zip ;;
         example-1.2.3.tar.gz|example-1.2.3-*-linux-musl.tar.gz|example-1.2.3-aarch64-apple-darwin.tar.gz) expected_media=application/gzip ;;
         example-1.2.3.spdx.json|example-1.2.3-*-*.spdx.json) expected_media=application/spdx+json ;;

@@ -671,6 +671,67 @@ run_case "skill archives refuse a directory outside the source directory" \
 run_case "skill archives refuse a bad entry after a good one" \
   skills_refuse "exactly one SKILL.md" $'skills/good-skill\nskills/bare-skill'
 
+# --- skill archive parent lines ---
+# Git lists a-skill-two before a-skill; byte order puts it after.
+mkdir -p pack/a-skill/references pack/a-skill-two pack/b-skill emptypack linkpack/a-skill
+for file in pack/a-skill/SKILL.md pack/a-skill-two/SKILL.md pack/b-skill/SKILL.md \
+    linkpack/a-skill/SKILL.md; do
+  printf 'skill\n' > "$file"
+done
+printf 'notes\n' > pack/a-skill/references/notes.md
+printf 'read me\n' > pack/README.md
+printf 'read me\n' > emptypack/README.md
+git add pack emptypack linkpack
+git update-index --add --cacheinfo "120000,$blob,linkpack/other-skill"
+git commit --quiet -m "skill parents"
+pack_commit="$(git rev-parse HEAD)"
+mkdir -p pack/loose-skill && printf 'skill\n' > pack/loose-skill/SKILL.md
+expand_print() {
+  local printed
+  printed="$(expand_skill_archives "$pack_commit" "$1" "$2")" && [[ "$printed" == "$3" ]]
+}
+expand_refuse() {
+  local errors
+  if errors="$(expand_skill_archives "$pack_commit" "${3:-.}" "$2" 2>&1 >/dev/null)"; then
+    return 1
+  fi
+  [[ "$errors" == *"$1"* ]]
+}
+run_case "a parent line expands to its tracked directories in byte order" expand_print . \
+  $'\npack/*\r\n' $'pack/a-skill\npack/a-skill-two\npack/b-skill'
+run_case "a parent line passes inside the source directory" expand_print pack \
+  'pack/*' $'pack/a-skill\npack/a-skill-two\npack/b-skill'
+run_case "a list without a parent line passes through unchanged" expand_print . \
+  $'pack/b-skill\r\npack/a-skill' $'pack/b-skill\npack/a-skill'
+run_case "an empty list expands to nothing" expand_print . "" ""
+run_case "a parent line refuses a parent with only files" \
+  expand_refuse "emptypack has no skill directories" 'emptypack/*'
+run_case "a parent line refuses a missing parent" \
+  expand_refuse "nopack has no skill directories" 'nopack/*'
+run_case "a parent line refuses a parent holding a symbolic link" \
+  expand_refuse "linkpack holds a symbolic link or submodule" 'linkpack/*'
+run_case "a parent line refuses a directory that is not a skill" \
+  expand_refuse "'Bad_Name' is not a lower-case hyphenated name" 'skills/*'
+run_case "a parent line refuses a parent outside the source directory" \
+  expand_refuse "pack/a-skill is outside packages/tool" 'pack/*' packages/tool
+run_case "a parent line refuses parent traversal" \
+  expand_refuse "'..' is not a safe relative path" '../*'
+run_case "a parent line refuses traversal inside the parent" \
+  expand_refuse "'pack/../..' is not a safe relative path" 'pack/../../*'
+run_case "a parent line refuses an empty parent" \
+  expand_refuse "'' is not a safe relative path" '/*'
+run_case "a parent line refuses an absolute parent" \
+  expand_refuse "'/etc' is not a safe relative path" '/etc/*'
+run_case "a parent line refuses another line" \
+  expand_refuse "a parent line (pack/*) must be the only skill-archives line" \
+  $'pack/*\npack/a-skill'
+run_case "a parent line refuses a second parent line" \
+  expand_refuse "must be the only skill-archives line" $'pack/*\nemptypack/*'
+run_case "a list refuses * other than as a whole last segment" \
+  expand_refuse "'pack/*/a-skill' is not a safe relative path" 'pack/*/a-skill'
+run_case "a list refuses * inside the last segment" \
+  expand_refuse "'pack/a*' is not a safe relative path" 'pack/a*'
+
 # Windows CI runs each publication family on its own runner and sets this.
 if [[ "${GATES_SKIP_PUBLICATION:-0}" != 1 ]]; then
   run_case "archive publication preserves draft ownership" bash "$HERE/test_publish_releases.sh"

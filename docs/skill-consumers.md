@@ -59,12 +59,31 @@ takes no such input.
 
 `skill-archives` is optional. Each line names one tracked skill directory,
 relative to the repository root, that ships as its own upload ZIP,
-`<stem>-<version>-<directory name>.zip`. No form takes a parent directory, so
-list every skill:
+`<stem>-<version>-<directory name>.zip`:
 
         with:
           skill-archives: |
             skills/payroll-check
+
+A pack with many skills can instead give one line, `<parent>/*`, for every
+directory directly inside a tracked parent at the tagged commit:
+
+        with:
+          skill-archives: |
+            .claude/skills/*
+
+The release then builds the same ZIP for each directory, byte for byte, and
+ships them together in one asset, `<stem>-<version>-skills.bundle.zip`, with
+the ZIPs at its top in byte order of their names. The bundle stores them
+uncompressed, each with the tagged commit's time, so a rebuild gives the same
+bytes. It is one asset however many skills the pack holds, so the VirusTotal
+scan below reports on the bundle, not on each ZIP inside it. Files directly
+in the parent are left out. A parent line must be the only line: a list that
+mixes it with other lines is refused, as is a parent that is not a safe
+relative path, holds a symbolic link or submodule, or has no directory. Every
+directory in it must pass the checks below, so one that is not a skill fails
+the release rather than being skipped. `*` anywhere but a whole last segment
+is refused. [ADR-0002](adr/0002-skill-archive-bundle.md) records why.
 
 Each ZIP is built from the tagged commit with `git archive`, like the source
 archives, and holds one top-level folder, named after the directory, with
@@ -79,11 +98,12 @@ outside the source directory, has a folder name that is not lower-case and
 hyphenated or repeats another's, has no tracked files, holds an executable,
 symbolic link, submodule or `.gitattributes` file, has no `SKILL.md` at its top or has another, in
 any letter case, below it. It also refuses a ZIP over 32 MB, VirusTotal's
-upload limit. `virustotal-release.yml` uploads one asset every 16 seconds and
-stops after 30 minutes, so it cannot scan a release of more than about 100
-assets. The ZIPs are
-listed in `SHA256SUMS` and covered by the provenance attestation, but not by
-the SBOM attestation, which covers the source archives only.
+upload limit, and a bundle over 32 MB. `virustotal-release.yml` uploads one
+asset every 16 seconds and stops after 30 minutes, so it cannot scan a release
+of more than about 100 assets; list fewer skills or use a parent line. The
+ZIPs and the bundle are listed in `SHA256SUMS` and covered by the provenance
+attestation, but not by the SBOM attestation, which covers the source archives
+only.
 
 `skills-verification-mode` is optional and defaults to the only supported
 mode, `subcontractor-accounting-v1`. Both workflows still accept it, so the
