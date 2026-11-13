@@ -25,7 +25,7 @@ import base64
 import hashlib
 import json
 import re
-import subprocess
+import subprocess  # nosec B404: runs only the pinned pypi-attestations verifier
 import sys
 import tempfile
 import time
@@ -39,6 +39,9 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 _PYPI = "https://pypi.org"
 _INTEGRITY_ACCEPT = "application/vnd.pypi.integrity.v1+json"
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+# A release PyPI does not list yet is read up to 21 times, 15 seconds apart: 5 minutes.
+_ATTEMPTS = 21
+_DELAY = 15.0
 _PROJECT = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?\Z")
 _VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9.!_-]*\Z")
 _FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+!-]*\Z")
@@ -93,7 +96,9 @@ def verify_attestations(file: Path, provenance: Path, repository: str) -> None:
         "--provenance-file", str(provenance), str(file),
     ]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=600)
+        result = subprocess.run(  # NOSONAR  # nosemgrep  # nosec B603: an argument list, no shell
+            command, capture_output=True, text=True, check=False, timeout=600
+        )
     except subprocess.TimeoutExpired as error:
         raise ValueError(f"pypi-attestations did not finish verifying {file.name}") from error
     except OSError as error:
@@ -211,6 +216,59 @@ def _check_provenance(raw: bytes, name: str, repository: str, commit: str, workf
                 )
 
 
+def _check_names(project: str, version: str, repository: str, commit: str, workflow: str) -> None:
+    for pattern, value, kind in (
+        (_PROJECT, project, "a valid project name"),
+        (_VERSION, version, "a valid version"),
+        (_REPOSITORY, repository, "an OWNER/REPO repository"),
+        (_FULL_SHA, commit, "a full commit SHA"),
+        (_WORKFLOW, workflow, "a workflow file name"),
+    ):
+        if not pattern.match(value):
+            raise ValueError(f"'{value}' is not {kind}")
+
+
+def _built_files(files: Sequence[Path]) -> dict[str, Path]:
+    built: dict[str, Path] = {}
+    for path in files:
+        if not _FILENAME.match(path.name) or not path.is_file() or path.is_symlink():
+            raise ValueError(f"{path} is not a regular distribution file")
+        if path.name in built:
+            raise ValueError(f"{path.name} is named twice")
+        built[path.name] = path
+    if not built:
+        raise ValueError("no files to compare")
+    return built
+
+
+def _read_release(get: Fetch, project: str, version: str, built: set[str]) -> dict[str, str]:
+    """PyPI's file list, read again only whilst the release is 404 or lacks a built file."""
+    label = f"{project} {version}"
+    served = None
+    for attempt in range(_ATTEMPTS):
+        raw = get(f"{_PYPI}/pypi/{project}/{version}/json", "application/json")
+        served = None if raw is None else _served_files(raw, label)
+        if served is not None and (set(served) - built or not built - set(served)):
+            break
+        if attempt + 1 < _ATTEMPTS:
+            time.sleep(_DELAY)
+    if served is None:
+        raise ValueError(f"PyPI does not serve {label}")
+    return served
+
+
+def _compare(served: dict[str, str], digests: dict[str, str], label: str) -> None:
+    if extra := sorted(set(served) - set(digests)):
+        raise ValueError(f"PyPI serves files for {label} that were not built: {extra}")
+    if missing := sorted(set(digests) - set(served)):
+        raise ValueError(f"PyPI does not serve these files for {label}: {missing}")
+    for name in sorted(digests):
+        if served[name] != digests[name]:
+            raise ValueError(
+                f"PyPI serves {name} with SHA-256 {served[name]}, built {digests[name]}"
+            )
+
+
 def verify_publication(
     project: str,
     version: str,
@@ -221,52 +279,14 @@ def verify_publication(
     workflow: str,
     get: Fetch = fetch,
     verify: Verify = verify_attestations,
-    attempts: int = 21,
-    delay: float = 15.0,
-    sleep: Callable[[float], None] = time.sleep,
 ) -> None:
     """Fail closed unless PyPI serves exactly FILES, each with verified provenance."""
-    if not _PROJECT.match(project):
-        raise ValueError(f"'{project}' is not a valid project name")
-    if not _VERSION.match(version):
-        raise ValueError(f"'{version}' is not a valid version")
-    if not _REPOSITORY.match(repository):
-        raise ValueError(f"'{repository}' is not an OWNER/REPO repository")
-    if not _FULL_SHA.match(commit):
-        raise ValueError(f"'{commit}' is not a full commit SHA")
-    if not _WORKFLOW.match(workflow):
-        raise ValueError(f"'{workflow}' is not a workflow file name")
-    built: dict[str, Path] = {}
-    for path in files:
-        if not _FILENAME.match(path.name) or not path.is_file() or path.is_symlink():
-            raise ValueError(f"{path} is not a regular distribution file")
-        if path.name in built:
-            raise ValueError(f"{path.name} is named twice")
-        built[path.name] = path
-    if not built:
-        raise ValueError("no files to compare")
+    _check_names(project, version, repository, commit, workflow)
+    built = _built_files(files)
     digests = {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in built.items()}
-
     project = re.sub(r"[-_.]+", "-", project).lower()
     label = f"{project} {version}"
-    for attempt in range(attempts):
-        raw = get(f"{_PYPI}/pypi/{project}/{version}/json", "application/json")
-        served = None if raw is None else _served_files(raw, label)
-        if served is not None and (set(served) - set(digests) or not set(digests) - set(served)):
-            break
-        if attempt + 1 < attempts:
-            sleep(delay)
-    if served is None:
-        raise ValueError(f"PyPI does not serve {label}")
-    if extra := sorted(set(served) - set(digests)):
-        raise ValueError(f"PyPI serves files for {label} that were not built: {extra}")
-    if missing := sorted(set(digests) - set(served)):
-        raise ValueError(f"PyPI does not serve these files for {label}: {missing}")
-    for name in sorted(digests):
-        if served[name] != digests[name]:
-            raise ValueError(
-                f"PyPI serves {name} with SHA-256 {served[name]}, built {digests[name]}"
-            )
+    _compare(_read_release(get, project, version, set(built)), digests, label)
 
     with tempfile.TemporaryDirectory() as scratch:
         for name in sorted(built):

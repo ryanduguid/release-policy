@@ -114,13 +114,15 @@ class Fixture(unittest.TestCase):
                   **overrides: object) -> str:
         arguments: dict[str, object] = {
             "repository": REPOSITORY, "commit": COMMIT, "workflow": WORKFLOW,
-            "get": self.get, "verify": self.verify, "attempts": 3, "delay": 7.0,
-            "sleep": self.sleeps.append,
+            "get": self.get, "verify": self.verify,
         }
         arguments.update(overrides)
         files = arguments.pop("files", self.paths)
         output = io.StringIO()
-        with redirect_stdout(output):
+        with (mock.patch.object(verify_pypi, "_ATTEMPTS", 3),
+              mock.patch.object(verify_pypi, "_DELAY", 7.0),
+              mock.patch.object(verify_pypi.time, "sleep", side_effect=self.sleeps.append),
+              redirect_stdout(output)):
             verify_pypi.verify_publication(project, version, files, **arguments)  # type: ignore[arg-type]
         return output.getvalue()
 
@@ -173,6 +175,9 @@ class ReadBackTests(Fixture):
         self.run_check()
         self.assertEqual(self.sleeps, [7.0, 7.0])
         self.assertEqual(len(self.verified), 2)
+
+    def test_waits_at_most_5_minutes_by_default(self) -> None:
+        self.assertEqual((verify_pypi._ATTEMPTS - 1) * verify_pypi._DELAY, 300.0)
 
     def test_refuses_a_file_pypi_serves_no_provenance_for(self) -> None:
         self.answers[integrity_url(WHEEL)] = None
