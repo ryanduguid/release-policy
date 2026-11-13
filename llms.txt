@@ -5,8 +5,9 @@
 > repositories. Consumers pin a full policy commit. Policy checks establish release
 > evidence, not accounting correctness.
 
-This repository has no package installation command. `v0.3.0` (28 October 2026) is the
-first release with an artefact; `v0.1.0` and `v0.2.0` are notes-only source markers, not
+This repository has no package installation command. `v0.4.0` is the latest release, with
+executables for Linux, macOS arm64 and Windows; `v0.3.0` (28 October 2026) was the first
+release with an artefact; `v0.1.0` and `v0.2.0` are notes-only source markers, not
 distributable releases.
 
 ## Start

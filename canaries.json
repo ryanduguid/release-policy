@@ -3,11 +3,11 @@
     {
       "current_policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
       "evidence": {
-        "head_sha": "b1f7833185a7c05843d907da130dce5d00e5cf49",
-        "policy_sha": "0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c",
-        "ref": "v0.4.0",
-        "run_id": 40595693877,
-        "started_at": "2026-10-27T22:33:14Z"
+        "head_sha": "89309b040cf259487313b599957d38ab517054bd",
+        "policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
+        "ref": "v0.5.0",
+        "run_id": 43499356384,
+        "started_at": "2026-11-13T20:12:17Z"
       },
       "family": "archive",
       "policy_workflow": ".github/workflows/release-archive.yml",
@@ -15,7 +15,7 @@
       "workflow_path": ".github/workflows/release.yml"
     },
     {
-      "current_policy_sha": "5094c69ebf14523e4787000e5ff3cdcb03c10f6e",
+      "current_policy_sha": "ab9e82365637a1cd1ed3190533cffb048e8ddfed",
       "evidence": {
         "head_sha": "c401d69de80d7d679ae02359daf6f19f44f908b6",
         "policy_sha": "5094c69ebf14523e4787000e5ff3cdcb03c10f6e",

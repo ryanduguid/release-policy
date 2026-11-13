@@ -29,9 +29,9 @@ prints the commit of this repository's latest release:
 
     gh api repos/ryanduguid/release-policy/commits/$(gh api repos/ryanduguid/release-policy/releases/latest --jq .tag_name) --jq .sha
 
-Release v0.3.0, the latest on 13 November 2026, predates the Linux arm64 and
-macOS arm64 targets, `data-files` and several names in `binary`; use those
-only with a later commit.
+Release v0.3.0 predates the Linux arm64 and macOS arm64 targets, `data-files`
+and several names in `binary`; use those only with v0.4.0's commit or a later
+one.
 
 `binary` names the Cargo binary target when it differs from `artifact-stem`,
 or several targets separated by spaces; each archive ships all of them.
