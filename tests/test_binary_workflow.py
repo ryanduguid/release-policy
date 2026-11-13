@@ -391,6 +391,45 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn("usage:", result.stdout)
 
 
+@unittest.skipUnless(shutil.which("bash"), "bash required")
+class SbomTargetCheckTests(YamlContractAssertions, unittest.TestCase):
+    COMMON = ("release-policy", "regex", "regex-automata")
+    LISTS = {
+        "linux": ("linux-raw-sys", "rustix"),
+        "linux-arm64": ("linux-raw-sys", "rustix", "errno"),
+        "macos-arm64": ("core-foundation-sys", "errno"),
+        "windows": ("windows-sys",),
+    }
+
+    def check(self, lists: dict[str, tuple[str, ...]]) -> subprocess.CompletedProcess[str]:
+        jobs = self.mapping_block((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"), "jobs", indent=0)
+        job = self.mapping_block(jobs, "binary-sbom-check", indent=2)
+        step = job[job.index("      - name: Require each SBOM to describe its own target's dependencies\n"):]
+        script = re.match(r"(?s).*?\n        run: \|\n((?:          .*\n|\n)+)", step)
+        assert script is not None
+        temporary = self.enterContext(tempfile.TemporaryDirectory())
+        shim = Path(temporary, "bin", "python")  # the step runs `python`
+        shim.parent.mkdir()
+        shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
+        shim.chmod(0o755)
+        for name, crates in lists.items():
+            packages = [{"name": crate} for crate in (*self.COMMON, *crates)]
+            Path(temporary, f"{name}.spdx.json").write_text(json.dumps({"packages": packages}))
+        env = {**os.environ, "RUNNER_TEMP": temporary,
+               "PATH": f"{shim.parent}{os.pathsep}{os.environ['PATH']}"}
+        return subprocess.run(  # nosec B603 B607  # nosemgrep
+            ["bash", "-c", re.sub(r"(?m)^ {10}", "", script.group(1))],
+            cwd=ROOT, env=env, check=False, capture_output=True, text=True)
+
+    def test_each_target_listing_its_own_crates_passes(self) -> None:
+        self.assertEqual(0, self.check(self.LISTS).returncode)
+
+    def test_swapped_macos_and_linux_arm64_lists_fail(self) -> None:
+        for sbom, other in (("macos-arm64", "linux-arm64"), ("linux-arm64", "macos-arm64")):
+            with self.subTest(sbom=sbom):
+                self.assertNotEqual(0, self.check({**self.LISTS, sbom: self.LISTS[other]}).returncode)
+
+
 # Stands in for cargo-audit: records where and how it ran, then behaves as the
 # real tool does for the case under test. As in the real tool, an advisory is
 # reported after every binary's data was found.
