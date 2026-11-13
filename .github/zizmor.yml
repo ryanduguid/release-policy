@@ -18,5 +18,5 @@ rules:
       # pin family tests require these relative calls.
       - no-ai-attribution.yml:40
       - release-archive.yml:172
-      - release-skills.yml:94
-      - release-skills.yml:105
+      - release-skills.yml:101
+      - release-skills.yml:112
