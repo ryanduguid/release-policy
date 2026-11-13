@@ -238,10 +238,16 @@ jobs:
           SOURCE_PATH: ${{ steps.inputs.outputs.source-path }}
           EPOCH: ${{ steps.release.outputs.epoch }}
           DATA_FILES: ${{ inputs.data-files }}
-        run: >-
-          bash "$GITHUB_WORKSPACE/policy/scripts/build_binary.sh"
-          "$TARGET" "$STEM" "$VERSION" "$BINARY" "$SOURCE_PATH"
-          "$GITHUB_WORKSPACE/consumer" "$RUNNER_TEMP/binary" "$EPOCH" "$DATA_FILES"
+          # The released commit, which the first job required to be main's
+          # head, for the consumer's build to record.
+          RELEASE_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+            || { echo "RELEASE_SOURCE_COMMIT is not a 40-hex commit" >&2; exit 1; }
+          bash "$GITHUB_WORKSPACE/policy/scripts/build_binary.sh" \
+            "$TARGET" "$STEM" "$VERSION" "$BINARY" "$SOURCE_PATH" \
+            "$GITHUB_WORKSPACE/consumer" "$RUNNER_TEMP/binary" "$EPOCH" "$DATA_FILES"
 
       - name: Hand the archive and its digest to the publisher
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
