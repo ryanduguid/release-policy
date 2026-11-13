@@ -21,8 +21,8 @@ on:
         type: string
       skill-archives:
         description: >-
-          Tracked skill directories, one per line, each shipped as its own
-          upload ZIP named <stem>-<version>-<directory name>.zip.
+          Tracked skill directories, one per line, each shipped as its own upload ZIP,
+          or one <parent>/* line whose directories' ZIPs ship in one bundle ZIP.
         required: false
         type: string
         default: ""

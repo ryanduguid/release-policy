@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -23,6 +24,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from tests.test_skill_workflows import YAML_KEY, YamlContractAssertions  # noqa: E402
 
 import build_release_archives as release_archives  # noqa: E402
+import build_skill_bundle as skill_bundle  # noqa: E402
 
 # The consumer-facing adapter takes no version-file input; the privileged core
 # it calls keeps its own, defaulted to VERSION.
@@ -548,6 +550,57 @@ class ReleaseArchiveBuilderTests(unittest.TestCase):
                 )
             self.assertEqual([keep], list(root.iterdir()))
             self.assertEqual(b"keep", keep.read_bytes())
+
+
+class SkillBundleBuilderTests(unittest.TestCase):
+    def write_archives(self, root: Path, names: tuple[str, ...]) -> list[Path]:
+        archives = []
+        for name in names:
+            path = root / name
+            path.write_bytes(name.encode() * 3)
+            archives.append(path)
+        return archives
+
+    def test_bundle_stores_each_archive_in_byte_order_with_fixed_metadata(self) -> None:
+        root = Path(self.enterContext(TemporaryDirectory()))
+        archives = self.write_archives(
+            root, ("example-1.2.3-b-skill.zip", "example-1.2.3-a.zip", "example-1.2.3-a-two.zip")
+        )
+        output = root / "bundle.zip"
+
+        code = skill_bundle.main(
+            ["--mtime", "1234567890", "--output", str(output), *map(str, archives)]
+        )
+
+        self.assertEqual(0, code)
+        with zipfile.ZipFile(output) as bundle:
+            entries = bundle.infolist()
+            # "-" sorts before ".", so a-two comes before a.
+            self.assertEqual(
+                ["example-1.2.3-a-two.zip", "example-1.2.3-a.zip", "example-1.2.3-b-skill.zip"],
+                [entry.filename for entry in entries],
+            )
+            for entry in entries:
+                with self.subTest(entry=entry.filename):
+                    self.assertEqual((2009, 2, 13, 23, 31, 30), entry.date_time)
+                    self.assertEqual(zipfile.ZIP_STORED, entry.compress_type)
+                    self.assertEqual(3, entry.create_system)
+                    self.assertEqual(0o100644 << 16, entry.external_attr)
+                    self.assertEqual(entry.filename.encode() * 3, bundle.read(entry))
+
+    def test_bundle_bytes_depend_only_on_the_archives_and_time(self) -> None:
+        root = Path(self.enterContext(TemporaryDirectory()))
+        archives = self.write_archives(root, ("example-1.2.3-a.zip", "example-1.2.3-b.zip"))
+        first, second = root / "first.zip", root / "second.zip"
+
+        skill_bundle.build_skill_bundle(output=first, archives=archives, mtime=1234567890)
+        skill_bundle.build_skill_bundle(
+            output=second, archives=archives[::-1], mtime=1234567890
+        )
+
+        self.assertEqual(first.read_bytes(), second.read_bytes())
+        with self.assertRaises(FileExistsError):
+            skill_bundle.build_skill_bundle(output=first, archives=archives, mtime=1234567890)
 
 
 class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
@@ -1094,18 +1147,22 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         )
         # The upload, attestation and publication steps glob these names, so a
         # directory the inventory's file listing skips would reach them unchecked.
-        for listed, extra_directory, accepted in (
-            ("skills/example-skill", None, True),
-            ("", "example-1.2.3-extra.zip", False),
-            ("skills/example-skill", "example-1.2.3-extra.zip", False),
+        for listed, skill_asset, extra_directory, accepted in (
+            ("skills/example-skill", "example-1.2.3-example-skill.zip", None, True),
+            ("skills/*", "example-1.2.3-skills.bundle.zip", None, True),
+            ("skills/*", "example-1.2.3-example-skill.zip", None, False),
+            ("", None, "example-1.2.3-extra.zip", False),
+            ("skills/example-skill", "example-1.2.3-example-skill.zip",
+             "example-1.2.3-extra.zip", False),
         ):
-            with self.subTest(listed=listed, extra_directory=extra_directory):
+            with self.subTest(listed=listed, skill_asset=skill_asset,
+                              extra_directory=extra_directory):
                 workspace = Path(self.enterContext(TemporaryDirectory()))
                 dist = workspace / "dist"
                 dist.mkdir()
                 names = ["example-1.2.3.zip", "example-1.2.3.tar.gz", "example-1.2.3.spdx.json"]
-                if listed:
-                    names.append("example-1.2.3-example-skill.zip")
+                if skill_asset:
+                    names.append(skill_asset)
                 for name in names:
                     (dist / name).write_bytes(name.encode())
                 if extra_directory:
@@ -1119,6 +1176,96 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
                     text=True,
                 )
                 self.assertEqual(accepted, result.returncode == 0, result.stderr)
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "POSIX bash required")
+    def test_build_step_ships_a_parent_line_as_one_deterministic_bundle(self) -> None:
+        core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
+            encoding="utf-8"
+        )
+        step = self.named_step(core, "Build deterministic source archives")
+        script = re.search(r"(?s)\n        run: \|\n((?:          .*\n)+)", step)
+        assert script is not None
+        workspace = Path(self.enterContext(TemporaryDirectory())).resolve()
+        consumer = workspace / "consumer"
+        consumer.mkdir()
+
+        def git(*args: str) -> str:
+            return subprocess.run(
+                ["git", *args], cwd=consumer, check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+        git("init", "--quiet", "-b", "main")
+        git("config", "user.email", "test@example.invalid")
+        git("config", "user.name", "Release Policy Test")
+        for relative in (
+            "skills/b-skill/SKILL.md",
+            "skills/a-skill/SKILL.md",
+            "skills/a-skill/references/notes.md",
+            "skills/README.md",
+        ):
+            (consumer / relative).parent.mkdir(parents=True, exist_ok=True)
+            (consumer / relative).write_text(f"{relative}\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "--quiet", "-m", "skills")
+        commit = git("rev-parse", "HEAD")
+        timestamp = int(git("show", "-s", "--format=%ct", commit))
+        code = re.sub(r"(?m)^ {10}", "", script.group(1))
+        for expression, value in (
+            ("${{ steps.release.outputs.stem }}", "example"),
+            ("${{ steps.release.outputs.version }}", "1.2.3"),
+            ("${{ steps.release.outputs.commit }}", commit),
+            ("${{ steps.release.outputs.prefix }}", "example-1.2.3/"),
+            ("${{ steps.inputs.outputs.source-directory }}", "."),
+            ("${{ steps.inputs.outputs.source-path }}", str(consumer)),
+            ('python "$GITHUB_WORKSPACE/policy/', f'"{sys.executable}" "{ROOT}/'),
+            ('"$GITHUB_WORKSPACE/policy/', f'"{ROOT}/'),
+        ):
+            self.assertIn(expression, code)
+            code = code.replace(expression, value)
+        self.assertNotIn("${{", code)
+
+        def build(listed: str, run: str) -> Path:
+            runner_temp = workspace / f"runner-{run}"
+            runner_temp.mkdir()
+            result = subprocess.run(  # nosec B603 B607  # nosemgrep
+                ["bash", "-c", code],
+                cwd=consumer,
+                env={**os.environ, "SKILL_ARCHIVES": listed,
+                     "RUNNER_TEMP": str(runner_temp), "TZ": "UTC"},
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+            return (consumer / "dist").rename(workspace / f"dist-{run}")
+
+        first = build("skills/*", "first")
+        second = build("skills/*", "second")
+        listed = build("skills/a-skill\nskills/b-skill", "listed")
+
+        bundle = "example-1.2.3-skills.bundle.zip"
+        skill_zips = ["example-1.2.3-a-skill.zip", "example-1.2.3-b-skill.zip"]
+        self.assertEqual(
+            [bundle, "example-1.2.3.tar.gz", "example-1.2.3.zip"],
+            sorted(path.name for path in first.iterdir()),
+        )
+        self.assertEqual(
+            [*skill_zips, "example-1.2.3.tar.gz", "example-1.2.3.zip"],
+            sorted(path.name for path in listed.iterdir()),
+        )
+        self.assertEqual((first / bundle).read_bytes(), (second / bundle).read_bytes())
+        self.assertEqual(
+            {"a-skill/SKILL.md", "a-skill/references/notes.md"},
+            set(_zip_files(listed / skill_zips[0])),
+        )
+        # The commit time, at the 2-second resolution ZIP keeps.
+        *day, second_of_minute = time.gmtime(timestamp)[:6]
+        with zipfile.ZipFile(first / bundle) as archive:
+            self.assertEqual(skill_zips, archive.namelist())
+            for entry in archive.infolist():
+                with self.subTest(entry=entry.filename):
+                    self.assertEqual((listed / entry.filename).read_bytes(), archive.read(entry))
+                    self.assertEqual((*day, second_of_minute // 2 * 2), entry.date_time)
 
     def test_publication_core_preserves_exact_asset_and_publication_gates(self) -> None:
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
