@@ -89,6 +89,42 @@ Set the input, then add a second job:
           - name: Publish to PyPI
             uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
 
+      pypi-readback:
+        name: read the publication back from PyPI
+        needs: [release, pypi]
+        runs-on: ubuntu-24.04
+        permissions:
+          contents: read # Read the pinned policy.
+        steps:
+          - name: Check out the policy that built the candidate
+            uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            with:
+              repository: ryanduguid/release-policy
+              ref: ${{ needs.release.outputs.policy-sha }}
+              path: policy
+              persist-credentials: false
+          - name: Set up Python
+            uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+            with:
+              python-version: "3.14"
+          - name: Download the bound distribution
+            uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+            with:
+              artifact-ids: ${{ needs.release.outputs.dist-id }}
+              path: candidate
+          - name: Compare PyPI's files and provenance with the candidate
+            env:
+              STEM: ${{ needs.release.outputs.stem }}
+              VERSION: ${{ needs.release.outputs.version }}
+            run: |
+              set -euo pipefail
+              python -m pip install --require-hashes --only-binary :all: \
+                --requirement policy/requirements-pypi-verify.txt
+              python policy/scripts/verify_pypi.py --project "$STEM" --version "$VERSION" \
+                --repository "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --workflow release.yml \
+                --file "candidate/$STEM-$VERSION-py3-none-any.whl" \
+                --file "candidate/$STEM-$VERSION.tar.gz"
+
 The `required-checks` selectors above are an example. Replace them with the
 consumer's own mandatory checks, each naming exactly one job of its run, as
 [the packaged-Python guide](python-consumers.md) describes.
@@ -104,6 +140,28 @@ The publication job keeps source, policy and candidate data in 3 sibling
 directories, downloads by immutable Actions artefact ID, verifies the API
 digest, run and source identity, then verifies the policy-owned candidate
 manifest before using write authority.
+
+The `pypi-readback` job checks what PyPI serves after the upload. It fails
+unless PyPI's JSON API lists exactly the wheel and sdist for the version, each
+with the candidate's SHA-256 digest, and unless the provenance PyPI's Integrity
+API serves for each file names the caller repository and `release.yml` as its
+publisher, was signed at the release commit, and verifies against the
+candidate file with `pypi-attestations`. A missing or extra file, a digest
+mismatch, missing or unverifiable provenance, a redirect away from
+`https://pypi.org` and a failed request all fail it. Only a version or file
+PyPI does not list yet is read again, every 15 seconds for up to 5 minutes.
+The job installs the verifier from the hash-pinned
+`requirements-pypi-verify.txt` and holds no `id-token` scope, so nothing it
+installs can mint a publishing token. It cannot undo an upload: any other
+failure means PyPI serves something this run did not build or cannot prove it
+did, so investigate before anyone installs the release. After a failed
+request, re-run the job.
+
+A pass rests on what the check trusts: PyPI's TLS certificate as the runner's
+Python validates it, the digests PyPI's JSON API reports (the job does not
+download the files from PyPI), and Sigstore's root of trust as the pinned
+`sigstore` package ships it and refreshes it through TUF. It is one reading
+taken after the upload and does not watch for a later deletion or yank.
 
 ### One-time PyPI setup, per distribution
 
