@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -26,7 +27,14 @@ import build_release_archives as release_archives  # noqa: E402
 # The consumer-facing adapter takes no version-file input; the privileged core
 # it calls keeps its own, defaulted to VERSION.
 ADAPTER_INPUTS = ("artifact-stem", "source-directory", "tag-prefix", "required-checks")
-CORE_INPUTS = ("required-checks", "artifact-stem", "source-directory", "tag-prefix", "version-file")
+CORE_INPUTS = (
+    "required-checks",
+    "artifact-stem",
+    "source-directory",
+    "tag-prefix",
+    "version-file",
+    "skill-archives",
+)
 
 
 def _sha256(path: Path) -> str:
@@ -1018,7 +1026,8 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             upload,
         )
         self.assertIn("overwrite: false", upload)
-        self.assertEqual(4, len(set(action_asset_paths)))
+        # The 4 fixed assets and the skill upload ZIP glob.
+        self.assertEqual(5, len(set(action_asset_paths)))
         self.assertNotIn("consumer/dist/", core)
         self.assertIn(
             "working-directory: ${{ steps.inputs.outputs.source-path }}",
@@ -1065,10 +1074,51 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn('--bundle "$base.intoto.jsonl"', verify)
         self.assertNotIn("intoto", inventory)
         self.assertIn('provenance="$dist/$base.intoto.jsonl"', publication_script)
-        self.assertIn('"$checksums" "$provenance")', publication_script)
+        self.assertIn('"$checksums" "$provenance" "${skill_zips[@]}")', publication_script)
         self.assertIn(
             'upload_asset "$provenance" application/jsonl', publication_script
         )
+
+    @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "POSIX bash required")
+    def test_inventory_refuses_any_unlisted_entry_the_skill_zip_globs_match(self) -> None:
+        core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(
+            encoding="utf-8"
+        )
+        step = self.named_step(core, "Write and verify the exact release asset inventory")
+        script = re.search(r"(?s)\n        run: \|\n((?:          .*\n)+)", step)
+        assert script is not None
+        code = (
+            re.sub(r"(?m)^ {10}", "", script.group(1))
+            .replace("${{ steps.release.outputs.stem }}", "example")
+            .replace("${{ steps.release.outputs.version }}", "1.2.3")
+        )
+        # The upload, attestation and publication steps glob these names, so a
+        # directory the inventory's file listing skips would reach them unchecked.
+        for listed, extra_directory, accepted in (
+            ("skills/example-skill", None, True),
+            ("", "example-1.2.3-extra.zip", False),
+            ("skills/example-skill", "example-1.2.3-extra.zip", False),
+        ):
+            with self.subTest(listed=listed, extra_directory=extra_directory):
+                workspace = Path(self.enterContext(TemporaryDirectory()))
+                dist = workspace / "dist"
+                dist.mkdir()
+                names = ["example-1.2.3.zip", "example-1.2.3.tar.gz", "example-1.2.3.spdx.json"]
+                if listed:
+                    names.append("example-1.2.3-example-skill.zip")
+                for name in names:
+                    (dist / name).write_bytes(name.encode())
+                if extra_directory:
+                    (dist / extra_directory).mkdir()
+                result = subprocess.run(  # nosec B603 B607  # nosemgrep
+                    ["bash", "-c", code],
+                    cwd=workspace,
+                    env={**os.environ, "SKILL_ARCHIVES": listed},
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(accepted, result.returncode == 0, result.stderr)
 
     def test_publication_core_preserves_exact_asset_and_publication_gates(self) -> None:
         core = (ROOT / ".github" / "workflows" / "publish-archives.yml").read_text(

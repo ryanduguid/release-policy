@@ -580,6 +580,97 @@ expect_fail "Python entrypoint stops at a wrong notes header" python_gates
 expect_fail "archive entrypoint stops at a wrong notes header" archive_gates
 unset GH STUB_MAIN_SHA STUB_RELEASE_IDS
 
+# --- skill upload ZIP directories ---
+make_repo
+mkdir -p skills/good-skill/references skills/other-skill other/good-skill \
+  skills/nested-skill/inner skills/deep-skill/inner skills/bare-skill skills/Bad_Name packages/tool
+for file in skills/good-skill/SKILL.md skills/other-skill/SKILL.md other/good-skill/SKILL.md \
+    skills/nested-skill/SKILL.md skills/nested-skill/inner/SKILL.md \
+    skills/deep-skill/inner/SKILL.md skills/Bad_Name/SKILL.md; do
+  printf 'skill\n' > "$file"
+done
+printf 'notes\n' > skills/good-skill/references/notes.md
+printf 'notes\n' > skills/bare-skill/notes.md
+printf 'tool\n' > packages/tool/source.txt
+git add -A
+# Modes set in the index, so the fixture needs no executable bit or link on disk.
+blob="$(git hash-object -w skills/good-skill/SKILL.md)"
+git update-index --add \
+  --cacheinfo "100644,$blob,skills/run-skill/SKILL.md" \
+  --cacheinfo "100755,$blob,skills/run-skill/run.sh" \
+  --cacheinfo "100644,$blob,skills/link-skill/SKILL.md" \
+  --cacheinfo "120000,$blob,skills/link-skill/link" \
+  --cacheinfo "100644,$blob,skills/quoted-skill/SKILL.md" \
+  --cacheinfo "100644,$blob,skills/quoted-skill/caf"$'\xc3\xa9'"/SKILL.md" \
+  --cacheinfo "100644,$blob,skills/case-skill/SKILL.md" \
+  --cacheinfo "100644,$blob,skills/case-skill/references/skill.md" \
+  --cacheinfo "100644,$blob,skills/attr-skill/SKILL.md" \
+  --cacheinfo "100644,$blob,skills/attr-skill/references/.gitattributes"
+# A listing longer than a pipe buffer, with SKILL.md sorted first.
+{
+  printf '100644 %s\tskills/big-skill/SKILL.md\n' "$blob"
+  for index in $(seq 1 2000); do
+    printf '100644 %s\tskills/big-skill/references/note-%04d-padding-to-lengthen.md\n' "$blob" "$index"
+  done
+} | git update-index --add --index-info
+# Plain git output quotes the non-ASCII path above, whatever the user's setting.
+git config core.quotePath true
+git commit --quiet -m "skills"
+skill_commit="$(git rev-parse HEAD)"
+mkdir -p skills/loose-skill && printf 'skill\n' > skills/loose-skill/SKILL.md
+skills_print() {
+  local printed
+  printed="$(validate_skill_archives "$skill_commit" "$1" "$2")" && [[ "$printed" == "$3" ]]
+}
+# Passes only when the list is refused for the given reason, so each guard is
+# shown to be the one that fires.
+skills_refuse() {
+  local errors
+  if errors="$(validate_skill_archives "$skill_commit" "${3:-.}" "$2" 2>&1 >/dev/null)"; then
+    return 1
+  fi
+  [[ "$errors" == *"$1"* ]]
+}
+run_case "skill archives pass tracked skill directories" skills_print . \
+  $'skills/good-skill\r\n\nskills/other-skill' $'skills/good-skill\nskills/other-skill'
+run_case "skill archives pass inside the source directory" \
+  skills_print skills skills/good-skill skills/good-skill
+run_case "skill archives print nothing for an empty list" skills_print . "" ""
+run_case "skill archives pass a directory with a long listing" \
+  skills_print . skills/big-skill skills/big-skill
+run_case "skill archives refuse a nested SKILL.md git would quote" \
+  skills_refuse "exactly one SKILL.md" skills/quoted-skill
+run_case "skill archives refuse a nested lower-case skill.md" \
+  skills_refuse "exactly one SKILL.md" skills/case-skill
+run_case "skill archives refuse a .gitattributes, which git archive applies" \
+  skills_refuse "holds a .gitattributes file" skills/attr-skill
+run_case "skill archives refuse an executable" \
+  skills_refuse "an executable, link or submodule" skills/run-skill
+run_case "skill archives refuse a symbolic link" \
+  skills_refuse "an executable, link or submodule" skills/link-skill
+run_case "skill archives refuse a nested SKILL.md" \
+  skills_refuse "exactly one SKILL.md" skills/nested-skill
+run_case "skill archives refuse a SKILL.md only below the top" \
+  skills_refuse "exactly one SKILL.md" skills/deep-skill
+run_case "skill archives refuse a missing SKILL.md" \
+  skills_refuse "exactly one SKILL.md" skills/bare-skill
+run_case "skill archives refuse an upper-case name" \
+  skills_refuse "not a lower-case hyphenated name" skills/Bad_Name
+run_case "skill archives refuse a repeated name" \
+  skills_refuse "listed twice" $'skills/good-skill\nother/good-skill'
+run_case "skill archives refuse an untracked directory" \
+  skills_refuse "no tracked files" skills/loose-skill
+run_case "skill archives refuse parent traversal" \
+  skills_refuse "not a safe relative path" skills/../skills/good-skill
+run_case "skill archives refuse a dot segment" \
+  skills_refuse "not a safe relative path" skills/./good-skill
+run_case "skill archives refuse an absolute path" \
+  skills_refuse "not a safe relative path" /skills/good-skill
+run_case "skill archives refuse a directory outside the source directory" \
+  skills_refuse "outside packages/tool" skills/good-skill packages/tool
+run_case "skill archives refuse a bad entry after a good one" \
+  skills_refuse "exactly one SKILL.md" $'skills/good-skill\nskills/bare-skill'
+
 # Windows CI runs each publication family on its own runner and sets this.
 if [[ "${GATES_SKIP_PUBLICATION:-0}" != 1 ]]; then
   run_case "archive publication preserves draft ownership" bash "$HERE/test_publish_releases.sh"

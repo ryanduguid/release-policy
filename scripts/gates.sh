@@ -373,3 +373,64 @@ run_archive_release_gates() {
     } >> "$GITHUB_OUTPUT"
   fi
 }
+
+# Each line of a skill-archives list names a tracked skill directory, relative
+# to the repository root and inside the release's source directory, that ships
+# as its own upload ZIP holding one top-level folder with exactly one SKILL.md.
+# Prints each directory once checked, and refuses the whole list on any bad
+# entry: an unsafe path, a folder name that is not lower-case hyphenated, a
+# repeated folder name, a directory with no tracked files at the commit, an
+# executable, symbolic link, submodule or .gitattributes inside it, or a
+# SKILL.md missing from its top or present below in any letter case.
+validate_skill_archives() {
+  local commit="$1" source_directory="$2" list="$3" directory name entries paths count seen=" "
+  while IFS= read -r directory; do
+    directory="${directory%$'\r'}"
+    [[ -n "$directory" ]] || continue
+    if [[ ! "$directory" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ \
+        || "/$directory/" == */./* || "/$directory/" == */../* ]]; then
+      echo "validate_skill_archives: '$directory' is not a safe relative path" >&2
+      return 1
+    fi
+    if [[ "$source_directory" != "." && "$directory" != "$source_directory/"* ]]; then
+      echo "validate_skill_archives: $directory is outside $source_directory" >&2
+      return 1
+    fi
+    name="${directory##*/}"
+    if [[ ! "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+      echo "validate_skill_archives: '$name' is not a lower-case hyphenated name" >&2
+      return 1
+    fi
+    if [[ "$seen" == *" $name "* ]]; then
+      echo "validate_skill_archives: '$name' is listed twice" >&2
+      return 1
+    fi
+    seen+="$name "
+    # NUL-separated, so git leaves unusual paths unquoted; an embedded newline
+    # becomes a slash, keeping one line per entry.
+    if ! entries="$(git ls-tree -r -z --full-tree "$commit" -- "$directory/" | tr '\n\0' '/\n')" \
+        || [[ -z "$entries" ]]; then
+      echo "validate_skill_archives: $directory has no tracked files at $commit" >&2
+      return 1
+    fi
+    if grep -qv '^100644 blob ' <<<"$entries"; then
+      echo "validate_skill_archives: $directory holds an executable, link or submodule" >&2
+      return 1
+    fi
+    paths="$(cut -f2- <<<"$entries")"
+    # git archive of the directory applies its own attributes, so export-ignore
+    # there could drop SKILL.md from a ZIP these checks passed.
+    if grep -q '\(^\|/\)\.gitattributes$' <<<"$paths"; then
+      echo "validate_skill_archives: $directory holds a .gitattributes file" >&2
+      return 1
+    fi
+    # Any letter case: OpenAI also reads skill.md, and a case-insensitive file
+    # system would merge the two.
+    count="$(grep -ci '\(^\|/\)skill\.md$' <<<"$paths" || true)"
+    if [[ "$count" != 1 ]] || ! grep -qxF "$directory/SKILL.md" <<<"$paths"; then
+      echo "validate_skill_archives: $directory needs exactly one SKILL.md, at its top" >&2
+      return 1
+    fi
+    printf '%s\n' "$directory"
+  done <<<"$list"
+}

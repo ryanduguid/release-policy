@@ -19,6 +19,13 @@ on:
           release commit before anything is verified or built. Fails closed when empty.
         required: true
         type: string
+      skill-archives:
+        description: >-
+          Tracked skill directories, one per line, each shipped as its own
+          upload ZIP named <stem>-<version>-<directory name>.zip.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -106,3 +113,4 @@ jobs:
     with:
       required-checks: ${{ inputs.required-checks }}
       artifact-stem: ${{ inputs.artifact-stem }}
+      skill-archives: ${{ inputs.skill-archives }}

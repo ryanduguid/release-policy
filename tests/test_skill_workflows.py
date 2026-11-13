@@ -266,7 +266,10 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
             publish,
             r"(?m)^    uses: \./\.github/workflows/publish-archives\.yml$",
         )
-        self.assertEqual(self.with_keys(publish), ("required-checks", "artifact-stem"))
+        self.assertEqual(
+            self.with_keys(publish), ("required-checks", "artifact-stem", "skill-archives")
+        )
+        self.assertIn("skill-archives: ${{ inputs.skill-archives }}", publish)
 
     def test_verification_workflow_has_closed_interface_and_permissions(self) -> None:
         workflow = self.read_workflow("verify-skills.yml")
@@ -331,8 +334,10 @@ class SkillWorkflowContractTests(YamlContractAssertions, unittest.TestCase):
 
         self.assertEqual(
             tuple(inputs),
-            ("artifact-stem", "skills-verification-mode", "required-checks"),
+            ("artifact-stem", "skills-verification-mode", "required-checks", "skill-archives"),
         )
+        self.assertRegex(inputs["skill-archives"], r"(?m)^        required: false$")
+        self.assertRegex(inputs["skill-archives"], r'(?m)^        default: ""$')
         self.assertRegex(inputs["artifact-stem"], r"(?m)^        required: true$")
         self.assertRegex(inputs["required-checks"], r"(?m)^        required: true$")
         self.assertRegex(inputs["required-checks"], r"(?m)^        type: string$")

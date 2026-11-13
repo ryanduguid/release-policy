@@ -26,6 +26,13 @@ on:
         required: false
         type: string
         default: VERSION
+      skill-archives:
+        description: >-
+          Tracked skill directories, one per line, each shipped as its own
+          upload ZIP named <stem>-<version>-<directory name>.zip.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -160,16 +167,36 @@ jobs:
         working-directory: consumer
         env:
           TZ: UTC
+          SKILL_ARCHIVES: ${{ inputs.skill-archives }}
         shell: bash
         run: |
           set -euo pipefail
           stem="${{ steps.release.outputs.stem }}"
           version="${{ steps.release.outputs.version }}"
+          commit="${{ steps.release.outputs.commit }}"
+          dist="${{ steps.inputs.outputs.source-path }}/dist"
           python "$GITHUB_WORKSPACE/policy/scripts/build_release_archives.py" \
-            --commit "${{ steps.release.outputs.commit }}" \
+            --commit "$commit" \
             --prefix "${{ steps.release.outputs.prefix }}" \
             --source-directory "${{ steps.inputs.outputs.source-directory }}" \
             --output-base "${{ steps.inputs.outputs.source-path }}/dist/$stem-$version"
+          # Each skill upload ZIP is built from the tagged tree like the
+          # source archives; only its ZIP ships.
+          . "$GITHUB_WORKSPACE/policy/scripts/gates.sh"
+          skills="$(validate_skill_archives "$commit" \
+            "${{ steps.inputs.outputs.source-directory }}" "$SKILL_ARCHIVES")"
+          while IFS= read -r skill; do
+            [[ -n "$skill" ]] || continue
+            python "$GITHUB_WORKSPACE/policy/scripts/build_release_archives.py" \
+              --commit "$commit" --prefix "${skill##*/}/" --source-directory "$skill" \
+              --output-base "$RUNNER_TEMP/skill-archives/$stem-$version-${skill##*/}"
+            mv -- "$RUNNER_TEMP/skill-archives/$stem-$version-${skill##*/}.zip" "$dist/"
+          done <<<"$skills"
+          # VirusTotal's upload limit, so the release scan still covers each one.
+          if [[ -n "$(find "$dist" -maxdepth 1 -name "$stem-$version-*.zip" -size +32M)" ]]; then
+            echo "a skill upload ZIP is over 32 MB" >&2
+            exit 1
+          fi
 
       - name: Generate an SPDX SBOM for the ZIP archive
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
@@ -183,14 +210,22 @@ jobs:
 
       - name: Write and verify the exact release asset inventory
         working-directory: ${{ steps.inputs.outputs.source-path }}
+        env:
+          SKILL_ARCHIVES: ${{ inputs.skill-archives }}
         shell: bash
         run: |
           set -euo pipefail
           base="${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}"
           assets=("$base.zip" "$base.tar.gz" "$base.spdx.json")
+          while IFS= read -r skill; do
+            skill="${skill%$'\r'}"
+            [[ -z "$skill" ]] || assets+=("$base-${skill##*/}.zip")
+          done <<<"$SKILL_ARCHIVES"
           expected_before="$(printf '%s\n' "${assets[@]}" | LC_ALL=C sort)"
           actual_before="$(find dist -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
           test "$actual_before" = "$expected_before"
+          # Later steps glob <base>-*.zip, so every entry of that name must be a listed file.
+          test -z "$(find dist -maxdepth 1 -name "$base-*.zip" ! -type f)"
           (
             cd dist
             sha256sum -- "${assets[@]}" > SHA256SUMS
@@ -209,6 +244,7 @@ jobs:
             ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
             ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
             ${{ steps.inputs.outputs.source-root }}/dist/SHA256SUMS
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-*.zip
           if-no-files-found: error
           overwrite: false
           retention-days: 14
@@ -222,6 +258,7 @@ jobs:
             ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.tar.gz
             ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}.spdx.json
             ${{ steps.inputs.outputs.source-root }}/dist/SHA256SUMS
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-*.zip
 
       # The signed bundle becomes a release asset so a downloader can verify
       # without the attestation API and OpenSSF Scorecard sees the provenance.
@@ -261,7 +298,8 @@ jobs:
           tag="${{ steps.release.outputs.tag }}"
           commit="${{ steps.release.outputs.commit }}"
           signer="ryanduguid/release-policy/.github/workflows/publish-archives.yml"
-          assets=("$base.zip" "$base.tar.gz" "$base.spdx.json" "dist/SHA256SUMS")
+          shopt -s nullglob
+          assets=("$base.zip" "$base.tar.gz" "$base.spdx.json" "dist/SHA256SUMS" "$base"-*.zip)
           for file in "${assets[@]}"; do
             gh attestation verify "$file" \
               --repo "$GITHUB_REPOSITORY" \
