@@ -1224,10 +1224,10 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
             code = code.replace(expression, value)
         self.assertNotIn("${{", code)
 
-        def build(listed: str, run: str) -> Path:
+        def run_step(listed: str, run: str) -> subprocess.CompletedProcess[str]:
             runner_temp = workspace / f"runner-{run}"
             runner_temp.mkdir()
-            result = subprocess.run(  # nosec B603 B607  # nosemgrep
+            return subprocess.run(  # nosec B603 B607  # nosemgrep
                 ["bash", "-c", code],
                 cwd=consumer,
                 env={**os.environ, "SKILL_ARCHIVES": listed,
@@ -1236,12 +1236,23 @@ class ReleaseArchiveWorkflowTests(YamlContractAssertions, unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
+
+        def build(listed: str, run: str) -> Path:
+            result = run_step(listed, run)
             self.assertEqual(0, result.returncode, result.stderr)
             return (consumer / "dist").rename(workspace / f"dist-{run}")
 
         first = build("skills/*", "first")
         second = build("skills/*", "second")
         listed = build("skills/a-skill\nskills/b-skill", "listed")
+        # A parent line mixed with another line stops the step before any skill ZIP or bundle.
+        mixed = run_step("skills/*\nskills/a-skill", "mixed")
+        self.assertNotEqual(0, mixed.returncode)
+        self.assertIn("must be the only skill-archives line", mixed.stderr)
+        self.assertEqual(
+            ["example-1.2.3.tar.gz", "example-1.2.3.zip"],
+            sorted(path.name for path in (consumer / "dist").iterdir()),
+        )
 
         bundle = "example-1.2.3-skills.bundle.zip"
         skill_zips = ["example-1.2.3-a-skill.zip", "example-1.2.3-b-skill.zip"]
