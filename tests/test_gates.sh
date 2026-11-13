@@ -599,7 +599,20 @@ git update-index --add \
   --cacheinfo "100644,$blob,skills/run-skill/SKILL.md" \
   --cacheinfo "100755,$blob,skills/run-skill/run.sh" \
   --cacheinfo "100644,$blob,skills/link-skill/SKILL.md" \
-  --cacheinfo "120000,$blob,skills/link-skill/link"
+  --cacheinfo "120000,$blob,skills/link-skill/link" \
+  --cacheinfo "100644,$blob,skills/quoted-skill/SKILL.md" \
+  --cacheinfo "100644,$blob,skills/quoted-skill/caf"$'\xc3\xa9'"/SKILL.md" \
+  --cacheinfo "100644,$blob,skills/case-skill/SKILL.md" \
+  --cacheinfo "100644,$blob,skills/case-skill/references/skill.md"
+# A listing longer than a pipe buffer, with SKILL.md sorted first.
+{
+  printf '100644 %s\tskills/big-skill/SKILL.md\n' "$blob"
+  for index in $(seq 1 2000); do
+    printf '100644 %s\tskills/big-skill/references/note-%04d-padding-to-lengthen.md\n' "$blob" "$index"
+  done
+} | git update-index --add --index-info
+# Plain git output quotes the non-ASCII path above, whatever the user's setting.
+git config core.quotePath true
 git commit --quiet -m "skills"
 skill_commit="$(git rev-parse HEAD)"
 mkdir -p skills/loose-skill && printf 'skill\n' > skills/loose-skill/SKILL.md
@@ -621,6 +634,12 @@ run_case "skill archives pass tracked skill directories" skills_print . \
 run_case "skill archives pass inside the source directory" \
   skills_print skills skills/good-skill skills/good-skill
 run_case "skill archives print nothing for an empty list" skills_print . "" ""
+run_case "skill archives pass a directory with a long listing" \
+  skills_print . skills/big-skill skills/big-skill
+run_case "skill archives refuse a nested SKILL.md git would quote" \
+  skills_refuse "exactly one SKILL.md" skills/quoted-skill
+run_case "skill archives refuse a nested lower-case skill.md" \
+  skills_refuse "exactly one SKILL.md" skills/case-skill
 run_case "skill archives refuse an executable" \
   skills_refuse "an executable, link or submodule" skills/run-skill
 run_case "skill archives refuse a symbolic link" \

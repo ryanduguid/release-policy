@@ -57,9 +57,10 @@ before the shared verifier starts, so a tag on a commit whose own checks did
 not pass never reaches verification or publication. The verification workflow
 takes no such input.
 
-`skill-archives` is optional. Each line names a tracked skill directory,
+`skill-archives` is optional. Each line names one tracked skill directory,
 relative to the repository root, that ships as its own upload ZIP,
-`<stem>-<version>-<directory name>.zip`:
+`<stem>-<version>-<directory name>.zip`. No form takes a parent directory, so
+list every skill:
 
         with:
           skill-archives: |
@@ -67,14 +68,20 @@ relative to the repository root, that ships as its own upload ZIP,
 
 Each ZIP is built from the tagged commit with `git archive`, like the source
 archives, and holds one top-level folder, named after the directory, with
-exactly one `SKILL.md` at its top. That is the layout OpenAI's skills
-cookbook describes. No published claude.ai page confirmed its upload layout
-when this was written, so check that page before relying on these ZIPs there.
+exactly one `SKILL.md` at its top. That is the layout OpenAI's
+[skills cookbook](https://developers.openai.com/cookbook/examples/skills_in_api)
+and Claude's help article
+[How to create custom skills](https://support.claude.com/en/articles/12512198-how-to-create-custom-skills)
+describe (both read 13 November 2026). Claude also expects the folder name to
+match the `name` in `SKILL.md`, which the release does not check.
 The release refuses the whole list if an entry is not a safe relative path, is
 outside the source directory, has a folder name that is not lower-case and
 hyphenated or repeats another's, has no tracked files, holds an executable,
-symbolic link or submodule, has no `SKILL.md` at its top or has another below
-it. It also refuses a ZIP over 32 MB, VirusTotal's upload limit. The ZIPs are
+symbolic link or submodule, has no `SKILL.md` at its top or has another, in
+any letter case, below it. It also refuses a ZIP over 32 MB, VirusTotal's
+upload limit. `virustotal-release.yml` uploads one asset every 16 seconds and
+stops after 30 minutes, so it cannot scan a release of more than about 100
+assets. The ZIPs are
 listed in `SHA256SUMS` and covered by the provenance attestation, but not by
 the SBOM attestation, which covers the source archives only.
 
