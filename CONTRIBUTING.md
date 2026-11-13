@@ -31,13 +31,17 @@ bash tests/test_determinism.sh
 
 The input files pin direct tools; the generated requirements files pin their
 dependencies and distribution hashes across supported Python versions and
-platforms. After editing an input, regenerate both files with uv and review
-the dependency changes:
+platforms. After editing an input, regenerate the files it feeds with uv and
+review the dependency changes:
 
 ```bash
 uv pip compile requirements-build.in --universal --python-version 3.14 --generate-hashes --output-file requirements-build.txt
 uv pip compile requirements-ci.in --universal --python-version 3.14 --generate-hashes --output-file requirements-ci.txt
+uv pip compile requirements-pypi-verify.in --universal --python-version 3.14 --generate-hashes --output-file requirements-pypi-verify.txt
 ```
+
+`requirements-pypi-verify.txt` pins the `pypi-attestations` verifier that a
+consumer's PyPI read-back job installs ([docs/pypi-publishing.md](docs/pypi-publishing.md)).
 
 `attribution-policy.yml` pins `.github/actions/no-ai-attribution` by commit.
 After a change to that action merges, open a second pull request that repins

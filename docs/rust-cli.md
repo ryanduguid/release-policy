@@ -58,6 +58,9 @@ becomes `release-policy python-release tag --tag v1.2.3 --tag-prefix v`.
 workflow runs it, and like the release workflows it calls the scripts until
 the switch-over; port it then. The same holds for `scripts/binary_release.py`,
 which `release-binary.yml` and `scripts/build_binary.sh` run.
+`scripts/verify_pypi.py` has no command either: a consumer's PyPI read-back
+job runs it from the policy checkout, and it hands signature verification to
+the Python `pypi-attestations` package.
 
 The PR-review scripts (`scripts/pr_review*.py`) stay in Python: they drive the
 PR-Agent engine in-process and share its virtual environment.

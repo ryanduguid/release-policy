@@ -53,7 +53,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/virustotal-release.yml": "fc3ec520ef37f4ded629fbab95a2bc1fd999ab98caced8b63cc813ca8e995a44",
     "README.md": "7a4562af66a7b59834aed3890ed64f8e14b4d55b3f1dd2778322adb32b3c3d58",
     "docs/python-consumers.md": "31b9b83f80ca4eb1d60f316c702d8f1cada79092b309d1bbe8632c7b14c28814",
-    "docs/pypi-publishing.md": "c04789514ed01b85fb06a9f515527e9b0363800cb36f964de1ed468257ab19ad",
+    "docs/pypi-publishing.md": "196705e574968c320177a2505750db80a9ace7c566168b7da9d8d28490fb6ec4",
     "docs/archive-consumers.md": "1d28e68a6e4faa23b3cfe0be711cb3123dfa9f16583a9f568bdaf9f6f2a18df6",
     "docs/binary-consumers.md": "d54cbaf5bbdbfde671ebb52a1f055e8826061504bf6a21bafc3a053d6e245ecb",
     "docs/skill-consumers.md": "a7ac3b1702021b7f54ed8fa6a3c5bcee4c7602d575b5a4bc3a339b992544f05a",

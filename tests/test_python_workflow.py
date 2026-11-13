@@ -52,6 +52,19 @@ class PythonWorkflowBoundaryTests(unittest.TestCase):
         pypi_permissions = guide.split("\n      pypi:", 1)[1].split("        steps:", 1)[0]
         self.assertIn("attestations: read", pypi_permissions)
 
+    def test_pypi_guide_reads_the_publication_back_without_publishing_authority(self) -> None:
+        guide = (ROOT / "docs/pypi-publishing.md").read_text(encoding="utf-8")
+        readback = guide.split("\n      pypi-readback:", 1)[1].split("\nThe `required-checks`", 1)[0]
+        self.assertIn("needs: [release, pypi]", readback)
+        self.assertNotIn("id-token", readback)
+        self.assertIn("artifact-ids: ${{ needs.release.outputs.dist-id }}", readback)
+        self.assertIn("--require-hashes --only-binary :all:", readback)
+        self.assertIn("--requirement policy/requirements-pypi-verify.txt", readback)
+        self.assertIn("python policy/scripts/verify_pypi.py", readback)
+        self.assertIn('--commit "$GITHUB_SHA" --workflow release.yml', readback)
+        lock = (ROOT / "requirements-pypi-verify.txt").read_text(encoding="utf-8")
+        self.assertRegex(lock, r"(?m)^pypi-attestations==\S+ \\\n    --hash=sha256:[0-9a-f]{64}")
+
     def test_exposes_only_closed_release_inputs_with_root_compatible_defaults(self) -> None:
         self.assertNotIn("version-command", self.workflow)
         self.assertNotIn("bash -c", self.workflow)
