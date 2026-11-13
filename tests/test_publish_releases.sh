@@ -12,7 +12,7 @@ export FIXTURE
 family="${1:-archives}"
 case "$family" in
   archives) asset_names=(example-1.2.3.zip example-1.2.3.tar.gz example-1.2.3.spdx.json SHA256SUMS example-1.2.3.intoto.jsonl) ;;
-  binaries) asset_names=(example-1.2.3.zip example-1.2.3.tar.gz example-1.2.3.spdx.json example-1.2.3-x86_64-unknown-linux-musl.tar.gz example-1.2.3-x86_64-unknown-linux-musl.spdx.json example-1.2.3-x86_64-pc-windows-msvc.zip example-1.2.3-x86_64-pc-windows-msvc.spdx.json SHA256SUMS example-1.2.3.intoto.jsonl) ;;
+  binaries) asset_names=(example-1.2.3.zip example-1.2.3.tar.gz example-1.2.3.spdx.json example-1.2.3-x86_64-unknown-linux-musl.tar.gz example-1.2.3-x86_64-unknown-linux-musl.spdx.json example-1.2.3-aarch64-unknown-linux-musl.tar.gz example-1.2.3-aarch64-unknown-linux-musl.spdx.json example-1.2.3-aarch64-apple-darwin.tar.gz example-1.2.3-aarch64-apple-darwin.spdx.json example-1.2.3-x86_64-pc-windows-msvc.zip example-1.2.3-x86_64-pc-windows-msvc.spdx.json SHA256SUMS example-1.2.3.intoto.jsonl) ;;
   python) asset_names=(example-1.2.3-py3-none-any.whl example-1.2.3.tar.gz example-1.2.3.spdx.json release-manifest.json SHA256SUMS example-1.2.3.intoto.jsonl) ;;
   *) exit 64 ;;
 esac
@@ -98,8 +98,8 @@ gh() {
       name="${name%%&*}"
       case "$name" in
         example-1.2.3.zip|example-1.2.3-py3-none-any.whl|example-1.2.3-x86_64-pc-windows-msvc.zip) expected_media=application/zip ;;
-        example-1.2.3.tar.gz|example-1.2.3-x86_64-unknown-linux-musl.tar.gz) expected_media=application/gzip ;;
-        example-1.2.3.spdx.json|example-1.2.3-x86_64-*.spdx.json) expected_media=application/spdx+json ;;
+        example-1.2.3.tar.gz|example-1.2.3-*-linux-musl.tar.gz|example-1.2.3-aarch64-apple-darwin.tar.gz) expected_media=application/gzip ;;
+        example-1.2.3.spdx.json|example-1.2.3-*-*.spdx.json) expected_media=application/spdx+json ;;
         release-manifest.json) expected_media=application/json ;;
         SHA256SUMS) expected_media=text/plain ;;
         example-1.2.3.intoto.jsonl) expected_media=application/jsonl ;;
@@ -177,6 +177,9 @@ git() {
     [ "$CASE" != missing-tag ] || return 0
     if [ "$CASE" = moved-tag ]; then printf 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\trefs/tags/v1.2.3^{}\n';
     else printf '%s\trefs/tags/v1.2.3^{}\n' "$GITHUB_SHA"; fi
+  # The policy checkout's commit, which the workflow requires to be its pin.
+  elif [ "$1 ${2##*/} $3 $4" = "-C scripts rev-parse HEAD" ]; then
+    printf '%s\n' cccccccccccccccccccccccccccccccccccccccc
   else echo "unexpected git request" >&2; return 1; fi
 }
 export -f git
@@ -195,7 +198,9 @@ if [ "${#signing_workflows[@]}" != 1 ] \
   failures=$((failures+1))
 fi
 expected_verify_calls="$(printf '%s\n' '-- gh call' attestation verify SHA256SUMS \
-  --repo example/fixture --signer-workflow "$signer" --source-ref refs/tags/v1.2.3)"
+  --repo example/fixture --signer-workflow "$signer" \
+  --signer-digest cccccccccccccccccccccccccccccccccccccccc \
+  --source-ref refs/tags/v1.2.3 --source-digest "$GITHUB_SHA")"
 # Runs the summary's bash block as a reader would, beside a real fixture asset.
 # The stub records each call in its own file, so printing the expected lines
 # proves nothing, and `bash -eu` makes any failing command fail the block.

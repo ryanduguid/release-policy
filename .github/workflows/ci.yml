@@ -84,9 +84,11 @@ jobs:
           -max_total_time=60 -max_len=4096 -timeout=2 -rss_limit_mb=1024
 
   release-audit:
-    name: audit the latest release's executables
-    # The publisher's checks, repeated on this repository's latest release, so
-    # an advisory published after the release fails this run. A job of its own:
+    name: audit the binary canaries' executables
+    # The publisher's checks, repeated on each binary canary's recorded
+    # release, so an advisory published after a release fails this run. The
+    # live canary audit fails once a newer release overtakes the recorded one,
+    # so when it passes the recorded release is the latest. A job of its own:
     # after the live canary audit in checks, a failing pin check skipped it.
     if: >-
       github.event_name == 'schedule' ||
@@ -107,36 +109,14 @@ jobs:
 
       # As docs/verify-a-release.md asks of any downloader: each archive is the
       # one line of SHA256SUMS that names it, and its provenance was signed by
-      # this repository's binary release workflow for the tag.
-      - name: Download and verify the latest release's executables
+      # the binary release workflow at the recorded policy commit for the
+      # recorded tag and source commit.
+      - name: Audit each binary canary's executables against RustSec
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          latest="$RUNNER_TEMP/latest-release"
-          tag="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
-          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          base="release-policy-${tag#v}"
-          linux="$base-x86_64-unknown-linux-musl.tar.gz"
-          windows="$base-x86_64-pc-windows-msvc.zip"
-          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$latest" \
-            --pattern "$linux" --pattern "$windows" --pattern SHA256SUMS --pattern "$base.intoto.jsonl"
-          cd "$latest"
-          for archive in "$linux" "$windows"; do
-            awk -v name="$archive" '$2 == name' SHA256SUMS > "$archive.sha256"
-            test "$(wc -l < "$archive.sha256")" -eq 1
-            sha256sum --check --strict "$archive.sha256"
-            gh attestation verify "$archive" --repo "$GITHUB_REPOSITORY" --bundle "$base.intoto.jsonl" \
-              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-binary.yml" \
-              --source-ref "refs/tags/$tag"
-          done
-          tar -xzf "$linux" release-policy
-          unzip -q "$windows" release-policy.exe
-
-      - name: Audit the latest release's executables against RustSec
         run: >-
-          bash scripts/audit_binaries.sh "$RUNNER_TEMP/advisory-db"
-          "$RUNNER_TEMP/latest-release/release-policy" "$RUNNER_TEMP/latest-release/release-policy.exe"
+          bash scripts/audit_binary_canaries.sh canaries.json
+          "$RUNNER_TEMP/binary-canaries" "$RUNNER_TEMP/advisory-db"
 
   pin-lag:
     name: list the families owing a re-pin
@@ -513,7 +493,7 @@ jobs:
         run: cargo build --locked --release --bin release-policy
 
   # The binary release family's build path, run on this repository's own CLI
-  # for both targets. It publishes nothing; binary-sbom-check then takes the
+  # for each target. It publishes nothing; binary-sbom-check then takes the
   # artefacts as the release's admit job would.
   binary-self-check:
     timeout-minutes: 45
@@ -525,6 +505,10 @@ jobs:
         include:
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            runner: macos-15
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
     defaults:
@@ -555,7 +539,7 @@ jobs:
           fallback: none
 
       - name: Install the musl C toolchain
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+        if: endsWith(matrix.target, '-linux-musl')
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends musl-tools
 
       - name: Link the C runtime statically
@@ -577,7 +561,7 @@ jobs:
           version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])' | tr -d '\r')"
           bash scripts/build_binary.sh "$TARGET" release-policy "$version" release-policy \
             "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/binary" \
-            "$(git log -1 --format=%ct)"
+            "$(git log -1 --format=%ct)" ""
 
       - name: Keep the archive for the SBOM check
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -592,6 +576,8 @@ jobs:
     name: binary release SBOM check
     needs: binary-self-check
     runs-on: ubuntu-24.04
+    env:
+      TARGETS: x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-pc-windows-msvc
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -609,6 +595,18 @@ jobs:
           name: binary-self-check-x86_64-unknown-linux-musl
           path: ${{ runner.temp }}/incoming/x86_64-unknown-linux-musl
 
+      - name: Download the Linux arm64 archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-self-check-aarch64-unknown-linux-musl
+          path: ${{ runner.temp }}/incoming/aarch64-unknown-linux-musl
+
+      - name: Download the macOS arm64 archive
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-self-check-aarch64-apple-darwin
+          path: ${{ runner.temp }}/incoming/aarch64-apple-darwin
+
       - name: Download the Windows archive
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -619,7 +617,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
-          for target in x86_64-unknown-linux-musl x86_64-pc-windows-msvc; do
+          for target in $TARGETS; do
             python scripts/binary_release.py receive \
               --incoming "$RUNNER_TEMP/incoming/$target" --stem release-policy --version "$version" \
               --binary release-policy --target "$target" --dist "$RUNNER_TEMP/dist" \
@@ -627,22 +625,63 @@ jobs:
           done
 
       - name: Require each admitted executable's linkage as the admit job does
-        run: bash scripts/admitted_linkage.sh "$RUNNER_TEMP/extracted" release-policy
+        run: |
+          set -euo pipefail
+          read -r -a targets <<< "$TARGETS"
+          bash scripts/admitted_linkage.sh "$RUNNER_TEMP/extracted" release-policy "${targets[@]}"
 
+      # Only the executables: a data file such as a lock file in the admitted
+      # directory would add packages the target does not ship.
+      - name: Stage each target's executables for its SBOM
+        env:
+          BINARY: release-policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in $TARGETS; do
+            suffix=""
+            [[ "$target" != *-windows-msvc ]] || suffix=.exe
+            mkdir -p "$RUNNER_TEMP/sbom/$target"
+            for name in $BINARY; do
+              cp "$RUNNER_TEMP/extracted/$target/$name$suffix" "$RUNNER_TEMP/sbom/$target/"
+            done
+          done
+
+      # As the admit job does: each target's staged executables.
       - name: Generate the Linux binary's SPDX SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          file: ${{ runner.temp }}/extracted/x86_64-unknown-linux-musl/release-policy
+          path: ${{ runner.temp }}/sbom/x86_64-unknown-linux-musl
           format: spdx-json
           syft-version: v1.51.0
           output-file: ${{ runner.temp }}/linux.spdx.json
           upload-artifact: false
           upload-release-assets: false
 
+      - name: Generate the Linux arm64 binary's SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: ${{ runner.temp }}/sbom/aarch64-unknown-linux-musl
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ runner.temp }}/linux-arm64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate the macOS arm64 binary's SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: ${{ runner.temp }}/sbom/aarch64-apple-darwin
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ runner.temp }}/macos-arm64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
       - name: Generate the Windows binary's SPDX SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          file: ${{ runner.temp }}/extracted/x86_64-pc-windows-msvc/release-policy.exe
+          path: ${{ runner.temp }}/sbom/x86_64-pc-windows-msvc
           format: spdx-json
           syft-version: v1.51.0
           output-file: ${{ runner.temp }}/windows.spdx.json
@@ -650,20 +689,27 @@ jobs:
           upload-release-assets: false
 
       # cargo-auditable embeds the target's own dependency list: a direct and
-      # a transitive dependency on both, and each platform crate only on its
-      # platform.
+      # a transitive dependency on each, and a platform crate only on its
+      # platforms. The list also keeps optional dependencies cargo tree drops,
+      # so rustix's errno and libc appear for Linux too; core-foundation-sys
+      # is the crate only macOS lists (the self-check archives, 10 November
+      # 2026).
       - name: Require each SBOM to describe its own target's dependencies
         run: |
           set -euo pipefail
           lists() { python scripts/binary_release.py sbom-lists --sbom "$RUNNER_TEMP/$1.spdx.json" --package "$2"; }
-          for sbom in linux windows; do
+          for sbom in linux linux-arm64 macos-arm64 windows; do
             for package in release-policy regex regex-automata; do
               lists "$sbom" "$package"
             done
           done
-          lists linux rustix
+          lists linux linux-raw-sys
+          lists linux-arm64 linux-raw-sys
+          lists macos-arm64 core-foundation-sys
           lists windows windows-sys
-          if lists linux windows-sys || lists windows rustix; then
+          if lists linux windows-sys || lists linux-arm64 core-foundation-sys \
+              || lists macos-arm64 linux-raw-sys \
+              || lists windows rustix; then
             echo "an SBOM lists another platform's crate" >&2
             exit 1
           fi

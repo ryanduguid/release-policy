@@ -6,11 +6,15 @@
 The binary release family (`release-binary.yml`) builds each target in its own
 read-only job, checks the archives with third-party tools in a read-only admit
 job and publishes from one privileged job that runs neither consumer code nor
-those tools. The build jobs call `package`, `smoke` and `linkage`. The admit
-job calls `receive`, `linkage`, `sbom-lists` and `digests`. The publisher calls
-`cargo-package` before anything is built, `receive` on each archive again and
-`accept` on what the admit job hands over, so a missing, extra, unsafe or
-changed file stops the release.
+those tools. The build jobs call `package`, `smoke`, and `linkage` or, for
+macOS, `macho-linkage`. The admit job calls `receive`, the same linkage
+command, `sbom-lists` and `digests`. The publisher calls
+`cargo-package` before anything is built, `receive` on each archive again,
+`accept` on what the admit job hands over and `assets` for the release
+inventory, so a missing, extra, unsafe or changed file stops the release.
+`--binary` names one or more Cargo binary targets separated by spaces, and
+`--data-files` the files they need at run time, one path per line relative to
+the component; each archive ships all of them.
 
 Every output path comes from the workflow or build_binary.sh, under the
 runner's temporary directory or the checkout's dist directory; member names
@@ -47,28 +51,38 @@ _BINARY = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*\Z")
 _VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\Z")
 
 
+_DATA_FILE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)*\Z")
+
+
 @dataclass(frozen=True)
 class Target:
     triple: str
     suffix: str
     executable_suffix: str
-    # llvm-readobj's Format line for an x86-64 executable of this target.
+    # llvm-readobj's Format and Arch lines for an executable of this target.
     object_format: str
+    arch: str
+    # Names the job outputs that carry this target's archive and SBOM digests.
+    role: str
 
 
 TARGETS = {
     target.triple: target
     for target in (
-        Target("x86_64-unknown-linux-musl", ".tar.gz", "", "elf64-x86-64"),
-        Target("x86_64-pc-windows-msvc", ".zip", ".exe", "COFF-x86-64"),
+        Target("x86_64-unknown-linux-musl", ".tar.gz", "", "elf64-x86-64", "x86_64", "linux"),
+        Target("aarch64-unknown-linux-musl", ".tar.gz", "", "elf64-littleaarch64", "aarch64",
+               "linux-arm64"),
+        Target("aarch64-apple-darwin", ".tar.gz", "", "Mach-O arm64", "aarch64", "macos-arm64"),
+        Target("x86_64-pc-windows-msvc", ".zip", ".exe", "COFF-x86-64", "x86_64", "windows"),
     )
 }
-# An archive holds at most the executable and 3 documents. The size bounds
-# are far above any expected release. They apply to the archive file, to
-# each member and to everything decompressed, so neither a member nor the
-# archive's own metadata (PAX headers, a ZIP central directory) can make
-# the publisher read without limit.
-MAX_MEMBERS = 4
+# An archive holds the executables, the declared data files and up to 3
+# documents, at most this many in all. The size bounds are far above any
+# expected release. They apply to the archive file, to each member and to
+# everything decompressed, so neither a member nor the archive's own metadata
+# (PAX headers, a ZIP central directory) can make the publisher read without
+# limit.
+MAX_MEMBERS = 12
 MAX_MEMBER_BYTES = 512 * 1024 * 1024
 MAX_ARCHIVE_BYTES = MAX_MEMBER_BYTES
 MAX_DECOMPRESSED_BYTES = MAX_MEMBER_BYTES + 64 * 1024
@@ -88,11 +102,9 @@ _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 HANDOFF = {
     "source-zip": ".zip",
     "source-tar": ".tar.gz",
-    "linux-archive": "-x86_64-unknown-linux-musl.tar.gz",
-    "windows-archive": "-x86_64-pc-windows-msvc.zip",
+    **{f"{t.role}-archive": f"-{t.triple}{t.suffix}" for t in TARGETS.values()},
     "source-sbom": ".spdx.json",
-    "linux-sbom": "-x86_64-unknown-linux-musl.spdx.json",
-    "windows-sbom": "-x86_64-pc-windows-msvc.spdx.json",
+    **{f"{t.role}-sbom": f"-{t.triple}.spdx.json" for t in TARGETS.values()},
 }
 # Documents copied beside the executable. LICENSE and README.md are required;
 # NOTICE ships only when the component or repository has one.
@@ -117,6 +129,31 @@ WINDOWS_SYSTEM_DLLS = frozenset({
 # API set names, which Rust's standard library imports, are resolved by the
 # Windows loader and have no file of that name in System32.
 _API_SET = re.compile(r"(?:api|ext)-ms-win-[a-z0-9-]+\.dll", re.IGNORECASE)
+# macOS has no static executables: each one loads libSystem through dyld. One
+# may load only libraries macOS itself ships, by absolute path on the sealed
+# system volume: a library directly in /usr/lib or a system framework. A
+# library found through @rpath, @executable_path or @loader_path, or installed
+# elsewhere (Homebrew, /usr/local), is one the release does not ship.
+_MACOS_SYSTEM_LIBRARY = re.compile(
+    r"/usr/lib/[A-Za-z0-9_+-][A-Za-z0-9_.+-]*\.dylib"
+    r"|/System/Library/Frameworks/(?P<name>[A-Za-z0-9_]+)\.framework/Versions/[A-Z0-9]+/(?P=name)"
+)
+# A macOS executable's linkage is read from its own load commands, not from
+# llvm-readobj, which reports each slice of a universal file separately and
+# does not show LC_DYLD_ENVIRONMENT. Values from <mach-o/loader.h>: the thin
+# 64-bit little-endian magic, CPU_TYPE_ARM64 and MH_EXECUTE, then the load
+# commands that make dyld load a library (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB,
+# LC_REEXPORT_DYLIB, LC_LAZY_LOAD_DYLIB, LC_LOAD_UPWARD_DYLIB) and those that
+# change where or how dyld looks (LC_LOAD_DYLINKER, LC_RPATH,
+# LC_DYLD_ENVIRONMENT).
+_MACHO_MAGIC_64 = b"\xcf\xfa\xed\xfe"
+_MACHO_ARM64 = 0x0100000C
+_MACHO_EXECUTE = 0x2
+_MACHO_LOAD_LIBRARY = frozenset({0xC, 0x80000018, 0x8000001F, 0x20, 0x80000023})
+_MACHO_LOAD_DYLINKER = 0xE
+_MACHO_REFUSED = {0x8000001C: "adds a run-path search path",
+                  0x27: "sets dyld environment variables"}
+_MACHO_MALFORMED = "malformed Mach-O load commands"
 _NEEDED = re.compile(r"NeededLibraries \[\n(?P<names>(?:[^\]\n]*\n)*?)\]", re.MULTILINE)
 # A runner's checkout and its temporary directory: the workflows pass paths
 # under both, and build_binary.sh passes the checkout above its own directory.
@@ -143,15 +180,46 @@ def asset_name(stem: str, version: str, triple: str) -> str:
     return f"{stem}-{version}-{triple}{_target(triple).suffix}"
 
 
-def member_names(binary: str, triple: str, documents: Sequence[str]) -> tuple[str, ...]:
-    executable = _checked(_BINARY, binary, "binary") + _target(triple).executable_suffix
-    return (executable, *sorted(documents))
+def binaries(binary: str) -> tuple[str, ...]:
+    """The Cargo binary targets a release ships, named in order and separated by spaces."""
+    names = tuple(_checked(_BINARY, name, "binary") for name in binary.split())
+    if not names or len(set(names)) != len(names):
+        raise ValueError(f"binary must name one or more distinct targets: {binary!r}")
+    return names
+
+
+def data_names(data_files: str) -> dict[str, str]:
+    """Each declared data file by the name it ships under, the last part of its path.
+
+    `data_files` holds one path per line, relative to the component directory.
+    """
+    names: dict[str, str] = {}
+    for entry in (line.strip() for line in data_files.splitlines()):
+        if not entry:
+            continue
+        name = _checked(_DATA_FILE, entry, "data file").rsplit("/", 1)[-1]
+        if name in names or name in DOCUMENTS:
+            raise ValueError(f"data file {entry} would ship as {name}, a name already taken")
+        names[name] = entry
+    return names
+
+
+def member_names(
+    binary: str, triple: str, documents: Sequence[str], data: Sequence[str] = (),
+) -> tuple[str, ...]:
+    """The executables in the order named, then the data files and documents sorted."""
+    suffix = _target(triple).executable_suffix
+    names = (*(name + suffix for name in binaries(binary)), *sorted([*data, *documents]))
+    if len(set(names)) != len(names) or len(names) > MAX_MEMBERS:
+        raise ValueError(f"the archive cannot hold {list(names)}: at most {MAX_MEMBERS} "
+                         "distinct members")
+    return names
 
 
 def cargo_package(manifest: Path, release_version: str, binary: str) -> str:
     """The package name, once the manifest agrees with the release.
 
-    The literal `[package] version` must equal the tracked VERSION, and the
+    The literal `[package] version` must equal the tracked VERSION, and each
     binary must be the package's own name or a declared `[[bin]]` target.
     `publish = false` keeps the package off crates.io (Decision 7).
     The manifest is read as data; Cargo never runs in the publishing job.
@@ -179,8 +247,9 @@ def cargo_package(manifest: Path, release_version: str, binary: str) -> str:
     bins = document.get("bin", [])
     declared = {item.get("name") for item in bins if isinstance(item, dict)} if isinstance(
         bins, list) else set()
-    if _checked(_BINARY, binary, "binary") not in declared | {name}:
-        raise ValueError(f"{binary} is neither the package {name} nor a declared [[bin]]")
+    for each in binaries(binary):
+        if each not in declared | {name}:
+            raise ValueError(f"{each} is neither the package {name} nor a declared [[bin]]")
     return name
 
 
@@ -196,6 +265,19 @@ def find_documents(source: Path, root: Path) -> dict[str, Path]:
     missing = sorted(REQUIRED_DOCUMENTS - set(found))
     if missing:
         raise ValueError(f"missing release documents: {', '.join(missing)}")
+    return found
+
+
+def find_data_files(source: Path, data_files: str) -> dict[str, Path]:
+    """Each declared data file, a regular file inside the component directory."""
+    found: dict[str, Path] = {}
+    for name, entry in data_names(data_files).items():
+        path = source / entry
+        # Resolving follows every link on the way, so a path through a linked
+        # directory or to a linked file no longer resolves to itself.
+        if path.resolve() != source.resolve() / entry or not path.is_file():
+            raise ValueError(f"data file {entry} is not a regular file in {source}")
+        found[name] = path
     return found
 
 
@@ -226,15 +308,19 @@ def _write_zip(output: Path, members: list[tuple[str, bytes, int]], epoch: int) 
 
 
 def package(
-    *, executable: Path, binary: str, triple: str, stem: str, version: str,
-    source: Path, root: Path, epoch: int, output_dir: Path,
+    *, executables: Path, binary: str, triple: str, stem: str, version: str,
+    source: Path, root: Path, epoch: int, output_dir: Path, data_files: str = "",
 ) -> Path:
+    """Archive each named executable from the `executables` directory with its files."""
     target = _target(triple)
     output = output_dir / asset_name(stem, version, triple)
     documents = find_documents(source, root)
-    names = member_names(binary, triple, tuple(documents))
-    members = [(names[0], executable.read_bytes(), 0o755)]
-    members += [(name, documents[name].read_bytes(), 0o644) for name in names[1:]]
+    data = find_data_files(source, data_files)
+    files = {**documents, **data}
+    names = member_names(binary, triple, tuple(documents), tuple(data))
+    count = len(binaries(binary))
+    members = [(name, (executables / name).read_bytes(), 0o755) for name in names[:count]]
+    members += [(name, files[name].read_bytes(), 0o644) for name in names[count:]]
     output_dir.mkdir(parents=True, exist_ok=True)
     if target.suffix == ".zip":
         _write_zip(output, members, epoch)
@@ -323,22 +409,29 @@ def _archive_members(archive: Path, target: Target) -> dict[str, tuple[bytes, in
     return members
 
 
-def verify(*, archive: Path, binary: str, triple: str, extract_dir: Path | None) -> tuple[str, ...]:
+def verify(
+    *, archive: Path, binary: str, triple: str, extract_dir: Path | None, data_files: str = "",
+) -> tuple[str, ...]:
     """Require exactly the release members, and optionally extract them."""
     target = _target(triple)
     members = _archive_members(archive, target)
-    documents = sorted(set(members) - {binary + target.executable_suffix})
-    expected = member_names(binary, triple, documents)
+    executables = [name + target.executable_suffix for name in binaries(binary)]
+    data = tuple(data_names(data_files))
+    documents = sorted(set(members) - {*executables, *data})
+    expected = member_names(binary, triple, documents, data)
     for name in members:
         path = PurePosixPath(name)
         if len(path.parts) != 1 or name in {".", ".."} or "\\" in name:
             raise ValueError(f"unsafe member name {name!r}")
-    if expected[0] not in members:
-        raise ValueError(f"the executable {expected[0]} is missing")
+    for kind, names in (("executable", executables), ("data file", data)):
+        for name in names:
+            if name not in members:
+                raise ValueError(f"the {kind} {name} is missing")
     if set(documents) - set(DOCUMENTS) or not REQUIRED_DOCUMENTS <= set(documents):
         raise ValueError(f"members are {sorted(members)}, expected {list(expected)}")
-    if target.executable_suffix == "" and not members[expected[0]][1] & 0o100:
-        raise ValueError(f"{expected[0]} is not executable")
+    for name in executables:
+        if target.executable_suffix == "" and not members[name][1] & 0o100:
+            raise ValueError(f"{name} is not executable")
     if extract_dir is not None:
         extract_dir.mkdir(parents=True, exist_ok=False)
         for name in expected:
@@ -368,13 +461,81 @@ def needed_libraries(readobj_output: str) -> tuple[str, ...]:
     return tuple(line.strip() for line in match.group("names").splitlines() if line.strip())
 
 
+def _macho_load_commands(executable: bytes) -> tuple[int, int]:
+    """The load command count of a thin arm64 Mach-O executable, and where its commands end."""
+    if executable[:4] != _MACHO_MAGIC_64:
+        raise ValueError("not a thin 64-bit little-endian Mach-O file")
+    if len(executable) < 32:
+        raise ValueError(_MACHO_MALFORMED)
+    _, cputype, _, filetype, count, size = struct.unpack_from("<6I", executable)
+    if cputype != _MACHO_ARM64:
+        raise ValueError("not an arm64 Mach-O executable")
+    if filetype != _MACHO_EXECUTE:
+        raise ValueError("not a Mach-O executable file type")
+    if 32 + size > len(executable):
+        raise ValueError(_MACHO_MALFORMED)
+    return count, 32 + size
+
+
+def _macho_path(executable: bytes, offset: int, length: int) -> str:
+    """The path a library or dylinker command names, at the offset its third field holds."""
+    name_at = struct.unpack_from("<I", executable, offset + 8)[0] if length >= 12 else 0
+    name, terminated, _ = executable[offset + name_at:offset + length].partition(b"\0")
+    if not 12 <= name_at < length or not terminated:
+        raise ValueError(_MACHO_MALFORMED)
+    try:
+        return name.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError(_MACHO_MALFORMED) from None
+
+
+def macho_linkage(executable: bytes, triple: str) -> tuple[str, ...]:
+    """The libraries a thin arm64 Mach-O executable loads, once each is one macOS ships.
+
+    A universal file is refused whole, since a loader picks a slice this
+    check would not see, and so is any command that points dyld elsewhere.
+    """
+    if not _target(triple).object_format.startswith("Mach-O"):
+        raise ValueError(f"only a macOS executable's linkage is read from it, not {triple}'s")
+    count, end = _macho_load_commands(executable)
+    offset, needed = 32, []
+    for _ in range(count):
+        if offset + 8 > end:
+            raise ValueError(_MACHO_MALFORMED)
+        command, length = struct.unpack_from("<2I", executable, offset)
+        if length < 8 or offset + length > end:
+            raise ValueError(_MACHO_MALFORMED)
+        if command in _MACHO_REFUSED:
+            raise ValueError(f"the executable {_MACHO_REFUSED[command]}")
+        if command in _MACHO_LOAD_LIBRARY:
+            needed.append(_macho_path(executable, offset, length))
+        elif command == _MACHO_LOAD_DYLINKER:
+            text = _macho_path(executable, offset, length)
+            if text != "/usr/lib/dyld":
+                raise ValueError("the executable names a dynamic linker other than "
+                                 f"/usr/lib/dyld: {text}")
+        offset += length
+    if offset != end:
+        raise ValueError(_MACHO_MALFORMED)
+    foreign = [name for name in needed if not _MACOS_SYSTEM_LIBRARY.fullmatch(name)]
+    if foreign:
+        raise ValueError(f"loads libraries macOS does not ship: {foreign}")
+    return tuple(needed)
+
+
 def linkage(readobj_output: str, triple: str) -> tuple[str, ...]:
     target = _target(triple)
+    if target.object_format.startswith("Mach-O"):
+        raise ValueError("a macOS executable's linkage is read from its load commands")
+    # llvm-readobj prints one block for each object in a file; one clean
+    # block must not stand for another.
+    if readobj_output.count("Format: ") != 1 or readobj_output.count("NeededLibraries [") > 1:
+        raise ValueError("llvm-readobj's output describes more than one object")
     lines = {line.strip() for line in readobj_output.splitlines()}
-    if not {f"Format: {target.object_format}", "Arch: x86_64"} <= lines:
-        raise ValueError(f"not an x86-64 {target.object_format} executable")
+    if not {f"Format: {target.object_format}", f"Arch: {target.arch}"} <= lines:
+        raise ValueError(f"not an {target.arch} {target.object_format} executable")
     needed = needed_libraries(readobj_output)
-    if target.executable_suffix == "":
+    if target.object_format.startswith("elf"):
         if needed or "PT_INTERP" in readobj_output:
             raise ValueError(f"not a static executable: needs {list(needed)} or an interpreter")
         return needed
@@ -424,7 +585,7 @@ def toolchain(source: Path, root: Path) -> str:
 
 def receive(
     *, incoming: Path, stem: str, version: str, binary: str, triple: str,
-    dist: Path, extract_dir: Path, source: Path, root: Path,
+    dist: Path, extract_dir: Path, source: Path, root: Path, data_files: str = "",
 ) -> Path:
     """Admit one build job's artefact into the release, or refuse it.
 
@@ -433,7 +594,8 @@ def receive(
     digest only proves the transfer: the build job wrote both files. The
     archive is copied into the release first, and the copy is what is
     hashed, checked and kept. Its documents must be byte for byte the ones
-    in the tagged tree at `source` (else `root`).
+    in the tagged tree at `source` (else `root`), and its data files the
+    declared ones at `source`.
     """
     name = asset_name(stem, version, triple)
     expected = {name, f"{name}.sha256"}
@@ -452,7 +614,7 @@ def receive(
     match = _DIGEST_LINE.match(line)
     if match is None or match.group("name") != name:
         raise ValueError(f"{name}.sha256 is not one sha256sum line for {name}")
-    documents = find_documents(source, root)
+    tagged = {**find_documents(source, root), **find_data_files(source, data_files)}
     dist.mkdir(parents=True, exist_ok=True)
     admitted = dist / name
     admitted.open("xb").close()  # NOSONAR: never replace an earlier admission
@@ -463,11 +625,13 @@ def receive(
             digest = hashlib.file_digest(handle, "sha256").hexdigest()
         if digest != match.group("digest"):
             raise ValueError(f"{name} does not match its recorded digest")
-        names = verify(archive=admitted, binary=binary, triple=triple, extract_dir=extract_dir)
-        if set(names[1:]) != set(documents):
-            raise ValueError(f"{name} ships {sorted(names[1:])}, the tag has {sorted(documents)}")
-        for document in names[1:]:
-            if (extract_dir / document).read_bytes() != documents[document].read_bytes():
+        names = verify(archive=admitted, binary=binary, triple=triple, extract_dir=extract_dir,
+                       data_files=data_files)
+        shipped = names[len(binaries(binary)):]
+        if set(shipped) != set(tagged):
+            raise ValueError(f"{name} ships {sorted(shipped)}, the tag has {sorted(tagged)}")
+        for document in shipped:
+            if (extract_dir / document).read_bytes() != tagged[document].read_bytes():
                 raise ValueError(f"{name}'s {document} differs from the tagged {document}")
     except BaseException:
         admitted.unlink()
@@ -571,7 +735,7 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     def command(name: str, *required: str, paths: tuple[str, ...] = (),
-                optional: tuple[str, ...] = ()) -> argparse.ArgumentParser:
+                optional: tuple[str, ...] = (), data: bool = False) -> argparse.ArgumentParser:
         sub = commands.add_parser(name)
         for option in required:
             sub.add_argument(option, required=True)
@@ -579,19 +743,24 @@ def _parser() -> argparse.ArgumentParser:
             sub.add_argument(option, type=Path, required=True)
         for option in optional:
             sub.add_argument(option, type=Path)
+        if data:
+            sub.add_argument("--data-files", default="")
         return sub
 
     command("cargo-package", "--version", "--binary", paths=("--manifest",))
     command("toolchain", paths=("--source", "--root"))
     command("package", "--binary", "--target", "--stem", "--version", "--epoch",
-            paths=("--executable", "--source", "--root", "--output-dir"))
-    command("verify", "--binary", "--target", paths=("--archive",), optional=("--extract-dir",))
+            paths=("--executables", "--source", "--root", "--output-dir"), data=True)
+    command("verify", "--binary", "--target", paths=("--archive",), optional=("--extract-dir",),
+            data=True)
     command("receive", "--stem", "--version", "--binary", "--target",
-            paths=("--incoming", "--dist", "--extract-dir", "--source", "--root"))
+            paths=("--incoming", "--dist", "--extract-dir", "--source", "--root"), data=True)
     command("smoke", "--version", paths=("--executable",))
     command("linkage", "--target", paths=("--readobj-output",))
+    command("macho-linkage", "--target", paths=("--executable",))
     command("sbom-lists", "--package", paths=("--sbom",))
     command("digests", "--stem", "--version", paths=("--dist",))
+    command("assets", "--stem", "--version")
     command("accept", "--stem", "--version", paths=("--incoming", "--dist")).add_argument(
         "--digest", action="append", required=True)
     return parser
@@ -608,10 +777,11 @@ def _run(arguments: argparse.Namespace) -> str:
             if not arguments.epoch.isdigit():
                 raise ValueError(f"epoch is not a Unix time: {arguments.epoch!r}")
             return str(package(
-                executable=_confined(arguments.executable), binary=arguments.binary,
+                executables=_confined(arguments.executables), binary=arguments.binary,
                 triple=arguments.target, stem=arguments.stem, version=arguments.version,
                 source=_confined(arguments.source), root=_confined(arguments.root),
                 epoch=int(arguments.epoch), output_dir=_confined(arguments.output_dir),
+                data_files=arguments.data_files,
             ))
         case "verify":
             extract_dir = arguments.extract_dir
@@ -619,6 +789,7 @@ def _run(arguments: argparse.Namespace) -> str:
                 archive=_confined(arguments.archive), binary=arguments.binary,
                 triple=arguments.target,
                 extract_dir=None if extract_dir is None else _confined(extract_dir),
+                data_files=arguments.data_files,
             ))
         case "receive":
             return str(receive(
@@ -626,14 +797,20 @@ def _run(arguments: argparse.Namespace) -> str:
                 version=arguments.version, binary=arguments.binary, triple=arguments.target,
                 dist=_confined(arguments.dist), extract_dir=_confined(arguments.extract_dir),
                 source=_confined(arguments.source), root=_confined(arguments.root),
+                data_files=arguments.data_files,
             ))
         case "smoke":
             return smoke(_confined(arguments.executable), arguments.version)
         case "linkage":
             output = _confined(arguments.readobj_output).read_bytes().decode("utf-8")
             return "\n".join(linkage(output, arguments.target))
+        case "macho-linkage":
+            executable = _confined(arguments.executable).read_bytes()
+            return "\n".join(macho_linkage(executable, arguments.target))
         case "digests":
             return "\n".join(digests(_confined(arguments.dist), arguments.stem, arguments.version))
+        case "assets":
+            return "\n".join(handoff_names(arguments.stem, arguments.version).values())
         case "accept":
             return "\n".join(path.name for path in accept(
                 incoming=_confined(arguments.incoming), dist=_confined(arguments.dist),
