@@ -683,7 +683,9 @@ class CanaryManifestTests(unittest.TestCase):
         )
         groups = {
             group.replace("${{ github.workflow }}", "CI")
-            .replace("${{ github.ref }}", "refs/heads/main")
+            .replace(
+                "${{ github.event_name == 'pull_request' && github.ref || github.sha }}", "0" * 40
+            )
             .replace("${{ github.event_name }}", event)
             for event in ("schedule", "push", "workflow_dispatch")
         }
