@@ -1,0 +1,10 @@
+Wrote .github/workflows/release.yml: a Rust binary release through release-binary.yml at release-policy v0.4.0 (ddb7c18953f5abef38ba164a0ae48dc7c6a0e1f3).
+
+Left for you:
+- Commit the workflow to main: each release reads it from main's head.
+- Protect release tags with an active tag ruleset on refs/tags/v*: update and deletion rules, no bypass actors.
+- Set publish = false and the VERSION file's version in Cargo.toml; commit Cargo.lock, LICENSE, README.md and a rust-toolchain.toml pinning an exact version.
+- To release: RELEASE_NOTES.md starting '# vX.Y.Z', the required checks green on main's head, then an annotated tag vX.Y.Z pushed there.
+No secret is needed: the release runs on the workflow's own token.
+Guide: https://github.com/ryanduguid/release-policy/blob/v0.4.0/docs/binary-consumers.md
+Prerequisites: https://github.com/ryanduguid/release-policy/blob/v0.4.0/docs/consumer-prerequisites.md

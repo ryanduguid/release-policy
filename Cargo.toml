@@ -88,6 +88,10 @@ path = "tests/rust/git_revision.rs"
 name = "verify_skills"
 path = "tests/rust/verify_skills.rs"
 
+[[test]]
+name = "init"
+path = "tests/rust/init.rs"
+
 [profile.release]
 codegen-units = 1
 lto = true
