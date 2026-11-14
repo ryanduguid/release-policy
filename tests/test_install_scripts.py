@@ -383,7 +383,10 @@ class PowerShellInstallerTests(InstallerCases, unittest.TestCase):
         script = str(ROOT / "scripts" / "install.ps1").replace("'", "''")
         return subprocess.run(  # nosec B603  # nosemgrep
             [str(shutil.which("pwsh")), "-NoProfile", "-NonInteractive", "-Command",
-             f"{FAKE_POWERSHELL}\n& '{script}' {quoted}"],
+             # Print a refusal's message whole: pwsh wraps its default error
+             # view to the console width.
+             f"{FAKE_POWERSHELL}\ntry {{ & '{script}' {quoted} }} "
+             "catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"],
             env={**self.env, **env}, check=False, capture_output=True, text=True)
 
     def test_installs_into_local_programs_by_default(self) -> None:
