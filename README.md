@@ -49,7 +49,7 @@ uses: ryanduguid/release-policy/.github/workflows/release-python.yml@0f7ca4ce0ba
 
 **Human decision:** Check the release artefacts and their attestations against that recorded policy revision. This evidence applies to the recorded policy revision. Later policy changes need their own verification.
 
-This snapshot was checked against [canaries.json](canaries.json) on 2 November 2026. The manifest retains the source commit, policy SHA and run identity; consult it for later updates. This repository has no package installation command.
+This snapshot was checked against [canaries.json](canaries.json) on 2 November 2026. The manifest retains the source commit, policy SHA and run identity; consult it for later updates.
 
 Start with the [consumer prerequisites](docs/consumer-prerequisites.md) before choosing a release workflow.
 

@@ -5,7 +5,7 @@
 > repositories. Consumers pin a full policy commit. Policy checks establish release
 > evidence, not accounting correctness.
 
-This repository has no package installation command. `v0.4.0` is the latest release, with
+`v0.4.0` is the latest release, with
 executables for Linux, macOS arm64 and Windows; `v0.3.0` (28 October 2026) was the first
 release with an artefact; `v0.1.0` and `v0.2.0` are notes-only source markers, not
 distributable releases.
@@ -24,6 +24,7 @@ distributable releases.
 - [Rust binaries](https://github.com/ryanduguid/release-policy/blob/main/docs/binary-consumers.md)
 - [VirusTotal release scans](https://github.com/ryanduguid/release-policy/blob/main/docs/virustotal-consumers.md)
 - [Verify a downloaded release](https://github.com/ryanduguid/release-policy/blob/main/docs/verify-a-release.md)
+- [Install a Rust binary release after verifying it](https://github.com/ryanduguid/release-policy/blob/main/docs/binary-consumers.md#installing-a-release)
 - [Skill verification and releases](https://github.com/ryanduguid/release-policy/blob/main/docs/skill-consumers.md)
 - [Attribution checks](https://github.com/ryanduguid/release-policy/blob/main/docs/attribution-consumers.md)
 - [The egress check](https://github.com/ryanduguid/release-policy/blob/main/docs/egress-check.md)

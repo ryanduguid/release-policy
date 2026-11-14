@@ -215,6 +215,20 @@ class InstallerCases:
                 result = self.install(REPO, TAG, str(self.destination))
                 self.assert_refused(result, f"archives for {self.TARGET}, not 1")
 
+    def test_refuses_a_malformed_sha256sums_line_before_downloading_more(self) -> None:
+        digest = hashlib.sha256((self.release / self.asset).read_bytes()).hexdigest()
+        for line in (f"{digest.upper()}  {self.asset}", f"{digest[1:]}  {self.asset}",
+                     f"{digest}  {self.asset} extra", f"{digest} *{self.asset}",
+                     f"{digest}  ../{self.asset}", f"{digest}  -{self.asset}"):
+            with self.subTest(line=line):
+                (self.release / "SHA256SUMS").write_text(line + "\n", encoding="utf-8", newline="\n")
+                self.log.unlink(missing_ok=True)
+                result = self.install(REPO, TAG, str(self.destination))
+                self.assertNotEqual(0, result.returncode, result.stdout)
+                self.assertFalse(self.destination.exists(), "a refused install wrote files")
+                self.assertEqual([f"https://github.com/{REPO}/releases/download/{TAG}/SHA256SUMS"],
+                                 self.log.read_text(encoding="utf-8").splitlines())
+
     def test_refuses_an_unsafe_archive_member(self) -> None:
         for member in ("../escape", "sub/file", ".profile"):
             with self.subTest(member=member):
