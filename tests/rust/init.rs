@@ -408,13 +408,15 @@ fn a_version_file_on_the_release_workflow_itself_is_refused() {
     assert_eq!(golden(&repo.path(CALLER)), "__version__ = \"0.4.1\"\n");
 }
 
-/// Windows and macOS file systems ignore letter case, so another spelling
-/// names the same file.
-#[cfg(any(windows, target_os = "macos"))]
+/// On a case-insensitive file system (Windows and macOS by default, a
+/// casefolded Linux directory) another spelling names the same file.
 #[test]
 fn a_required_check_on_the_caller_in_other_letter_case_is_refused() {
     let repo = checkout("archive");
     repo.write(CALLER, "name: Mine\n");
+    if !repo.path(".github/workflows/Release.yml").exists() {
+        return; // A case-sensitive file system has no such alias.
+    }
     let out = run(
         &repo,
         &[

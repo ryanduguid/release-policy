@@ -173,11 +173,19 @@ fn checked_required_checks(root: &Path, given: &[String]) -> Result<Vec<String>>
 }
 
 /// Whether `relative` is the existing caller under any name the file system
-/// accepts for it, such as another letter case on Windows and macOS.
+/// accepts for it, such as another letter case on a case-insensitive file
+/// system. Unix compares device and inode, as realpath keeps the given case
+/// in a casefolded Linux directory; Windows' canonical path is the on-disk name.
 fn names_caller(root: &Path, relative: &str) -> bool {
-    std::fs::canonicalize(root.join(CALLER)).is_ok_and(|caller| {
-        std::fs::canonicalize(root.join(relative)).is_ok_and(|path| path == caller)
-    })
+    #[cfg(unix)]
+    let id = |path: std::path::PathBuf| {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(path).map(|m| (m.dev(), m.ino()))
+    };
+    #[cfg(not(unix))]
+    let id = std::fs::canonicalize::<std::path::PathBuf>;
+    id(root.join(CALLER))
+        .is_ok_and(|caller| id(root.join(relative)).is_ok_and(|path| path == caller))
 }
 
 type Inputs = Vec<(&'static str, String)>;
