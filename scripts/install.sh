@@ -106,6 +106,9 @@ install_files() {
     [ -f "$work/files/$member" ] && [ ! -L "$work/files/$member" ] \
       || refuse "$archive holds $member as something other than a file"
   done < "$work/members"
+  while IFS= read -r member; do
+    [ ! -d "$directory/$member" ] || refuse "$directory/$member is a directory"
+  done < "$work/members"
   # Copy every file into a new private directory beside the install, then
   # rename each into place, so no name an earlier occupant chose is written.
   mkdir -p "$directory"

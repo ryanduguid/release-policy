@@ -106,6 +106,11 @@ function Install-Archive([string]$Archive, [string]$Destination) {
     }
     $files = Join-Path $work 'files'
     Expand-Archive -LiteralPath (Join-Path $work $Archive) -DestinationPath $files
+    foreach ($member in $members) {
+        if (Test-Path -LiteralPath (Join-Path $Destination $member) -PathType Container) {
+            Deny-Install "$(Join-Path $Destination $member) is a directory"
+        }
+    }
     # Copy every file into a new directory beside the install, then move each
     # into place, so no name an earlier occupant chose is written.
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
@@ -123,6 +128,9 @@ function Install-Archive([string]$Archive, [string]$Destination) {
     }
 }
 
+if ($args.Count -gt 0) {
+    Deny-Install 'usage: install.ps1 OWNER/REPO TAG [DIRECTORY]'
+}
 Test-Argument
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $version = ($Tag -split '/')[-1].Substring(1)

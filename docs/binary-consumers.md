@@ -208,7 +208,8 @@ In PowerShell on Windows:
 
     & ([scriptblock]::Create((irm https://raw.githubusercontent.com/ryanduguid/release-policy/<full-40-char-commit-sha>/scripts/install.ps1))) owner/example-tool v1.2.3
 
-Replace `<full-40-char-commit-sha>` with a commit of this repository that
+Replace `owner/example-tool` and `v1.2.3` with the repository and full tag to
+install, and `<full-40-char-commit-sha>` with a commit of this repository that
 holds the installers, and read the script at that commit first: the command
 runs it unchecked, trusting GitHub and HTTPS to serve that commit's file. A
 commit cannot change; a branch such as `main` would run whatever the branch
@@ -228,9 +229,11 @@ holds when you run the command. Each installer:
 - installs the archive's files, each of which must be a plain file at its top
   level, into the directory: by default `${XDG_DATA_HOME:-$HOME/.local/share}/<stem>`
   or `%LOCALAPPDATA%\Programs\<stem>`. A file of the same name is replaced;
-  other files stay.
+  other files stay. A directory of the same name refuses the install.
 
-Nothing is installed unless every check passes. `install.sh` needs `curl`,
+Nothing is installed unless every check passes. The files are then renamed
+into place one at a time, so an install stopped part way through those renames
+can leave old and new files together: run it again. `install.sh` needs `curl`,
 `tar` and `sha256sum` or `shasum`; `install.ps1` runs in Windows PowerShell
 5.1 or PowerShell 7. Both need the [GitHub CLI](https://cli.github.com/), with
 no sign-in, because the bundle comes from the release. Neither changes `PATH`:

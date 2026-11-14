@@ -182,6 +182,14 @@ class InstallerCases:
         self.assertEqual(self.TARGET.encode(), (self.destination / self.EXECUTABLE).read_bytes())
         self.assertEqual(b"mine", (self.destination / "notes.txt").read_bytes())
 
+    def test_refuses_a_directory_where_a_file_would_go(self) -> None:
+        (self.destination / self.EXECUTABLE).mkdir(parents=True)
+        result = self.install(REPO, TAG, str(self.destination))
+        self.assertNotEqual(0, result.returncode, result.stdout)
+        self.assertIn(f"{self.EXECUTABLE} is a directory", result.stderr)
+        self.assertEqual([], list((self.destination / self.EXECUTABLE).iterdir()))
+        self.assertEqual({self.EXECUTABLE}, {p.name for p in self.destination.iterdir()})
+
     def test_ignores_a_directory_in_the_way_of_a_staging_name(self) -> None:
         (self.destination / f".{self.EXECUTABLE}.new").mkdir(parents=True)
         result = self.install(REPO, TAG, str(self.destination))
@@ -252,7 +260,8 @@ class InstallerCases:
 
     def test_refuses_malformed_arguments(self) -> None:
         for arguments in ((REPO,), ("owner", TAG), ("a/b/c", TAG), (REPO, "1.2.3"),
-                          (REPO, "tool/../v1.2.3"), (REPO, "v1.2.3\nv9")):
+                          (REPO, "tool/../v1.2.3"), (REPO, "v1.2.3\nv9"),
+                          (REPO, TAG, str(self.destination), "extra")):
             with self.subTest(arguments=arguments):
                 result = self.install(*arguments)
                 self.assertNotEqual(0, result.returncode)
@@ -333,6 +342,15 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
         self.assertEqual(b"keep", victim.read_bytes())
         self.assertFalse((self.destination / STEM).is_symlink())
         self.assertEqual(self.TARGET.encode(), (self.destination / STEM).read_bytes())
+
+    @unittest.skipUnless(shutil.which("shasum"), "shasum required")
+    def test_checks_the_archive_with_shasum_when_sha256sum_is_missing(self) -> None:
+        self.env["PATH"] = str(self.tools("sha256sum"))
+        self.assert_installed(self.install(REPO, TAG, str(self.destination)))
+        (self.release / self.asset).write_bytes(b"tampered")
+        self.destination = self.root / "second"
+        self.assert_refused(self.install(REPO, TAG, str(self.destination)),
+                            "does not match SHA256SUMS")
 
     def test_refuses_without_each_required_tool(self) -> None:
         for tools, reason in ((("gh",), "the GitHub CLI (gh) is required"),
