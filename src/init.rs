@@ -128,16 +128,28 @@ fn detect(root: &Path) -> Result<&'static str> {
     }
 }
 
-/// The release gate's parser, then 2 checks it cannot make: the label must
-/// be writable on one YAML line and its workflow must be in this repository.
+/// The release gate's parser, then 3 checks it cannot make: the label must
+/// be writable on one YAML line, must reach the gate as written and its
+/// workflow must be in this repository.
 fn checked_required_checks(root: &Path, given: &[String]) -> Result<Vec<String>> {
     required_checks::parse_required_checks(&given.join("\n"))?
         .iter()
         .map(|check| {
             let label = check.label();
-            if label.chars().any(char::is_control) {
+            // YAML holds no control character but tab, LF and CR (which the
+            // parser has split on), and neither U+FFFE nor U+FFFF.
+            if label
+                .chars()
+                .any(|c| c.is_control() || matches!(c, '\u{fffe}' | '\u{ffff}'))
+            {
                 return Err(format!(
-                    "required check {} holds a control character",
+                    "required check {} holds a character a workflow cannot hold",
+                    py::repr_str(&label)
+                ));
+            }
+            if label.contains("${{") {
+                return Err(format!(
+                    "required check {} holds '${{{{', which GitHub would evaluate; name the job as GitHub shows it",
                     py::repr_str(&label)
                 ));
             }
@@ -232,8 +244,10 @@ fn caller(family: &Family, inputs: &Inputs, checks: &[String]) -> String {
          with:\n",
         family.workflow
     );
+    // Quoted, so YAML reads a stem such as 2048, 1e3 or null as text. The
+    // STEM, BINARY and PATH admit no '"' or '\', so no value needs an escape.
     for (key, value) in inputs {
-        text += &format!("      {key}: {value}\n");
+        text += &format!("      {key}: \"{value}\"\n");
     }
     text += "      required-checks: |\n";
     for check in checks {
@@ -243,7 +257,7 @@ fn caller(family: &Family, inputs: &Inputs, checks: &[String]) -> String {
 }
 
 /// Create the caller, replacing an existing file only when forced, and never
-/// through a symbolic link.
+/// through a symbolic or hard link.
 fn write_caller(root: &Path, text: &str, force: bool) -> Result<()> {
     let mut path = root.to_path_buf();
     let mut relative = Vec::new();
@@ -257,10 +271,14 @@ fn write_caller(root: &Path, text: &str, force: bool) -> Result<()> {
             ));
         }
     }
-    if path.exists() && !force {
-        return Err(format!(
-            "{CALLER} already exists; pass --force to replace it"
-        ));
+    if path.exists() {
+        if !force {
+            return Err(format!(
+                "{CALLER} already exists; pass --force to replace it"
+            ));
+        }
+        // Remove the name, so a hard link's other names keep their bytes.
+        std::fs::remove_file(&path).map_err(|e| io_error(e, &path))?;
     }
     let directory = path.parent().unwrap_or(root);
     std::fs::create_dir_all(directory).map_err(|e| io_error(e, directory))?;

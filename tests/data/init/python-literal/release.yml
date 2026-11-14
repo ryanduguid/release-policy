@@ -13,8 +13,8 @@ jobs:
       id-token: write
     uses: ryanduguid/release-policy/.github/workflows/release-python.yml@ddb7c18953f5abef38ba164a0ae48dc7c6a0e1f3 # v0.4.0
     with:
-      version-parser: python-literal
-      version-file: example_pkg/__init__.py
+      version-parser: "python-literal"
+      version-file: "example_pkg/__init__.py"
       required-checks: |
         .github/workflows/ci.yml: lint
         .github/workflows/ci.yml: test

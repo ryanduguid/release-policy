@@ -14,6 +14,7 @@ actionlint.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -63,7 +64,7 @@ def git(*args: str, cwd: Path = ROOT) -> str:
 
 
 def caller_inputs(text: str) -> dict[str, str]:
-    """The `with:` mapping of the caller's one job: plain values and `|` blocks."""
+    """The `with:` mapping of the caller's one job: quoted values and `|` blocks."""
     inputs: dict[str, str] = {}
     block = None
     for line in text.split("    with:\n", 1)[1].splitlines():
@@ -72,7 +73,9 @@ def caller_inputs(text: str) -> dict[str, str]:
             continue
         key, value = line.strip().split(": ", 1)
         block = key if value == "|" else None
-        inputs[key] = "" if block else value
+        # A value holds only characters that need no escape, so its YAML
+        # double-quoted form is also JSON; an unquoted value fails here.
+        inputs[key] = "" if block else json.loads(value)
     return inputs
 
 

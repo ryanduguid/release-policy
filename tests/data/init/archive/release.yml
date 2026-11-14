@@ -13,6 +13,6 @@ jobs:
       id-token: write
     uses: ryanduguid/release-policy/.github/workflows/release-archive.yml@ddb7c18953f5abef38ba164a0ae48dc7c6a0e1f3 # v0.4.0
     with:
-      artifact-stem: example-archive
+      artifact-stem: "example-archive"
       required-checks: |
         .github/workflows/ci.yml: test (3.14)

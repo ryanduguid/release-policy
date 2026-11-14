@@ -101,6 +101,26 @@ fn an_existing_caller_is_kept_unless_forced() {
     );
 }
 
+#[test]
+fn a_forced_caller_replaces_a_hard_link_instead_of_writing_through_it() {
+    let repo = checkout("archive");
+    let outside = support::tempdir();
+    let kept = outside.path().join("kept.yml");
+    std::fs::write(&kept, "name: Elsewhere\n").unwrap();
+    std::fs::create_dir_all(repo.path(".github/workflows")).unwrap();
+    std::fs::hard_link(&kept, repo.path(CALLER)).unwrap();
+    let args = args("archive");
+    let mut args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    args.push("--force");
+    let out = run(&repo, &args);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(golden(&kept), "name: Elsewhere\n");
+    assert_eq!(
+        golden(&repo.path(CALLER)),
+        golden(&shape("archive").join("release.yml"))
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn a_symbolic_link_on_the_caller_path_is_refused_even_when_forced() {
@@ -228,8 +248,38 @@ fn inputs_the_policy_would_refuse_are_refused_before_writing() {
             "--required-check",
             ".github/workflows/ci.yml: a\u{7}b",
         ],
-        "required check '.github/workflows/ci.yml: a\\x07b' holds a control character",
+        "required check '.github/workflows/ci.yml: a\\x07b' holds a character a workflow cannot hold",
     );
+    // YAML cannot hold U+FFFF, so the workflow would not parse.
+    refused(
+        &archive,
+        &[
+            "init",
+            "--artifact-stem",
+            "example",
+            "--required-check",
+            ".github/workflows/ci.yml: a\u{ffff}b",
+        ],
+        "required check '.github/workflows/ci.yml: a\\uffffb' holds a character a workflow cannot hold",
+    );
+    // GitHub evaluates an expression in a `with:` value, so the gate would
+    // wait for a job named after its result.
+    for job in ["${{ github.token }}", "test (${{ matrix.python }})"] {
+        let check = format!(".github/workflows/ci.yml: {job}");
+        refused(
+            &archive,
+            &[
+                "init",
+                "--artifact-stem",
+                "example",
+                "--required-check",
+                &check,
+            ],
+            &format!(
+                "required check '{check}' holds '${{{{', which GitHub would evaluate; name the job as GitHub shows it"
+            ),
+        );
+    }
 
     let python = checkout("python-literal");
     refused(
@@ -307,10 +357,27 @@ fn a_source_archive_is_named_after_its_directory_by_default() {
     let out = cli(&root, &["init", CHECK[0], CHECK[1]], "");
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert!(
-        golden(&root.join(CALLER)).contains("      artifact-stem: my-archive\n"),
+        golden(&root.join(CALLER)).contains("      artifact-stem: \"my-archive\"\n"),
         "{}",
         golden(&root.join(CALLER))
     );
+}
+
+#[test]
+fn a_stem_yaml_would_read_as_a_number_or_null_stays_text() {
+    let repo = checkout("archive");
+    for stem in ["2048", "1e3", "0x10", "null"] {
+        let out = run(
+            &repo,
+            &["init", "--artifact-stem", stem, CHECK[0], CHECK[1], "--force"],
+        );
+        assert_eq!(out.code, 0, "{stem}: {}", out.stderr);
+        let caller = golden(&repo.path(CALLER));
+        assert!(
+            caller.contains(&format!("      artifact-stem: \"{stem}\"\n")),
+            "{caller}"
+        );
+    }
 }
 
 #[test]
@@ -324,7 +391,7 @@ fn a_package_name_that_is_already_a_stem_names_no_binary() {
     assert_eq!(out.code, 0, "{}", out.stderr);
     let caller = golden(&repo.path(CALLER));
     assert!(
-        caller.contains("      artifact-stem: example-tool\n"),
+        caller.contains("      artifact-stem: \"example-tool\"\n"),
         "{caller}"
     );
     assert!(!caller.contains("binary:"), "{caller}");
