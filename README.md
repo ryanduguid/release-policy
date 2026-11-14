@@ -56,12 +56,17 @@ Start with the [consumer prerequisites](docs/consumer-prerequisites.md) before c
 
 ## Release status
 
-[`v0.3.0`](https://github.com/ryanduguid/release-policy/releases/tag/v0.3.0)
-(28 October 2026) is the first release with an artefact: the `release-policy`
-executable for Linux and Windows with SBOMs, provenance attestations and
+[`v0.4.0`](https://github.com/ryanduguid/release-policy/releases/tag/v0.4.0)
+is the latest release: the `release-policy` executable for Linux (x86_64 and
+arm64), macOS arm64 and Windows x86_64 with SBOMs, provenance attestations and
 `SHA256SUMS`, built and published by this repository's own `release-binary.yml`.
 The workflows still run the Python scripts, not that executable. It is the first
-FSL-1.1-ALv2 release; earlier releases keep their own licence.
+release under the Ryan Duguid Public Attribution Licence 1.0; earlier releases
+keep their own licence.
+
+[`v0.3.0`](https://github.com/ryanduguid/release-policy/releases/tag/v0.3.0)
+(28 October 2026) was the first release with an artefact, for Linux and Windows
+only, and the first FSL-1.1-ALv2 release.
 
 `v0.1.0` and `v0.2.0` are notes-only source markers with no uploaded artefact.
 `v0.2.0` marks `a601f1d8b143f92b0517f709216993660d21f480`, the revision ryanduguid
