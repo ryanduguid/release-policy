@@ -240,8 +240,33 @@ into place one at a time, so an install stopped part way through those renames
 can leave old and new files together: run it again. `install.sh` needs `curl`,
 `tar` and `sha256sum` or `shasum`; `install.ps1` runs in Windows PowerShell
 5.1 or PowerShell 7. Both need the [GitHub CLI](https://cli.github.com/), with
-no sign-in, because the bundle comes from the release. Neither changes `PATH`:
-each prints the directory to add.
+no sign-in, because the bundle comes from the release.
+
+By default neither changes `PATH`: each prints the directory to add. To have
+the installer add it, end the command with `--modify-path` for `install.sh`
+or `-ModifyPath` for `install.ps1`:
+
+    curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/ryanduguid/release-policy/<full-40-char-commit-sha>/scripts/install.sh | sh -s -- owner/example-tool v1.2.3 --modify-path
+
+After a successful install:
+
+- `install.sh` appends one line, which adds the directory to the end of `PATH`
+  unless it is already there, to the startup file of the login shell that
+  `$SHELL` names: `~/.zshrc` for zsh (in `$ZDOTDIR` when set), `~/.bashrc`
+  for bash on Linux and `~/.bash_profile` on macOS,
+  `~/.config/fish/config.fish` for fish and `~/.profile` for any other shell.
+  It checks before downloading anything that it can write that file, and the
+  directory must be absolute and hold only letters, digits, spaces and
+  `_ . / + @ , -`, else nothing is installed. A file that already holds the
+  line is left as it is.
+- `install.ps1` adds the directory to the end of your user `Path`
+  (`HKCU:\Environment`) unless an entry already names it, keeping the other
+  entries as written and the value's expandable type, then tells running
+  programs that the environment changed. It never reads or writes the
+  machine `Path`.
+
+Each prints the file or value it changed and how to undo it. Open a new
+terminal for the change to apply.
 
 Unlike the manual check above, the installers do not pin the tagged commit or
 the policy commit. They establish that a GitHub-hosted run of
