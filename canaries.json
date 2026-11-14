@@ -17,11 +17,11 @@
     {
       "current_policy_sha": "efac799b4380171e9f392e392a20e80f285bfa25",
       "evidence": {
-        "head_sha": "c401d69de80d7d679ae02359daf6f19f44f908b6",
-        "policy_sha": "5094c69ebf14523e4787000e5ff3cdcb03c10f6e",
-        "ref": "v0.3.0",
-        "run_id": 40772869568,
-        "started_at": "2026-10-28T21:33:02Z"
+        "head_sha": "ddb7c18953f5abef38ba164a0ae48dc7c6a0e1f3",
+        "policy_sha": "efac799b4380171e9f392e392a20e80f285bfa25",
+        "ref": "v0.4.0",
+        "run_id": 43535175578,
+        "started_at": "2026-11-14T00:35:10Z"
       },
       "family": "binary",
       "policy_workflow": ".github/workflows/release-binary.yml",
