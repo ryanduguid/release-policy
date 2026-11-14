@@ -33,6 +33,8 @@ A consumer calls one with `uses:`, pinned to a full commit SHA of this repositor
 | `attribution-policy.yml` | Fail PR text and commits that carry AI attribution credits | [Attribution checks](docs/attribution-consumers.md) |
 | `pr-review.yml` | Run an independent PR review with your own API key | [PR reviews](docs/pr-review.md) |
 
+`scripts/install.sh` and `scripts/install.ps1` install a Rust binary release in one command, and only after its checksum and build provenance verify: see [Installing a release](docs/binary-consumers.md#installing-a-release).
+
 Policy checks establish release evidence, not accounting correctness. The example below is a recorded canary.
 
 **Input:** the recorded `v0.4.0` Python canary from AU FP&A Pack.
@@ -112,9 +114,9 @@ To run that audit on demand, dispatch CI with `live-canary-audit` selected. The 
 
 ## Alternatives
 
-release-policy fits maintainers who want reusable workflows pinned to a commit SHA, with the weight on release gates, attestations and recorded canaries. Use another tool if you want installers, Homebrew publishing or binaries beyond Linux, macOS arm64 and Windows x86_64, such as Intel macOS. As read on 13 November 2026:
+release-policy fits maintainers who want reusable workflows pinned to a commit SHA, with the weight on release gates, attestations and recorded canaries. Use another tool if you want Homebrew or other package manager publishing, an npm or MSI installer, an installer that sets up `PATH`, or binaries beyond Linux, macOS arm64 and Windows x86_64, such as Intel macOS. As read on 13 November 2026:
 
-- [dist](https://github.com/axodotdev/cargo-dist) (formerly cargo-dist) builds binaries, makes tarballs and installers, and can publish Homebrew formulae to your own tap.
+- [dist](https://github.com/axodotdev/cargo-dist) (formerly cargo-dist) builds binaries, makes tarballs and installers, and can publish Homebrew formulae to your own tap. Its [v0.34.0](https://github.com/axodotdev/cargo-dist/releases/tag/v0.34.0) shell installer skips its checksum check when `sha256sum` is missing, its PowerShell installer has no checksum check, and neither verifies build provenance (read 15 November 2026).
 - [GoReleaser](https://goreleaser.com/) builds and releases Go, Rust, TypeScript, Python and Zig projects for multiple platforms and architectures, and can publish to package managers including Homebrew, Scoop and Winget.
 - [slsa-github-generator](https://github.com/slsa-framework/slsa-github-generator) generates SLSA provenance for GitHub projects. Its README says it is no longer actively maintained.
 

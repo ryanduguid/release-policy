@@ -7,6 +7,9 @@ is and is not established. These steps check a downloaded asset with a current
 [GitHub CLI](https://cli.github.com/). They
 prove where and how the asset was built, not that its contents are correct.
 
+To check and install a Rust binary release in one command instead, see
+[Installing a release](binary-consumers.md#installing-a-release).
+
 The commands assume a POSIX shell with GNU `sha256sum`, such as Linux, WSL or
 Git Bash. Elsewhere, put each `gh` command on one line without the trailing
 `\`; step 4 checks each asset's digest without `sha256sum`.
