@@ -216,7 +216,18 @@ fn inputs_the_policy_would_refuse_are_refused_before_writing() {
         "version-file must be a relative path of letters, digits, '.', '_', '-' and '/': 'example_pkg/v 1.py'",
     );
 
+    refused(
+        &archive,
+        &["init", "--family", "binary", CHECK[0], CHECK[1]],
+        "Cargo.toml is missing",
+    );
     let binary = checkout("binary");
+    binary.write("Cargo.toml", "[package]\nname = \"Example\"\n");
+    refused(
+        &binary,
+        &["init", "--artifact-stem", "example", CHECK[0], CHECK[1]],
+        "Cargo.toml [package] name is not a binary name the release accepts: 'Example'",
+    );
     binary.write("Cargo.toml", "[package]\nname.workspace = true\n");
     refused(
         &binary,

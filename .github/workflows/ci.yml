@@ -254,14 +254,15 @@ jobs:
       # actionlint's bundled `job` context type does not yet model `workflow_sha`,
       # which is used by the release workflows. rhysd/actionlint#707 is open to
       # add it. Until that ships, ignore this one known false positive; remove the
-      # -ignore flag once #707 lands in a release.
+      # -ignore flag once #707 lands in a release. tests/data/init holds the
+      # callers `release-policy init` writes for consumers.
       - name: Actionlint the workflows
         if: matrix.python == '3.14'
         run: |
           ./actionlint \
             -shellcheck "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" \
             -ignore 'property "workflow_sha" is not defined in object type \{check_run_id: number; container: \{id: string; network: string\}; services: \{string => \{id: string; network: string; ports: \{string => string\}\}\}; status: string\}' \
-            .github/workflows/*.yml
+            .github/workflows/*.yml tests/data/init/*/release.yml
 
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0

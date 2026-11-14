@@ -18,6 +18,7 @@ distributable releases.
 
 ## Consumer guides
 
+- [Quickstart: set up a release with init](https://github.com/ryanduguid/release-policy/blob/main/docs/quickstart.md)
 - [Packaged Python](https://github.com/ryanduguid/release-policy/blob/main/docs/python-consumers.md)
 - [PyPI hand-off and one-time setup](https://github.com/ryanduguid/release-policy/blob/main/docs/pypi-publishing.md)
 - [Source archives](https://github.com/ryanduguid/release-policy/blob/main/docs/archive-consumers.md)
