@@ -72,6 +72,8 @@ function Read-Sum {
 
 function Test-Provenance([string]$Archive, [string]$Expected) {
     foreach ($subject in 'SHA256SUMS', $Archive) {
+        # A gh that never runs the CLI must not inherit an earlier success.
+        $global:LASTEXITCODE = 1
         & gh attestation verify (Join-Path $work $subject) --bundle (Join-Path $work "$stem-$version.intoto.jsonl") `
             --repo $Repository --signer-workflow $Signer --source-ref "refs/tags/$Tag" `
             --deny-self-hosted-runners | Out-Null
@@ -104,11 +106,20 @@ function Install-Archive([string]$Archive, [string]$Destination) {
     }
     $files = Join-Path $work 'files'
     Expand-Archive -LiteralPath (Join-Path $work $Archive) -DestinationPath $files
+    # Copy every file into a new directory beside the install, then move each
+    # into place, so no name an earlier occupant chose is written.
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-    foreach ($member in $members) {
-        $staged = Join-Path $Destination ".$member.new"
-        Copy-Item -LiteralPath (Join-Path $files $member) -Destination $staged -Force
-        Move-Item -LiteralPath $staged -Destination (Join-Path $Destination $member) -Force
+    $stage = Join-Path $Destination ('.install.' + [IO.Path]::GetRandomFileName())
+    New-Item -ItemType Directory -Path $stage | Out-Null
+    try {
+        foreach ($member in $members) {
+            Copy-Item -LiteralPath (Join-Path $files $member) -Destination (Join-Path $stage $member)
+        }
+        foreach ($member in $members) {
+            Move-Item -LiteralPath (Join-Path $stage $member) -Destination (Join-Path $Destination $member) -Force
+        }
+    } finally {
+        Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 

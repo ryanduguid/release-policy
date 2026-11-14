@@ -75,6 +75,11 @@ if ($env:FAKE_GH -eq '1') {
         $global:LASTEXITCODE = [int]((Split-Path -Leaf $args[2]) -eq $env:FAKE_GH_REFUSE)
     }
 }
+# A gh that runs nothing, after an earlier command left a zero exit code.
+if ($env:FAKE_GH -eq 'silent') {
+    function global:gh { }
+    $global:LASTEXITCODE = 0
+}
 """
 
 
@@ -176,6 +181,14 @@ class InstallerCases:
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual(self.TARGET.encode(), (self.destination / self.EXECUTABLE).read_bytes())
         self.assertEqual(b"mine", (self.destination / "notes.txt").read_bytes())
+
+    def test_ignores_a_directory_in_the_way_of_a_staging_name(self) -> None:
+        (self.destination / f".{self.EXECUTABLE}.new").mkdir(parents=True)
+        result = self.install(REPO, TAG, str(self.destination))
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(self.TARGET.encode(), (self.destination / self.EXECUTABLE).read_bytes())
+        self.assertEqual({self.EXECUTABLE, f".{self.EXECUTABLE}.new", *DOCUMENTS},
+                         {p.name for p in self.destination.iterdir()})
 
     def test_refuses_an_archive_that_does_not_match_sha256sums(self) -> None:
         self.write_sums()
@@ -310,6 +323,17 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
         self.assert_refused(self.install(REPO, TAG, str(self.destination)),
                             "holds LICENSE as something other than a file")
 
+    def test_never_writes_through_a_link_in_the_install_directory(self) -> None:
+        victim = self.root / "victim"
+        victim.write_bytes(b"keep")
+        self.destination.mkdir()
+        (self.destination / f".{STEM}.new").symlink_to(victim)
+        result = self.install(REPO, TAG, str(self.destination))
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(b"keep", victim.read_bytes())
+        self.assertFalse((self.destination / STEM).is_symlink())
+        self.assertEqual(self.TARGET.encode(), (self.destination / STEM).read_bytes())
+
     def test_refuses_without_each_required_tool(self) -> None:
         for tools, reason in ((("gh",), "the GitHub CLI (gh) is required"),
                               (("curl",), "curl is required"),
@@ -358,6 +382,10 @@ class PowerShellInstallerTests(InstallerCases, unittest.TestCase):
             with self.subTest(env=env):
                 self.assert_refused(self.install(REPO, TAG, str(self.destination), **env), reason)
                 self.assertFalse(self.log.exists())
+
+    def test_refuses_when_gh_leaves_no_exit_code(self) -> None:
+        result = self.install(REPO, TAG, str(self.destination), FAKE_GH="silent")
+        self.assert_refused(result, "SHA256SUMS failed provenance verification")
 
     def test_refuses_without_the_github_cli(self) -> None:
         result = self.install(REPO, TAG, str(self.destination), FAKE_GH="0")

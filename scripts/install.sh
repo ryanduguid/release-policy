@@ -106,10 +106,15 @@ install_files() {
     [ -f "$work/files/$member" ] && [ ! -L "$work/files/$member" ] \
       || refuse "$archive holds $member as something other than a file"
   done < "$work/members"
+  # Copy every file into a new private directory beside the install, then
+  # rename each into place, so no name an earlier occupant chose is written.
   mkdir -p "$directory"
+  stage=$(mktemp -d "$directory/.install.XXXXXX") || refuse "cannot write to $directory"
   while IFS= read -r member; do
-    cp "$work/files/$member" "$directory/.$member.new"
-    mv -f "$directory/.$member.new" "$directory/$member"
+    cp "$work/files/$member" "$stage/$member"
+  done < "$work/members"
+  while IFS= read -r member; do
+    mv -f "$stage/$member" "$directory/$member"
   done < "$work/members"
 }
 
@@ -123,8 +128,9 @@ main() {
     || refuse "the GitHub CLI (gh) is required to verify build provenance: https://cli.github.com/"
   command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 \
     || refuse "sha256sum or shasum is required to check the archive"
+  stage=
   work=$(mktemp -d) || refuse "cannot create a temporary directory"
-  trap 'rm -rf "$work"' EXIT
+  trap 'rm -rf "$work" ${stage:+"$stage"}' EXIT
   trap 'exit 1' HUP INT TERM
   base="https://github.com/$repo/releases/download/$tag"
   fetch SHA256SUMS
