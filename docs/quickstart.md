@@ -7,8 +7,8 @@ and refuses inputs the release jobs would refuse.
 
 ## 1. Install the command
 
-`init` is not in a release yet: v0.4.0 predates it. Build it from source with
-Rust 1.99 or later:
+`init` is on `main` but not in a release yet: v0.4.0 predates it. Build it
+from a commit on `main` with Rust 1.99 or later:
 
 ```sh
 cargo install --locked --git https://github.com/ryanduguid/release-policy --rev <full-40-char-commit-sha> --bin release-policy release-policy
@@ -48,9 +48,12 @@ Other options:
 
 It refuses to write what the release would refuse: a malformed or duplicate
 check, a check whose workflow file is not in the repository, a stem that is
-not lower-case and hyphenated, or Python metadata the release cannot read.
-It does not handle a component inside a monorepo or a skill pack; copy those
-callers from [Packaged Python](python-consumers.md),
+not lower-case and hyphenated, or Python metadata the release cannot read. It
+also refuses a check holding `${{`, which GitHub would evaluate before the
+release saw it.
+It does not write a caller for a component inside a monorepo or for a skill
+pack, or a PyPI publish job (step 3); copy those callers from
+[Packaged Python](python-consumers.md),
 [Source archives](archive-consumers.md) or
 [Skill verification and releases](skill-consumers.md).
 
