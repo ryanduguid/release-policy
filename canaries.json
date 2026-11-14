@@ -11,7 +11,7 @@
       },
       "family": "archive",
       "policy_workflow": ".github/workflows/release-archive.yml",
-      "repository": "ryanduguid/au-tax-legislation-corpus",
+      "repository": "ryanduguid/PaulGoodman",
       "workflow_path": ".github/workflows/release.yml"
     },
     {
