@@ -194,3 +194,55 @@ signature check without the pins, is not enough.
 
 The operator confirms release immutability is enabled before tagging; the
 workflow token cannot read that setting.
+
+## Installing a release
+
+`scripts/install.sh` (Linux and macOS) and `scripts/install.ps1` (Windows)
+download, verify and install one release in a single command. Each takes the
+repository, the full tag and, optionally, the directory to install into. On
+Linux or macOS:
+
+    curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/ryanduguid/release-policy/<full-40-char-commit-sha>/scripts/install.sh | sh -s -- owner/example-tool v1.2.3
+
+In PowerShell on Windows:
+
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/ryanduguid/release-policy/<full-40-char-commit-sha>/scripts/install.ps1))) owner/example-tool v1.2.3
+
+Replace `owner/example-tool` and `v1.2.3` with the repository and full tag to
+install, and `<full-40-char-commit-sha>` with a commit of this repository that
+holds the installers, and read the script at that commit first: the command
+runs it unchecked, trusting GitHub and HTTPS to serve that commit's file. A
+commit cannot change; a branch such as `main` would run whatever the branch
+holds when you run the command. Each installer:
+
+- picks the archive for the running platform: Linux x86_64 or arm64 or macOS
+  arm64 through `install.sh`, Windows x86_64 through `install.ps1`. It refuses
+  any other platform, Intel macOS and Windows on Arm included.
+- downloads `SHA256SUMS`, that archive and the provenance bundle from the
+  release, and refuses on any failed or partial download, or unless
+  `SHA256SUMS` lists exactly one archive for the platform.
+- verifies `SHA256SUMS` and the archive against the bundle with
+  `gh attestation verify`, pinned to the repository, `refs/tags/<tag>`,
+  this repository's `release-binary.yml` as the signer workflow and a
+  GitHub-hosted runner, then requires the archive to match its `SHA256SUMS`
+  line.
+- installs the archive's files, each of which must be a plain file at its top
+  level, into the directory: by default `${XDG_DATA_HOME:-$HOME/.local/share}/<stem>`
+  or `%LOCALAPPDATA%\Programs\<stem>`. A file of the same name is replaced;
+  other files stay. A directory of the same name refuses the install.
+
+Nothing is installed unless every check passes. The files are then renamed
+into place one at a time, so an install stopped part way through those renames
+can leave old and new files together: run it again. `install.sh` needs `curl`,
+`tar` and `sha256sum` or `shasum`; `install.ps1` runs in Windows PowerShell
+5.1 or PowerShell 7. Both need the [GitHub CLI](https://cli.github.com/), with
+no sign-in, because the bundle comes from the release. Neither changes `PATH`:
+each prints the directory to add.
+
+Unlike the manual check above, the installers do not pin the tagged commit or
+the policy commit. They establish that a GitHub-hosted run of
+`release-binary.yml`, at some commit of this repository, attested the archive
+and `SHA256SUMS` for that repository's tag. They do not establish which commit the tag named, nor
+that the run used a policy commit you reviewed, so they trust whoever can push
+tags and change workflows in that repository. Use the manual check with both
+digests pinned when that matters.
