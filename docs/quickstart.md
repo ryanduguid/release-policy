@@ -3,7 +3,7 @@
 `release-policy init` writes `.github/workflows/release.yml` for a repository
 that ships a Python package, a Rust binary or a source archive. It works
 offline: it reads the repository, pins the caller to a released policy commit
-and checks what it writes with the parsers the release jobs run on a caller.
+and refuses inputs the release jobs would refuse.
 
 ## 1. Install the command
 

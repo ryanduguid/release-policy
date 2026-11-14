@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
 //! `release-policy init`: write the release caller workflow a repository
-//! needs, offline, pinned to a released policy commit. It checks what it
-//! writes with the parsers the release jobs run on a caller.
+//! needs, offline, pinned to a released policy commit. It refuses inputs
+//! the release jobs would refuse, with the Rust ports of their parsers.
 
 use crate::{Result, common::*, py, release, required_checks};
-use std::io::Write;
 use std::path::Path;
 
 /// The release whose workflows a new caller runs, and the commit its tag
@@ -252,20 +251,12 @@ fn write_caller(root: &Path, text: &str, force: bool) -> Result<()> {
             return Err(format!("{} must not be a symbolic link", relative.join("/")));
         }
     }
-    if std::fs::symlink_metadata(&path).is_ok() {
-        if !force {
-            return Err(format!("{CALLER} already exists; pass --force to replace it"));
-        }
-        std::fs::remove_file(&path).map_err(|e| io_error(e, &path))?;
+    if path.exists() && !force {
+        return Err(format!("{CALLER} already exists; pass --force to replace it"));
     }
     let directory = path.parent().unwrap_or(root);
     std::fs::create_dir_all(directory).map_err(|e| io_error(e, directory))?;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .and_then(|mut file| file.write_all(text.as_bytes()))
-        .map_err(|e| io_error(e, &path))
+    write_bytes(&path, text.as_bytes())
 }
 
 fn report(family: &Family) -> String {
