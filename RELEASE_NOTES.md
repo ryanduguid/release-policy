@@ -24,6 +24,11 @@ outside the runner's directories are refused (#230).
 `release-skills.yml` gains an optional `skill-archives` input that ships each
 listed skill as its own upload ZIP, listed in `SHA256SUMS` and covered by the
 provenance attestation; a skill ZIP over 32 MB refuses the release (#288).
+A single `<parent>/*` line ships every skill directory directly in that
+parent instead, built the same way and released together as one
+`<stem>-<version>-skills.bundle.zip` asset; a parent line mixed with other
+lines, or an unsafe, missing or file-only parent, or one holding a symbolic
+link or submodule, refuses the release (#291).
 Source archives are now built from the tagged commit's tree, so a component
 moved or removed since can still be archived (#257).
 
@@ -76,8 +81,8 @@ Known issues: the macOS arm64 archives are not notarised, and the binary guide
 gives no Gatekeeper advice; a copy downloaded through a browser may be
 blocked (not tried on a Mac). `virustotal-release.yml` uploads one asset every
 16 seconds and stops after 30 minutes, so it cannot scan a release of more
-than about 100 assets; `skill-archives` has no parent-directory form, so a
-pack that lists every skill can pass that limit. The version check in
+than about 100 assets; a pack that lists every skill on its own
+`skill-archives` line can pass that limit, so use the `<parent>/*` form. The version check in
 `release-archive.yml` and `release-binary.yml` accepts a `VERSION` file that
 Git does not track or that is a symbolic link to another file in the
 checkout, and reads an oversized one whole before refusing it; the Python
