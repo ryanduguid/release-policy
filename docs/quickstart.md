@@ -49,8 +49,8 @@ Other options:
 It refuses to write what the release would refuse: a malformed or duplicate
 check, a check whose workflow file is not in the repository, a stem that is
 not lower-case and hyphenated, or Python metadata the release cannot read. It
-also refuses a check holding `${{`, which GitHub would evaluate before the
-release saw it.
+also refuses a check on `release.yml` itself, and a check holding `${{`,
+which GitHub would evaluate before the release saw it.
 It does not write a caller for a component inside a monorepo or for a skill
 pack, or a PyPI publish job (step 3); copy those callers from
 [Packaged Python](python-consumers.md),

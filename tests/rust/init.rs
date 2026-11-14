@@ -335,6 +335,52 @@ fn init_runs_only_at_the_top_of_the_repository() {
         out.stderr,
         "release-policy: run init at the repository's top level\n"
     );
+
+    // Git reports an empty prefix inside .git too, which is not the work tree.
+    repo.write(".git/.github/workflows/ci.yml", "name: CI\n");
+    let out = cli(
+        &repo.path(".git"),
+        &[
+            "init",
+            "--family",
+            "archive",
+            "--artifact-stem",
+            "example",
+            CHECK[0],
+            CHECK[1],
+        ],
+        "",
+    );
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "release-policy: run init at the repository's top level\n"
+    );
+    assert!(!repo.path(".git/.github/workflows/release.yml").exists());
+}
+
+#[test]
+fn a_required_check_on_the_release_workflow_itself_is_refused() {
+    let repo = checkout("archive");
+    repo.write(CALLER, "name: Mine\n");
+    let out = run(
+        &repo,
+        &[
+            "init",
+            "--artifact-stem",
+            "example",
+            "--required-check",
+            ".github/workflows/release.yml: release",
+            "--force",
+        ],
+    );
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "release-policy: required check '.github/workflows/release.yml: release' names the release workflow init writes\n"
+    );
+    // Untouched, even though --force was given.
+    assert_eq!(golden(&repo.path(CALLER)), "name: Mine\n");
 }
 
 #[test]

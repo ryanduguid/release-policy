@@ -67,9 +67,12 @@ const FAMILIES: [Family; 3] = [
 
 /// Write the caller and return the report of what is left for the owner.
 pub fn init(root: &Path, options: &Options) -> Result<String> {
-    if !git(root, &["rev-parse", "--show-prefix"])?
-        .trim()
-        .is_empty()
+    // Inside .git or a bare repository the prefix is empty too, but Git
+    // reports that it is not in a work tree.
+    if git(
+        root,
+        &["rev-parse", "--is-inside-work-tree", "--show-prefix"],
+    )? != "true\n\n"
     {
         return Err("run init at the repository's top level".into());
     }
@@ -128,9 +131,9 @@ fn detect(root: &Path) -> Result<&'static str> {
     }
 }
 
-/// The release gate's parser, then 3 checks it cannot make: the label must
-/// be writable on one YAML line, must reach the gate as written and its
-/// workflow must be in this repository.
+/// The release gate's parser, then checks it cannot make: the label must be
+/// writable on one YAML line and reach the gate as written, and its workflow
+/// must be in this repository and not be the caller init writes.
 fn checked_required_checks(root: &Path, given: &[String]) -> Result<Vec<String>> {
     required_checks::parse_required_checks(&given.join("\n"))?
         .iter()
@@ -149,6 +152,12 @@ fn checked_required_checks(root: &Path, given: &[String]) -> Result<Vec<String>>
             if label.contains("${{") {
                 return Err(format!(
                     "required check {} holds '${{{{', which GitHub would evaluate; name the job as GitHub shows it",
+                    py::repr_str(&label)
+                ));
+            }
+            if check.workflow == CALLER {
+                return Err(format!(
+                    "required check {} names the release workflow init writes",
                     py::repr_str(&label)
                 ));
             }
