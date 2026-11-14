@@ -1,7 +1,7 @@
 # Copyright 2026 Ryan Duguid
 # SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
-# Install one release that release-binary.yml published, on Windows x86_64:
+# Install one release that release-binary.yml published, on Windows x86_64 or arm64:
 #
 #   .\install.ps1 OWNER/REPO TAG [DIRECTORY]
 #
@@ -17,7 +17,6 @@ param([string]$Repository, [string]$Tag, [string]$Directory)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $Signer = 'ryanduguid/release-policy/.github/workflows/release-binary.yml'
-$Target = 'x86_64-pc-windows-msvc'
 $Name = '\A[A-Za-z0-9][A-Za-z0-9_.+-]*\z'
 
 function Deny-Install([string]$Message) {
@@ -38,8 +37,10 @@ function Test-Argument {
         Deny-Install 'no Windows here: use install.sh on Linux and macOS'
     }
     $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
-    if ($arch -ne 'AMD64') {
-        Deny-Install "no build for Windows ${arch}: releases ship Windows x86_64 only"
+    $script:Target = switch ($arch) {
+        'AMD64' { 'x86_64-pc-windows-msvc' }
+        'ARM64' { 'aarch64-pc-windows-msvc' }
+        default { Deny-Install "no build for Windows ${arch}: releases ship Windows x86_64 and arm64 only" }
     }
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
         Deny-Install 'the GitHub CLI (gh) is required to verify build provenance: https://cli.github.com/'

@@ -31,7 +31,8 @@ prints the commit of this repository's latest release:
 
 Release v0.3.0 predates the Linux arm64 and macOS arm64 targets, `data-files`
 and several names in `binary`; use those only with v0.4.0's commit or a later
-one.
+one. v0.4.0 predates the macOS x86_64 and Windows arm64 targets: a commit that
+builds them also requires your code and tests to pass on them.
 
 `binary` names the Cargo binary target when it differs from `artifact-stem`,
 or several targets separated by spaces; each archive ships all of them.
@@ -94,18 +95,19 @@ before this change, leave it unset.
 2. `build` runs once per target with `contents: read` only, each natively
    on its own runner: `x86_64-unknown-linux-musl` on `ubuntu-24.04` and
    `aarch64-unknown-linux-musl` on `ubuntu-24.04-arm`, both with
-   `musl-tools`; `aarch64-apple-darwin` on `macos-15`; and
-   `x86_64-pc-windows-msvc` on `windows-2025` with a static C runtime. Each
-   checks out the tag without line-ending conversion, runs
+   `musl-tools`; `x86_64-apple-darwin` on `macos-15-intel` and
+   `aarch64-apple-darwin` on `macos-15`; and `x86_64-pc-windows-msvc` on
+   `windows-2025` and `aarch64-pc-windows-msvc` on `windows-11-arm`, both with
+   a static C runtime. Each checks out the tag without line-ending conversion, runs
    `cargo test --locked --target <target>`, builds with the pinned
    `cargo-auditable` so each executable carries its dependency list, packages
    the executables with the data files and with `LICENSE`, `README.md` and
    `NOTICE` where present, extracts the archive again, smoke-tests each
    executable's `--version` and inspects its linkage. On Linux it may load no
    dynamic library and name no interpreter. On macOS, which has no static
-   executables, it must be a thin arm64 executable file, never a universal
-   one, that loads only libraries macOS ships, by absolute path: one directly
-   in `/usr/lib` or a framework in `/System/Library/Frameworks`, never one
+   executables, it must be a thin executable file for the target's
+   architecture, never a universal one, that loads only libraries macOS
+   ships, by absolute path: one directly in `/usr/lib` or a framework in `/System/Library/Frameworks`, never one
    through `@rpath`, `@executable_path` or `@loader_path`, or from Homebrew or
    `/usr/local`. Its load commands are read directly, so every kind of library
    load counts, and one that adds a run-path search path, sets dyld
@@ -114,9 +116,6 @@ before this change, leave it unset.
    Windows it may import only DLLs in a pinned set of Windows system
    components, never a C runtime DLL. The archive and its `.sha256` line go
    to `admit` and the publisher as a uniquely named artefact of the run.
-   Intel macOS (`x86_64-apple-darwin`) is not built: on the arm64 runner its
-   tests and smoke test would run under Rosetta rather than natively, and a
-   native Intel runner would be a fifth build job.
 3. `admit` holds `contents: read` only. It runs the steps that rely on tools
    or data fetched at run time (Syft, a rustup toolchain and `cargo-audit`
    with its advisory database), so none of them runs with a write, OIDC or
@@ -135,13 +134,13 @@ before this change, leave it unset.
    advisory refuses the release, informational ones such as an unmaintained
    crate included, as does a failed fetch or an executable whose list it
    cannot read. There is no ignore list or waiver: update or replace the
-   dependency, then release. The job hands the 6 archives and 5 SBOMs to the
+   dependency, then release. The job hands the 8 archives and 7 SBOMs to the
    publisher as one artefact, with each file's SHA-256 as a job output.
 4. `publish` is the only job with write, OIDC and attestation scopes. It
    never runs Cargo, consumer code or the admit job's third-party tools. It
    runs the release gates, reads `Cargo.toml` and the toolchain file as data,
    builds the source archives again and admits each target's artefact again
-   by the same rules. The admit job's artefact must then hold exactly the 11
+   by the same rules. The admit job's artefact must then hold exactly the 15
    expected files, each matching its digest output and each archive byte for
    byte the publisher's own, so an archive changed together with its digest
    is refused. The publisher keeps only the SBOMs from it and requires each
@@ -149,7 +148,7 @@ before this change, leave it unset.
    SBOMs or repeat the linkage check and the audit, so for these it relies on
    the admit job.
 
-The release holds 13 assets, for `<stem>-<version>`:
+The release holds 17 assets, for `<stem>-<version>`:
 
 | Asset | Contents |
 | --- | --- |
@@ -159,11 +158,15 @@ The release holds 13 assets, for `<stem>-<version>`:
 | `-x86_64-unknown-linux-musl.spdx.json` | SBOM of the Linux x86_64 executables |
 | `-aarch64-unknown-linux-musl.tar.gz` | Linux arm64 executables, data files and documents |
 | `-aarch64-unknown-linux-musl.spdx.json` | SBOM of the Linux arm64 executables |
+| `-x86_64-apple-darwin.tar.gz` | macOS x86_64 executables, data files and documents |
+| `-x86_64-apple-darwin.spdx.json` | SBOM of the macOS x86_64 executables |
 | `-aarch64-apple-darwin.tar.gz` | macOS arm64 executables, data files and documents |
 | `-aarch64-apple-darwin.spdx.json` | SBOM of the macOS arm64 executables |
 | `-x86_64-pc-windows-msvc.zip` | Windows x86_64 executables, data files and documents |
 | `-x86_64-pc-windows-msvc.spdx.json` | SBOM of the Windows x86_64 executables |
-| `SHA256SUMS` | digests of the 11 assets above |
+| `-aarch64-pc-windows-msvc.zip` | Windows arm64 executables, data files and documents |
+| `-aarch64-pc-windows-msvc.spdx.json` | SBOM of the Windows arm64 executables |
+| `SHA256SUMS` | digests of the 15 assets above |
 | `.intoto.jsonl` | signed provenance bundle |
 
 `SHA256SUMS` does not list the bundle, because the attestation covers
@@ -215,9 +218,10 @@ runs it unchecked, trusting GitHub and HTTPS to serve that commit's file. A
 commit cannot change; a branch such as `main` would run whatever the branch
 holds when you run the command. Each installer:
 
-- picks the archive for the running platform: Linux x86_64 or arm64 or macOS
-  arm64 through `install.sh`, Windows x86_64 through `install.ps1`. It refuses
-  any other platform, Intel macOS and Windows on Arm included.
+- picks the archive for the running platform: Linux or macOS, x86_64 or
+  arm64, through `install.sh`, and Windows x86_64 or arm64 through
+  `install.ps1`. It refuses any other platform, and Intel macOS and Windows
+  on Arm for a release made before those targets were built.
 - downloads `SHA256SUMS`, that archive and the provenance bundle from the
   release, and refuses on any failed or partial download, or unless
   `SHA256SUMS` lists exactly one archive for the platform.

@@ -41,8 +41,10 @@ WINDOWS = "x86_64-pc-windows-msvc"
 TARGETS = (
     (LINUX, "ubuntu-24.04", "Linux"),
     ("aarch64-unknown-linux-musl", "ubuntu-24.04-arm", "Linux arm64"),
+    ("x86_64-apple-darwin", "macos-15-intel", "macOS x86_64"),
     ("aarch64-apple-darwin", "macos-15", "macOS arm64"),
     (WINDOWS, "windows-2025", "Windows"),
+    ("aarch64-pc-windows-msvc", "windows-11-arm", "Windows arm64"),
 )
 AUDIT = ROOT / "scripts" / "audit_binaries.sh"
 CANARY_AUDIT = ROOT / "scripts" / "audit_binary_canaries.sh"
@@ -54,8 +56,10 @@ ASSETS = (
     "$zip", "$tar", "$sbom",
     "$linux.tar.gz", "$linux.spdx.json",
     "$linux_arm64.tar.gz", "$linux_arm64.spdx.json",
+    "$macos.tar.gz", "$macos.spdx.json",
     "$macos_arm64.tar.gz", "$macos_arm64.spdx.json",
     "$windows.zip", "$windows.spdx.json",
+    "$windows_arm64.zip", "$windows_arm64.spdx.json",
     "$checksums", "$provenance",
 )
 
@@ -134,7 +138,7 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn("if: endsWith(matrix.target, '-linux-musl')",
                       self.step(build, "Install the musl C toolchain"))
         static = self.step(build, "Link the C runtime statically")
-        self.assertIn(f"if: matrix.target == '{WINDOWS}'", static)
+        self.assertIn("if: endsWith(matrix.target, '-windows-msvc')", static)
         self.assertIn("+crt-static", static)
         self.assertEqual(1, self.workflow.count("+crt-static"))
         upload = self.step(build, "Hand the archive and its digest to the publisher")
@@ -423,8 +427,10 @@ class SbomTargetCheckTests(YamlContractAssertions, unittest.TestCase):
     LISTS = {
         "linux": ("linux-raw-sys", "rustix"),
         "linux-arm64": ("linux-raw-sys", "rustix", "errno"),
+        "macos": ("core-foundation-sys", "errno"),
         "macos-arm64": ("core-foundation-sys", "errno"),
         "windows": ("windows-sys",),
+        "windows-arm64": ("windows-sys",),
     }
 
     def check(self, lists: dict[str, tuple[str, ...]]) -> subprocess.CompletedProcess[str]:
@@ -451,7 +457,8 @@ class SbomTargetCheckTests(YamlContractAssertions, unittest.TestCase):
         self.assertEqual(0, self.check(self.LISTS).returncode)
 
     def test_swapped_macos_and_linux_arm64_lists_fail(self) -> None:
-        for sbom, other in (("macos-arm64", "linux-arm64"), ("linux-arm64", "macos-arm64")):
+        for sbom, other in (("macos-arm64", "linux-arm64"), ("linux-arm64", "macos-arm64"),
+                            ("macos", "linux"), ("windows-arm64", "linux-arm64")):
             with self.subTest(sbom=sbom):
                 self.assertNotEqual(0, self.check({**self.LISTS, sbom: self.LISTS[other]}).returncode)
 
@@ -600,8 +607,10 @@ class BinaryCanaryAuditTests(unittest.TestCase):
         documents = {"LICENSE": b"licence\n", "README.md": b"# example\n", "ca.pem": b"-----\n"}
         self.archive("example-1.2.3-x86_64-unknown-linux-musl.tar.gz",
                      {"example": elf, "example-helper": elf, **documents})
+        self.archive("example-1.2.3-x86_64-apple-darwin.tar.gz", {"example": macho, **documents})
         self.archive("example-1.2.3-aarch64-apple-darwin.tar.gz", {"example": macho, **documents})
         self.archive("example-1.2.3-x86_64-pc-windows-msvc.zip", {"example.exe": pe, **documents})
+        self.archive("example-1.2.3-aarch64-pc-windows-msvc.zip", {"example.exe": pe, **documents})
         self.archive("example-1.2.3.tar.gz", {"src.rs": elf})
         self.write_sums()
         (self.release / "example-1.2.3.intoto.jsonl").write_text("{}\n", encoding="utf-8")
@@ -658,15 +667,17 @@ class BinaryCanaryAuditTests(unittest.TestCase):
             sorted(str(self.extracted / archive / name) for archive, name in (
                 ("example-1.2.3-x86_64-unknown-linux-musl.tar.gz", "example"),
                 ("example-1.2.3-x86_64-unknown-linux-musl.tar.gz", "example-helper"),
+                ("example-1.2.3-x86_64-apple-darwin.tar.gz", "example"),
                 ("example-1.2.3-aarch64-apple-darwin.tar.gz", "example"),
                 ("example-1.2.3-x86_64-pc-windows-msvc.zip", "example.exe"),
+                ("example-1.2.3-aarch64-pc-windows-msvc.zip", "example.exe"),
             )))
         calls = (self.root / "gh-calls").read_text(encoding="utf-8").splitlines()
         self.assertEqual("release view v1.2.3 --repo ryanduguid/example --json assets "
                          "--jq .assets[].name", calls[0])
         verifies = [call for call in calls if call.startswith("attestation verify ")]
         # SHA256SUMS first, since its lines name the archives, then each archive.
-        self.assertEqual(4, len(verifies))
+        self.assertEqual(6, len(verifies))
         self.assertTrue(verifies[0].startswith("attestation verify SHA256SUMS "), verifies[0])
         for call in verifies:
             self.assertIn(

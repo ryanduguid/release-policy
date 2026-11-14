@@ -8,7 +8,7 @@
 # on this repository, so both exercise the same steps. It executes consumer
 # code (tests and build scripts) and must never run where a write token is.
 # The caller installs cargo-auditable and, for musl, musl-tools; the Windows
-# job sets RUSTFLAGS for the static C runtime. BINARY names one or more Cargo
+# jobs set RUSTFLAGS for the static C runtime. BINARY names one or more Cargo
 # binary targets separated by spaces; DATA_FILES lists the files they need,
 # one path per line relative to the component, or is empty. Written for the
 # bash 3.2 that macOS ships.
@@ -30,8 +30,8 @@ release=("$PYTHON" "$here/binary_release.py")
 case "$target" in
   x86_64-unknown-linux-musl | aarch64-unknown-linux-musl)
     suffix="" extension=".tar.gz" headers=(--program-headers) ;;
-  aarch64-apple-darwin) suffix="" extension=".tar.gz" ;;
-  x86_64-pc-windows-msvc) suffix=".exe" extension=".zip" headers=() ;;
+  x86_64-apple-darwin | aarch64-apple-darwin) suffix="" extension=".tar.gz" ;;
+  x86_64-pc-windows-msvc | aarch64-pc-windows-msvc) suffix=".exe" extension=".zip" headers=() ;;
   *) echo "build_binary.sh: unsupported target $target" >&2; exit 64 ;;
 esac
 [[ "$epoch" =~ ^[0-9]+$ ]] || { echo "build_binary.sh: epoch must be a Unix time" >&2; exit 64; }
