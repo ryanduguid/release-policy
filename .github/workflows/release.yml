@@ -24,7 +24,7 @@ jobs:
       attestations: write # Record provenance and SBOM attestations for release assets.
       contents: write # Create the draft release, upload assets and publish it.
       id-token: write # Obtain the OIDC identity required to sign attestations.
-    uses: ryanduguid/release-policy/.github/workflows/release-binary.yml@ab9e82365637a1cd1ed3190533cffb048e8ddfed # 4-target binary release family (#278), main at #290
+    uses: ryanduguid/release-policy/.github/workflows/release-binary.yml@efac799b4380171e9f392e392a20e80f285bfa25 # 4-target binary release family (#278), main at #291
     with:
       artifact-stem: release-policy
       # The job contexts branch protection requires. ci-gates and codeql-gates

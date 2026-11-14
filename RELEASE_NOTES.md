@@ -56,7 +56,7 @@ commit, so a later merge no longer cancels an earlier commit's run on `main`
 
 `canaries.json` records new consumer releases at `ca5492b` for the archive,
 Python and skills families, whose missing evidence has failed the weekly live
-audit. The binary family now records this repository's pin to #290's merge
+audit. The binary family now records this repository's pin to #291's merge
 commit with the v0.3.0 run as its evidence, so the audit will fail at least
 until v0.4.0's release run is recorded.
 
