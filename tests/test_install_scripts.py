@@ -305,6 +305,9 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
         super().setUp()
         self.env.update({"PATH": str(self.tools()), "FAKE_OS": "Linux", "FAKE_ARCH": "x86_64",
                          "HOME": str(self.root / "home")})
+        # The caller's own startup and data directories are never written.
+        for name in ("ZDOTDIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME"):
+            self.env.pop(name, None)
 
     def tools(self, *omit: str) -> Path:
         """A directory of the fakes and the real tools install.sh may use, less those omitted."""
@@ -434,20 +437,52 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
 
     def test_the_added_line_puts_the_directory_on_path_once(self) -> None:
         home = self.root / "home"
-        home.mkdir()
         # Read twice, as a nested shell would: the directory is added only once.
         self.destination = self.root / "with space+@,-" / STEM
-        result = self.modify_path("/bin/sh", str(self.destination))
-        self.assertEqual(0, result.returncode, result.stderr)
-        for start, expected in (("/usr/bin", f"/usr/bin:{self.destination}"),
-                                ("", str(self.destination))):
-            with self.subTest(start=start):
-                read = subprocess.run(  # nosec B603  # nosemgrep
-                    [str(shutil.which("sh")), "-c",
-                     'PATH=$1; . "$2"; . "$2"; printf %s "$PATH"', "sh", start,
-                     str(home / ".profile")],
-                    check=False, capture_output=True, text=True)
-                self.assertEqual(expected, read.stdout, read.stderr)
+        posix = 'PATH=$1; . "$2"; . "$2"; printf %s "$PATH"'
+        for shell, options, profile, command in (
+            ("sh", (), ".profile", posix),
+            ("dash", (), ".profile", posix),
+            ("bash", (), ".bashrc", posix),
+            ("zsh", ("-f",), ".zshrc", posix),
+            ("fish", ("--no-config",), ".config/fish/config.fish",
+             "set -gx PATH (string split --no-empty : -- $argv[1]); source $argv[2]; "
+             "source $argv[2]; string join : -- $PATH"),
+        ):
+            with self.subTest(shell=shell):
+                found = shutil.which(shell)
+                if not found:
+                    self.skipTest(f"{shell} is not installed")
+                shutil.rmtree(home, ignore_errors=True)
+                (home / ".config" / "fish").mkdir(parents=True)
+                result = self.modify_path(f"/bin/{shell}", str(self.destination))
+                self.assertEqual(0, result.returncode, result.stderr)
+                for start, expected in (("/usr/bin", f"/usr/bin:{self.destination}"),
+                                        ("", str(self.destination))):
+                    # fish takes the arguments after the command as $argv;
+                    # the others take the first as $0.
+                    arguments = (start, str(home / profile))
+                    if shell != "fish":
+                        arguments = (shell, *arguments)
+                    read = subprocess.run(  # nosec B603  # nosemgrep
+                        [found, *options, "-c", command, *arguments], env={"HOME": str(home)},
+                        check=False, capture_output=True, text=True)
+                    self.assertEqual(expected, read.stdout.rstrip("\n"), read.stderr)
+
+    def test_modify_path_honours_zdotdir_and_xdg_config_home(self) -> None:
+        home = self.root / "home"
+        for shell, variable, profile in (("/bin/zsh", "ZDOTDIR", ".zshrc"),
+                                         ("/usr/bin/fish", "XDG_CONFIG_HOME", "fish/config.fish")):
+            with self.subTest(shell=shell):
+                shutil.rmtree(home, ignore_errors=True)
+                home.mkdir()
+                elsewhere = self.root / variable
+                (elsewhere / "fish").mkdir(parents=True, exist_ok=True)
+                result = self.modify_path(shell, str(self.destination),
+                                          **{variable: str(elsewhere)})
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertIn(f"Added this line to {elsewhere / profile}:", result.stdout)
+                self.assertEqual([], list(home.iterdir()))
 
     def test_modify_path_ends_a_last_line_that_lacks_a_newline(self) -> None:
         home = self.root / "home"
