@@ -67,7 +67,10 @@ const FAMILIES: [Family; 3] = [
 
 /// Write the caller and return the report of what is left for the owner.
 pub fn init(root: &Path, options: &Options) -> Result<String> {
-    if !git(root, &["rev-parse", "--show-prefix"])?.trim().is_empty() {
+    if !git(root, &["rev-parse", "--show-prefix"])?
+        .trim()
+        .is_empty()
+    {
         return Err("run init at the repository's top level".into());
     }
     let name = match &options.family {
@@ -248,11 +251,16 @@ fn write_caller(root: &Path, text: &str, force: bool) -> Result<()> {
         path.push(part);
         relative.push(part);
         if symlink(&path) {
-            return Err(format!("{} must not be a symbolic link", relative.join("/")));
+            return Err(format!(
+                "{} must not be a symbolic link",
+                relative.join("/")
+            ));
         }
     }
     if path.exists() && !force {
-        return Err(format!("{CALLER} already exists; pass --force to replace it"));
+        return Err(format!(
+            "{CALLER} already exists; pass --force to replace it"
+        ));
     }
     let directory = path.parent().unwrap_or(root);
     std::fs::create_dir_all(directory).map_err(|e| io_error(e, directory))?;

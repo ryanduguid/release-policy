@@ -106,8 +106,7 @@ fn an_existing_caller_is_kept_unless_forced() {
 fn a_symbolic_link_on_the_caller_path_is_refused_even_when_forced() {
     let repo = checkout("archive");
     let outside = support::tempdir();
-    std::os::unix::fs::symlink(outside.path(), repo.path(".github/workflows/release.yml"))
-        .unwrap();
+    std::os::unix::fs::symlink(outside.path(), repo.path(".github/workflows/release.yml")).unwrap();
     let out = run(
         &repo,
         &[
@@ -130,7 +129,11 @@ fn a_symbolic_link_on_the_caller_path_is_refused_even_when_forced() {
 fn refused(repo: &Repo, args: &[&str], message: &str) {
     let out = run(repo, args);
     assert_eq!(out.code, 1, "{args:?}: {}", out.stdout);
-    assert_eq!(out.stderr, format!("release-policy: {message}\n"), "{args:?}");
+    assert_eq!(
+        out.stderr,
+        format!("release-policy: {message}\n"),
+        "{args:?}"
+    );
     assert!(!repo.path(CALLER).exists(), "{args:?}");
 }
 
@@ -176,7 +179,13 @@ fn inputs_the_policy_would_refuse_are_refused_before_writing() {
             "artifact-stem must be lower-case and hyphenated: 'Example'",
         ),
         (
-            vec!["init", "--artifact-stem", "example", "--version-file", "VERSION"],
+            vec![
+                "init",
+                "--artifact-stem",
+                "example",
+                "--version-file",
+                "VERSION",
+            ],
             "--version-file applies only to the python family",
         ),
         (
@@ -190,17 +199,35 @@ fn inputs_the_policy_would_refuse_are_refused_before_writing() {
     }
     refused(
         &archive,
-        &["init", "--artifact-stem", "example", "--required-check", ".github/workflows/missing.yml: test"],
+        &[
+            "init",
+            "--artifact-stem",
+            "example",
+            "--required-check",
+            ".github/workflows/missing.yml: test",
+        ],
         "required check '.github/workflows/missing.yml: test' names a workflow file that is not here",
     );
     refused(
         &archive,
-        &["init", "--artifact-stem", "example", "--required-check", "ci.yml: test"],
+        &[
+            "init",
+            "--artifact-stem",
+            "example",
+            "--required-check",
+            "ci.yml: test",
+        ],
         "required check 'ci.yml: test' names a path outside .github/workflows/",
     );
     refused(
         &archive,
-        &["init", "--artifact-stem", "example", "--required-check", ".github/workflows/ci.yml: a\u{7}b"],
+        &[
+            "init",
+            "--artifact-stem",
+            "example",
+            "--required-check",
+            ".github/workflows/ci.yml: a\u{7}b",
+        ],
         "required check '.github/workflows/ci.yml: a\\x07b' holds a control character",
     );
 
@@ -212,7 +239,13 @@ fn inputs_the_policy_would_refuse_are_refused_before_writing() {
     );
     refused(
         &python,
-        &["init", "--version-file", "example_pkg/v 1.py", CHECK[0], CHECK[1]],
+        &[
+            "init",
+            "--version-file",
+            "example_pkg/v 1.py",
+            CHECK[0],
+            CHECK[1],
+        ],
         "version-file must be a relative path of letters, digits, '.', '_', '-' and '/': 'example_pkg/v 1.py'",
     );
 
@@ -290,6 +323,9 @@ fn a_package_name_that_is_already_a_stem_names_no_binary() {
     let out = run(&repo, &["init", CHECK[0], CHECK[1]]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     let caller = golden(&repo.path(CALLER));
-    assert!(caller.contains("      artifact-stem: example-tool\n"), "{caller}");
+    assert!(
+        caller.contains("      artifact-stem: example-tool\n"),
+        "{caller}"
+    );
     assert!(!caller.contains("binary:"), "{caller}");
 }
