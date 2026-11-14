@@ -20,7 +20,7 @@ release-policy is a set of reusable GitHub Actions workflows for repository main
 A consumer calls one with `uses:`, pinned to a full commit SHA of this repository. Before adopting, check 3 limits:
 
 - **PyPI:** PyPI cannot name a reusable workflow as a Trusted Publisher ([pypi/warehouse#11096](https://github.com/pypi/warehouse/issues/11096)), so the [publish step](docs/pypi-publishing.md) runs in the consumer, not here.
-- **Targets:** `release-binary.yml` builds Linux (static musl), macOS and Windows, each for x86_64 and arm64 only; no other operating system or architecture is built. [Alternatives](#alternatives) says when another tool fits better.
+- **Targets:** `release-binary.yml` builds Linux (static musl), macOS and Windows, each for x86_64 and arm64 only; no other operating system or architecture is built, and a release needs all 6 to build and pass their tests. [Alternatives](#alternatives) says when another tool fits better.
 - **SLSA:** The release workflows are designed to support SLSA Build Level 3, but no audit has shown that a release reaches it. [SLSA Build Level](docs/guarantees-and-evidence.md#slsa-build-level) says what is unverified and why verification needs `--signer-workflow`.
 
 | Workflow | Use it to | Guide |

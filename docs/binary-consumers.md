@@ -31,8 +31,10 @@ prints the commit of this repository's latest release:
 
 Release v0.3.0 predates the Linux arm64 and macOS arm64 targets, `data-files`
 and several names in `binary`; use those only with v0.4.0's commit or a later
-one. v0.4.0 predates the macOS x86_64 and Windows arm64 targets: a commit that
-builds them also requires your code and tests to pass on them.
+one. v0.4.0 predates the macOS x86_64 and Windows arm64 targets. Every target
+is required: no input leaves one out, and a release fails unless your code
+builds and its tests pass on all 6. A component that cannot yet build one
+stays on v0.4.0's commit until it can.
 
 `binary` names the Cargo binary target when it differs from `artifact-stem`,
 or several targets separated by spaces; each archive ships all of them.
@@ -254,7 +256,8 @@ After a successful install:
   unless it is already there, to the startup file of the login shell that
   `$SHELL` names: `~/.zshrc` for zsh (in `$ZDOTDIR` when set), `~/.bashrc`
   for bash on Linux and `~/.bash_profile` on macOS,
-  `~/.config/fish/config.fish` for fish and `~/.profile` for any other shell.
+  `~/.config/fish/config.fish` for fish (in `$XDG_CONFIG_HOME/fish` when
+  set) and `~/.profile` for any other shell.
   It checks before downloading anything that it can write that file, and the
   directory must be absolute and hold only letters, digits, spaces and
   `_ . / + @ , -`, else nothing is installed. A file that already holds the
