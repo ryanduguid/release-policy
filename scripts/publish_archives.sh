@@ -42,7 +42,12 @@ upload_asset "$checksums" text/plain SHA-256%20checksums
 upload_asset "$provenance" application/jsonl SLSA%20provenance%20bundle
 for skill_zip in "${skill_zips[@]}"; do
   skill_name="${skill_zip#"$dist/$base"-}"
-  upload_asset "$skill_zip" application/zip "Upload%20ZIP%20for%20skill%20${skill_name%.zip}"
+  # No skill can be named skills.bundle: names are lower-case and hyphenated.
+  if [[ "$skill_name" == skills.bundle.zip ]]; then
+    upload_asset "$skill_zip" application/zip "Bundle%20of%20skill%20upload%20ZIPs"
+  else
+    upload_asset "$skill_zip" application/zip "Upload%20ZIP%20for%20skill%20${skill_name%.zip}"
+  fi
 done
 finalise_release
 write_release_summary publish-archives

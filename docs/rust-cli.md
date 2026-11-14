@@ -57,7 +57,8 @@ becomes `release-policy python-release tag --tag v1.2.3 --tag-prefix v`.
 `scripts/repin_issue.py` has no command yet. Only the `Attribution repin`
 workflow runs it, and like the release workflows it calls the scripts until
 the switch-over; port it then. The same holds for `scripts/binary_release.py`,
-which `release-binary.yml` and `scripts/build_binary.sh` run.
+which `release-binary.yml` and `scripts/build_binary.sh` run, and for
+`scripts/build_skill_bundle.py`, which `publish-archives.yml` runs.
 `scripts/verify_pypi.py` has no command either: a consumer's PyPI read-back
 job runs it from the policy checkout, and it hands signature verification to
 the Python `pypi-attestations` package.

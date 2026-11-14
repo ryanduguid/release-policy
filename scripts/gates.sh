@@ -387,8 +387,7 @@ validate_skill_archives() {
   while IFS= read -r directory; do
     directory="${directory%$'\r'}"
     [[ -n "$directory" ]] || continue
-    if [[ ! "$directory" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ \
-        || "/$directory/" == */./* || "/$directory/" == */../* ]]; then
+    if ! is_safe_skill_path "$directory"; then
       echo "validate_skill_archives: '$directory' is not a safe relative path" >&2
       return 1
     fi
@@ -433,4 +432,51 @@ validate_skill_archives() {
     fi
     printf '%s\n' "$directory"
   done <<<"$list"
+}
+
+# A relative path of plain segments, none of them . or ..
+is_safe_skill_path() {
+  [[ "$1" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ && "/$1/" != */./* && "/$1/" != */../* ]]
+}
+
+# A skill-archives list may instead be one line, <parent>/*, standing for every
+# directory directly inside that tracked parent at the commit; the workflow
+# ships their ZIPs in one bundle. Prints those directories in byte order once
+# validate_skill_archives passes all of them, so one that is not a skill fails
+# the release. Files directly in the parent are left out. Refuses a parent line
+# with any other line, an unsafe parent, and a parent holding a symbolic link
+# or submodule or no directory. Any other list goes to validate_skill_archives.
+expand_skill_archives() {
+  local commit="$1" source_directory="$2" list="$3" line lines=0 parent_line="" parent entries directories
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    [[ -n "$line" ]] || continue
+    lines=$((lines + 1))
+    [[ "$line" != *"/*" ]] || parent_line="$line"
+  done <<<"$list"
+  if [[ -z "$parent_line" ]]; then
+    validate_skill_archives "$commit" "$source_directory" "$list"
+    return
+  fi
+  parent="${parent_line%/\*}"
+  if [[ "$lines" != 1 ]]; then
+    echo "expand_skill_archives: a parent line ($parent/*) must be the only skill-archives line" >&2
+    return 1
+  fi
+  if ! is_safe_skill_path "$parent"; then
+    echo "expand_skill_archives: '$parent' is not a safe relative path" >&2
+    return 1
+  fi
+  # One NUL-separated level, as validate_skill_archives reads its entries.
+  entries="$(git ls-tree -z --full-tree "$commit" -- "$parent/" | tr '\n\0' '/\n')" || entries=""
+  if grep -q '^1[26]0000 ' <<<"$entries"; then
+    echo "expand_skill_archives: $parent holds a symbolic link or submodule" >&2
+    return 1
+  fi
+  directories="$(grep '^040000 tree ' <<<"$entries" | cut -f2- | LC_ALL=C sort || true)"
+  if [[ -z "$directories" ]]; then
+    echo "expand_skill_archives: $parent has no skill directories at $commit" >&2
+    return 1
+  fi
+  validate_skill_archives "$commit" "$source_directory" "$directories"
 }
