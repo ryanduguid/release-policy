@@ -384,6 +384,82 @@ fn a_required_check_on_the_release_workflow_itself_is_refused() {
 }
 
 #[test]
+fn a_version_file_on_the_release_workflow_itself_is_refused() {
+    let repo = checkout("python-literal");
+    // Valid Python with one literal __version__, tracked, so the parser accepts it.
+    repo.write(CALLER, "__version__ = \"0.4.1\"\n");
+    repo.commit("caller");
+    let out = run(
+        &repo,
+        &[
+            "init",
+            "--version-file",
+            "./.github/workflows/release.yml",
+            CHECK[0],
+            CHECK[1],
+            "--force",
+        ],
+    );
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert_eq!(
+        out.stderr,
+        "release-policy: version-file './.github/workflows/release.yml' names the release workflow init writes\n"
+    );
+    assert_eq!(golden(&repo.path(CALLER)), "__version__ = \"0.4.1\"\n");
+}
+
+/// Windows and macOS file systems ignore letter case, so another spelling
+/// names the same file.
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn a_required_check_on_the_caller_in_other_letter_case_is_refused() {
+    let repo = checkout("archive");
+    repo.write(CALLER, "name: Mine\n");
+    let out = run(
+        &repo,
+        &[
+            "init",
+            "--artifact-stem",
+            "example",
+            "--required-check",
+            ".github/workflows/Release.yml: release",
+            "--force",
+        ],
+    );
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "release-policy: required check '.github/workflows/Release.yml: release' names the release workflow init writes\n"
+    );
+    assert_eq!(golden(&repo.path(CALLER)), "name: Mine\n");
+}
+
+#[test]
+fn init_runs_at_the_top_of_a_linked_worktree() {
+    let repo = checkout("archive");
+    let parent = support::tempdir();
+    let linked = parent.path().join("linked");
+    let status = std::process::Command::new("git")
+        .args(["worktree", "add", "-q"])
+        .arg(&linked)
+        .current_dir(repo.root())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let args = args("archive");
+    let out = cli(
+        &linked,
+        &args.iter().map(String::as_str).collect::<Vec<_>>(),
+        "",
+    );
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        golden(&linked.join(CALLER)),
+        golden(&shape("archive").join("release.yml"))
+    );
+}
+
+#[test]
 fn a_source_archive_is_named_after_its_directory_by_default() {
     let parent = support::tempdir();
     let root = parent.path().join("my-archive");

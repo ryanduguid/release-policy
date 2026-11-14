@@ -155,7 +155,7 @@ fn checked_required_checks(root: &Path, given: &[String]) -> Result<Vec<String>>
                     py::repr_str(&label)
                 ));
             }
-            if check.workflow == CALLER {
+            if names_caller(root, &check.workflow) {
                 return Err(format!(
                     "required check {} names the release workflow init writes",
                     py::repr_str(&label)
@@ -170,6 +170,14 @@ fn checked_required_checks(root: &Path, given: &[String]) -> Result<Vec<String>>
             Ok(label)
         })
         .collect()
+}
+
+/// Whether `relative` is the existing caller under any name the file system
+/// accepts for it, such as another letter case on Windows and macOS.
+fn names_caller(root: &Path, relative: &str) -> bool {
+    std::fs::canonicalize(root.join(CALLER)).is_ok_and(|caller| {
+        std::fs::canonicalize(root.join(relative)).is_ok_and(|path| path == caller)
+    })
 }
 
 type Inputs = Vec<(&'static str, String)>;
@@ -188,6 +196,12 @@ fn python_inputs(root: &Path, version_file: Option<&str>) -> Result<Inputs> {
     if !full(PATH, file) {
         return Err(format!(
             "version-file must be a relative path of letters, digits, '.', '_', '-' and '/': {}",
+            py::repr_str(file)
+        ));
+    }
+    if names_caller(root, file) {
+        return Err(format!(
+            "version-file {} names the release workflow init writes",
             py::repr_str(file)
         ));
     }
