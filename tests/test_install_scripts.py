@@ -27,7 +27,9 @@ REPO, TAG, VERSION, STEM = "owner/example-tool", "v1.2.3", "1.2.3", "example-too
 SIGNER = "ryanduguid/release-policy/.github/workflows/release-binary.yml"
 LINUX = "x86_64-unknown-linux-musl"
 WINDOWS = "x86_64-pc-windows-msvc"
-TARGETS = (LINUX, "aarch64-unknown-linux-musl", "aarch64-apple-darwin", WINDOWS)
+WINDOWS_ARM64 = "aarch64-pc-windows-msvc"
+TARGETS = (LINUX, "aarch64-unknown-linux-musl", "x86_64-apple-darwin", "aarch64-apple-darwin",
+           WINDOWS, WINDOWS_ARM64)
 DOCUMENTS = {"LICENSE": b"licence\n", "ca.pem": b"fabricated bundle\n"}
 
 # Logs each call, then refuses the subject named in FAKE_GH_REFUSE.
@@ -96,7 +98,7 @@ class InstallerCases:
         self.release = self.root / "release"
         self.release.mkdir()
         for target in TARGETS:
-            executable = STEM + (".exe" if target == WINDOWS else "")
+            executable = STEM + (".exe" if target.endswith("-windows-msvc") else "")
             self.archive(target, {executable: target.encode(), **DOCUMENTS})
         self.write_sums()
         (self.release / f"{STEM}-{VERSION}.intoto.jsonl").write_text("{}\n", encoding="utf-8")
@@ -113,7 +115,7 @@ class InstallerCases:
 
     def archive(self, target: str, members: dict[str, bytes], link: str = "") -> None:
         path = self.release / f"{STEM}-{VERSION}-{target}"
-        if target == WINDOWS:
+        if target.endswith("-windows-msvc"):
             with zipfile.ZipFile(f"{path}.zip", "w") as opened:
                 for member, data in members.items():
                     opened.writestr(member, data)
@@ -136,7 +138,8 @@ class InstallerCases:
 
     @property
     def asset(self) -> str:
-        return f"{STEM}-{VERSION}-{self.TARGET}" + (".zip" if self.TARGET == WINDOWS else ".tar.gz")
+        suffix = ".zip" if self.TARGET.endswith("-windows-msvc") else ".tar.gz"
+        return f"{STEM}-{VERSION}-{self.TARGET}{suffix}"
 
     def install(self, *arguments: str, **env: str) -> subprocess.CompletedProcess[str]:
         raise NotImplementedError
@@ -302,6 +305,7 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
         for os_name, arch, target in (("Linux", "amd64", LINUX),
                                       ("Linux", "aarch64", "aarch64-unknown-linux-musl"),
                                       ("Linux", "arm64", "aarch64-unknown-linux-musl"),
+                                      ("Darwin", "x86_64", "x86_64-apple-darwin"),
                                       ("Darwin", "arm64", "aarch64-apple-darwin")):
             with self.subTest(os=os_name, arch=arch):
                 self.TARGET = target
@@ -318,7 +322,7 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
         self.assertIn(f"Add {self.destination} to PATH", result.stdout)
 
     def test_refuses_a_platform_without_a_build(self) -> None:
-        for os_name, arch in (("Darwin", "x86_64"), ("Linux", "riscv64"), ("FreeBSD", "amd64"),
+        for os_name, arch in (("Darwin", "i386"), ("Linux", "riscv64"), ("FreeBSD", "amd64"),
                               ("MINGW64_NT-10.0", "x86_64")):
             with self.subTest(os=os_name, arch=arch):
                 result = self.install(REPO, TAG, str(self.destination),
@@ -363,7 +367,8 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 required")
 class PowerShellInstallerTests(InstallerCases, unittest.TestCase):
-    """install.ps1 as Windows x86_64 sees it, with PATH empty so only the fakes run."""
+    """install.ps1 as Windows sees it, x86_64 unless a test says otherwise, with PATH empty
+    so only the fakes run."""
 
     TARGET = WINDOWS
     EXECUTABLE = f"{STEM}.exe"
@@ -395,10 +400,19 @@ class PowerShellInstallerTests(InstallerCases, unittest.TestCase):
         self.assert_installed(result)
         self.assertIn("to PATH", result.stdout)
 
+    def test_installs_the_arm64_archive_on_windows_on_arm(self) -> None:
+        self.TARGET = WINDOWS_ARM64
+        for env in ({"PROCESSOR_ARCHITECTURE": "ARM64"},
+                    {"PROCESSOR_ARCHITECTURE": "x86", "PROCESSOR_ARCHITEW6432": "ARM64"}):
+            with self.subTest(env=env):
+                shutil.rmtree(self.destination, ignore_errors=True)
+                self.log.unlink(missing_ok=True)
+                self.assert_installed(self.install(REPO, TAG, str(self.destination), **env))
+
     def test_refuses_a_platform_without_a_build(self) -> None:
-        for env, reason in (({"PROCESSOR_ARCHITECTURE": "ARM64"}, "no build for Windows ARM64"),
-                            ({"PROCESSOR_ARCHITECTURE": "x86", "PROCESSOR_ARCHITEW6432": "ARM64"},
-                             "no build for Windows ARM64"),
+        for env, reason in (({"PROCESSOR_ARCHITECTURE": "x86"}, "no build for Windows x86"),
+                            ({"PROCESSOR_ARCHITECTURE": "x86", "PROCESSOR_ARCHITEW6432": "IA64"},
+                             "no build for Windows IA64"),
                             ({"OS": "Linux"}, "use install.sh on Linux and macOS")):
             with self.subTest(env=env):
                 self.assert_refused(self.install(REPO, TAG, str(self.destination), **env), reason)

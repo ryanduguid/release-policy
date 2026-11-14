@@ -130,10 +130,14 @@ jobs:
             runner: ubuntu-24.04
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
           - target: aarch64-apple-darwin
             runner: macos-15
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
     defaults:
       run:
         shell: bash
@@ -224,9 +228,9 @@ jobs:
         if: endsWith(matrix.target, '-linux-musl')
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends musl-tools
 
-      # Set only in the Windows job, so the executable needs no C runtime DLL.
+      # Set only in the Windows jobs, so the executable needs no C runtime DLL.
       - name: Link the C runtime statically
-        if: matrix.target == 'x86_64-pc-windows-msvc'
+        if: endsWith(matrix.target, '-windows-msvc')
         run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
 
       - name: Test, build, package and check the executables
@@ -271,19 +275,23 @@ jobs:
     permissions:
       contents: read
     env:
-      TARGETS: x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-pc-windows-msvc
+      TARGETS: x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc
     outputs:
       source-zip: ${{ steps.digests.outputs.source-zip }}
       source-tar: ${{ steps.digests.outputs.source-tar }}
       linux-archive: ${{ steps.digests.outputs.linux-archive }}
       linux-arm64-archive: ${{ steps.digests.outputs.linux-arm64-archive }}
+      macos-archive: ${{ steps.digests.outputs.macos-archive }}
       macos-arm64-archive: ${{ steps.digests.outputs.macos-arm64-archive }}
       windows-archive: ${{ steps.digests.outputs.windows-archive }}
+      windows-arm64-archive: ${{ steps.digests.outputs.windows-arm64-archive }}
       source-sbom: ${{ steps.digests.outputs.source-sbom }}
       linux-sbom: ${{ steps.digests.outputs.linux-sbom }}
       linux-arm64-sbom: ${{ steps.digests.outputs.linux-arm64-sbom }}
+      macos-sbom: ${{ steps.digests.outputs.macos-sbom }}
       macos-arm64-sbom: ${{ steps.digests.outputs.macos-arm64-sbom }}
       windows-sbom: ${{ steps.digests.outputs.windows-sbom }}
+      windows-arm64-sbom: ${{ steps.digests.outputs.windows-arm64-sbom }}
     steps:
       - name: Check out the tagged consumer source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -394,6 +402,12 @@ jobs:
           name: binary-${{ github.run_id }}-${{ github.run_attempt }}-aarch64-unknown-linux-musl
           path: ${{ runner.temp }}/incoming/aarch64-unknown-linux-musl
 
+      - name: Download the macOS x86_64 build artefact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-${{ github.run_id }}-${{ github.run_attempt }}-x86_64-apple-darwin
+          path: ${{ runner.temp }}/incoming/x86_64-apple-darwin
+
       - name: Download the macOS arm64 build artefact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -405,6 +419,12 @@ jobs:
         with:
           name: binary-${{ github.run_id }}-${{ github.run_attempt }}-x86_64-pc-windows-msvc
           path: ${{ runner.temp }}/incoming/x86_64-pc-windows-msvc
+
+      - name: Download the Windows arm64 build artefact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-${{ github.run_id }}-${{ github.run_attempt }}-aarch64-pc-windows-msvc
+          path: ${{ runner.temp }}/incoming/aarch64-pc-windows-msvc
 
       # The build jobs ran consumer code, so their artefacts are untrusted
       # input: exact files, matching digest line, safe members, then admission.
@@ -478,6 +498,16 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
 
+      - name: Generate the macOS x86_64 binary's SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: ${{ runner.temp }}/sbom/x86_64-apple-darwin
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-apple-darwin.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
       - name: Generate the macOS arm64 binary's SPDX SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
@@ -495,6 +525,16 @@ jobs:
           format: spdx-json
           syft-version: v1.51.0
           output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-pc-windows-msvc.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate the Windows arm64 binary's SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: ${{ runner.temp }}/sbom/aarch64-pc-windows-msvc
+          format: spdx-json
+          syft-version: v1.51.0
+          output-file: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-aarch64-pc-windows-msvc.spdx.json
           upload-artifact: false
           upload-release-assets: false
 
@@ -572,7 +612,7 @@ jobs:
       group: release-${{ github.repository }}-${{ github.ref }}
       cancel-in-progress: false
     env:
-      TARGETS: x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-pc-windows-msvc
+      TARGETS: x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc
     steps:
       - name: Check out the tagged consumer source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -692,6 +732,12 @@ jobs:
           name: binary-${{ github.run_id }}-${{ github.run_attempt }}-aarch64-unknown-linux-musl
           path: ${{ runner.temp }}/incoming/aarch64-unknown-linux-musl
 
+      - name: Download the macOS x86_64 build artefact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-${{ github.run_id }}-${{ github.run_attempt }}-x86_64-apple-darwin
+          path: ${{ runner.temp }}/incoming/x86_64-apple-darwin
+
       - name: Download the macOS arm64 build artefact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -703,6 +749,12 @@ jobs:
         with:
           name: binary-${{ github.run_id }}-${{ github.run_attempt }}-x86_64-pc-windows-msvc
           path: ${{ runner.temp }}/incoming/x86_64-pc-windows-msvc
+
+      - name: Download the Windows arm64 build artefact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: binary-${{ github.run_id }}-${{ github.run_attempt }}-aarch64-pc-windows-msvc
+          path: ${{ runner.temp }}/incoming/aarch64-pc-windows-msvc
 
       # The build jobs ran consumer code, so their artefacts are untrusted
       # input: exact files, matching digest line, safe members, then admission.
@@ -744,13 +796,17 @@ jobs:
           SOURCE_TAR: ${{ needs.admit.outputs.source-tar }}
           LINUX_ARCHIVE: ${{ needs.admit.outputs.linux-archive }}
           LINUX_ARM64_ARCHIVE: ${{ needs.admit.outputs.linux-arm64-archive }}
+          MACOS_ARCHIVE: ${{ needs.admit.outputs.macos-archive }}
           MACOS_ARM64_ARCHIVE: ${{ needs.admit.outputs.macos-arm64-archive }}
           WINDOWS_ARCHIVE: ${{ needs.admit.outputs.windows-archive }}
+          WINDOWS_ARM64_ARCHIVE: ${{ needs.admit.outputs.windows-arm64-archive }}
           SOURCE_SBOM: ${{ needs.admit.outputs.source-sbom }}
           LINUX_SBOM: ${{ needs.admit.outputs.linux-sbom }}
           LINUX_ARM64_SBOM: ${{ needs.admit.outputs.linux-arm64-sbom }}
+          MACOS_SBOM: ${{ needs.admit.outputs.macos-sbom }}
           MACOS_ARM64_SBOM: ${{ needs.admit.outputs.macos-arm64-sbom }}
           WINDOWS_SBOM: ${{ needs.admit.outputs.windows-sbom }}
+          WINDOWS_ARM64_SBOM: ${{ needs.admit.outputs.windows-arm64-sbom }}
         shell: bash
         run: >-
           python "$GITHUB_WORKSPACE/policy/scripts/binary_release.py" accept
@@ -759,12 +815,16 @@ jobs:
           --digest "source-zip=$SOURCE_ZIP" --digest "source-tar=$SOURCE_TAR"
           --digest "linux-archive=$LINUX_ARCHIVE"
           --digest "linux-arm64-archive=$LINUX_ARM64_ARCHIVE"
+          --digest "macos-archive=$MACOS_ARCHIVE"
           --digest "macos-arm64-archive=$MACOS_ARM64_ARCHIVE"
           --digest "windows-archive=$WINDOWS_ARCHIVE"
+          --digest "windows-arm64-archive=$WINDOWS_ARM64_ARCHIVE"
           --digest "source-sbom=$SOURCE_SBOM" --digest "linux-sbom=$LINUX_SBOM"
           --digest "linux-arm64-sbom=$LINUX_ARM64_SBOM"
+          --digest "macos-sbom=$MACOS_SBOM"
           --digest "macos-arm64-sbom=$MACOS_ARM64_SBOM"
           --digest "windows-sbom=$WINDOWS_SBOM"
+          --digest "windows-arm64-sbom=$WINDOWS_ARM64_SBOM"
 
       - name: Require each binary SBOM to list the package
         working-directory: ${{ steps.inputs.outputs.source-path }}
@@ -814,10 +874,14 @@ jobs:
             ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-unknown-linux-musl.spdx.json
             ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-aarch64-unknown-linux-musl.tar.gz
             ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-aarch64-unknown-linux-musl.spdx.json
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-apple-darwin.tar.gz
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-apple-darwin.spdx.json
             ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-aarch64-apple-darwin.tar.gz
             ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-aarch64-apple-darwin.spdx.json
             ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-pc-windows-msvc.zip
             ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-pc-windows-msvc.spdx.json
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-aarch64-pc-windows-msvc.zip
+            ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-aarch64-pc-windows-msvc.spdx.json
             ${{ steps.inputs.outputs.source-root }}/dist/SHA256SUMS
 
       # The signed bundle becomes a release asset so a downloader can verify
@@ -858,6 +922,12 @@ jobs:
           subject-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-aarch64-unknown-linux-musl.tar.gz
           sbom-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-aarch64-unknown-linux-musl.spdx.json
 
+      - name: Attest the macOS x86_64 binary's SPDX SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-apple-darwin.tar.gz
+          sbom-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-apple-darwin.spdx.json
+
       - name: Attest the macOS arm64 binary's SPDX SBOM
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -869,6 +939,12 @@ jobs:
         with:
           subject-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-pc-windows-msvc.zip
           sbom-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-x86_64-pc-windows-msvc.spdx.json
+
+      - name: Attest the Windows arm64 binary's SPDX SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-aarch64-pc-windows-msvc.zip
+          sbom-path: ${{ steps.inputs.outputs.source-root }}/dist/${{ steps.release.outputs.stem }}-${{ steps.release.outputs.version }}-aarch64-pc-windows-msvc.spdx.json
 
       - name: Verify provenance and SBOM attestations before publication
         working-directory: ${{ steps.inputs.outputs.source-path }}
