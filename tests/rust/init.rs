@@ -369,7 +369,14 @@ fn a_stem_yaml_would_read_as_a_number_or_null_stays_text() {
     for stem in ["2048", "1e3", "0x10", "null"] {
         let out = run(
             &repo,
-            &["init", "--artifact-stem", stem, CHECK[0], CHECK[1], "--force"],
+            &[
+                "init",
+                "--artifact-stem",
+                stem,
+                CHECK[0],
+                CHECK[1],
+                "--force",
+            ],
         );
         assert_eq!(out.code, 0, "{stem}: {}", out.stderr);
         let caller = golden(&repo.path(CALLER));

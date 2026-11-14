@@ -136,8 +136,7 @@ fn checked_required_checks(root: &Path, given: &[String]) -> Result<Vec<String>>
         .iter()
         .map(|check| {
             let label = check.label();
-            // YAML holds no control character but tab, LF and CR (which the
-            // parser has split on), and neither U+FFFE nor U+FFFF.
+            // YAML cannot hold U+FFFE, U+FFFF or most control characters.
             if label
                 .chars()
                 .any(|c| c.is_control() || matches!(c, '\u{fffe}' | '\u{ffff}'))
