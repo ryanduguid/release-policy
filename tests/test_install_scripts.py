@@ -527,11 +527,11 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
     @unittest.skipUnless(shutil.which("zsh"), "zsh required")
     def test_modify_path_takes_no_directory_from_what_zshenv_prints(self) -> None:
         home = self.root / "home"
-        home.mkdir()
-        (home / ".zshenv").write_text("echo noise\n", encoding="utf-8")
+        (home / "zsh").mkdir(parents=True)
+        (home / ".zshenv").write_text('echo /noise\nZDOTDIR="$HOME/zsh"\n', encoding="utf-8")
         result = self.modify_path(str(shutil.which("zsh")), str(self.destination))
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertIn(f"Added this line to {home / '.zshrc'}:", result.stdout)
+        self.assertIn(f"Added this line to {home / 'zsh' / '.zshrc'}:", result.stdout)
 
     def test_modify_path_ends_a_last_line_that_lacks_a_newline(self) -> None:
         home = self.root / "home"
@@ -750,14 +750,16 @@ class PowerShellInstallerTests(InstallerCases, unittest.TestCase):
     def test_modify_path_checks_a_relative_or_default_directory_as_resolved(self) -> None:
         env = self.user_path("C:\\Windows")
         self.addCleanup(os.chdir, os.getcwd())
-        for parent, arguments, reason in (
-                ("a;b", ("bin",), "holding ';'"), ("50%", ("bin",), "holding '%'"),
-                ("c;d", (), "holding ';'"), ("75%", (), "holding '%'")):
-            with self.subTest(parent=parent, arguments=arguments):
+        # The default directory under LOCALAPPDATA, absolute or relative.
+        for parent, arguments, local, reason in (
+                ("a;b", ("bin",), None, "holding ';'"), ("50%", ("bin",), None, "holding '%'"),
+                ("c;d", (), None, "holding ';'"), ("75%", (), None, "holding '%'"),
+                ("e;f", (), "local", "holding ';'")):
+            with self.subTest(parent=parent, arguments=arguments, local=local):
                 (self.root / parent).mkdir()
                 os.chdir(self.root / parent)
                 result = self.install(REPO, TAG, *arguments, "-ModifyPath",
-                                      LOCALAPPDATA=str(self.root / parent), **env)
+                                      LOCALAPPDATA=local or str(self.root / parent), **env)
                 self.assert_refused(result, f"-ModifyPath cannot add a directory {reason} to Path")
                 self.assertFalse(self.log.exists())
                 self.assertEqual("C:\\Windows", self.stored_path())

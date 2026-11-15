@@ -32,11 +32,8 @@ function Test-Argument {
     if ($ModifyPath) {
         # The folder Path would gain, resolved; the default's last part is the
         # stem, which holds neither character.
-        $folder = if ($Directory) {
-            $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Directory)
-        } else {
-            Join-Path $env:LOCALAPPDATA 'Programs'
-        }
+        $folder = if ($Directory) { $Directory } else { Join-Path $env:LOCALAPPDATA 'Programs' }
+        $folder = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($folder)
         if ($folder.Contains(';')) {
             Deny-Install "-ModifyPath cannot add a directory holding ';' to Path: $folder"
         }
