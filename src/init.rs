@@ -67,13 +67,17 @@ const FAMILIES: [Family; 3] = [
 
 /// Write the caller and return the report of what is left for the owner.
 pub fn init(root: &Path, options: &Options) -> Result<String> {
+    let out = run(
+        root,
+        "git",
+        &["rev-parse", "--is-inside-work-tree", "--show-prefix"],
+    )?;
+    if !out.status.success() {
+        return Err("run init inside a Git work tree".into());
+    }
     // Inside .git or a bare repository the prefix is empty too, but Git
     // reports that it is not in a work tree.
-    if git(
-        root,
-        &["rev-parse", "--is-inside-work-tree", "--show-prefix"],
-    )? != "true\n\n"
-    {
+    if out.stdout.trim_ascii_end() != b"true" {
         return Err("run init at the repository's top level".into());
     }
     let name = match &options.family {
