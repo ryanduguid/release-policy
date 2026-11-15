@@ -4,7 +4,7 @@
 
 # Install one release that release-binary.yml published, on Linux or macOS:
 #
-#   sh install.sh [--modify-path] OWNER/REPO TAG [DIRECTORY]
+#   sh install.sh [--modify-path] [--] OWNER/REPO TAG [DIRECTORY]
 #
 # It downloads SHA256SUMS, this platform's archive and the provenance bundle
 # from the release, then installs nothing unless the GitHub CLI verifies
@@ -31,7 +31,14 @@ pick_target() {
   case "$os/$arch" in
     Linux/x86_64 | Linux/amd64) target=x86_64-unknown-linux-musl ;;
     Linux/aarch64 | Linux/arm64) target=aarch64-unknown-linux-musl ;;
-    Darwin/x86_64) target=x86_64-apple-darwin ;;
+    # A shell under Rosetta runs uname translated, so it reports x86_64 on
+    # Apple silicon; sysctl, translated too, says so, and arm64 runs natively.
+    Darwin/x86_64)
+      if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then
+        target=aarch64-apple-darwin
+      else
+        target=x86_64-apple-darwin
+      fi ;;
     Darwin/arm64) target=aarch64-apple-darwin ;;
     *) refuse "no build for $os $arch: releases ship Linux and macOS x86_64 and arm64 here, Windows through install.ps1" ;;
   esac
@@ -43,7 +50,13 @@ pick_profile() {
   shell=${SHELL:-}
   shell=${shell##*/}
   case "$shell" in
-    zsh) profile=${ZDOTDIR:-$HOME}/.zshrc ;;
+    # ~/.zshenv often sets ZDOTDIR without exporting it; zsh -c reads that file.
+    zsh)
+      zdotdir=${ZDOTDIR:-}
+      # Only the answer goes to descriptor 3; anything ~/.zshenv prints is dropped.
+      # shellcheck disable=SC2016 # zsh expands ZDOTDIR.
+      [ -n "$zdotdir" ] || zdotdir=$("$SHELL" -c 'printf %s "$ZDOTDIR" >&3' 3>&1 > /dev/null 2>&1 < /dev/null) || zdotdir=
+      profile=${zdotdir:-$HOME}/.zshrc ;;
     # macOS terminals start bash as a login shell, which skips .bashrc.
     bash) if [ "$os" = Darwin ]; then profile=$HOME/.bash_profile; else profile=$HOME/.bashrc; fi ;;
     fish) profile=${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish ;;
@@ -192,18 +205,23 @@ install_files() {
 }
 
 main() {
-  modify_path='' count=0 repo='' tag='' chosen=''
+  modify_path='' count=0 repo='' tag='' chosen='' options=1
   for argument in "$@"; do
-    case "$argument" in
-      --modify-path) modify_path=1 ;;
-      --*) refuse "unknown option $argument" ;;
-      *)
-        count=$((count + 1))
-        case "$count" in 1) repo=$argument ;; 2) tag=$argument ;; *) chosen=$argument ;; esac ;;
-    esac
+    # After --, every argument is an operand, such as a directory named --x.
+    if [ -n "$options" ]; then
+      case "$argument" in
+        --) options=''; continue ;;
+        --modify-path) modify_path=1; continue ;;
+        --*) refuse "unknown option $argument" ;;
+      esac
+    fi
+    count=$((count + 1))
+    case "$count" in 1) repo=$argument ;; 2) tag=$argument ;; *) chosen=$argument ;; esac
   done
   [ "$count" -ge 2 ] && [ "$count" -le 3 ] \
-    || refuse "usage: install.sh [--modify-path] OWNER/REPO TAG [DIRECTORY]"
+    || refuse "usage: install.sh [--modify-path] [--] OWNER/REPO TAG [DIRECTORY]"
+  # So mkdir, cp and mv never read the directory as an option.
+  case "$chosen" in -*) chosen=./$chosen ;; esac
   check_arguments
   pick_target
   [ -z "$modify_path" ] || pick_profile

@@ -175,18 +175,58 @@ fn checked_required_checks(root: &Path, given: &[String]) -> Result<Vec<String>>
 
 /// Whether `relative` is the existing caller under any name the file system
 /// accepts for it, such as another letter case on a case-insensitive file
-/// system. Unix compares device and inode, as realpath keeps the given case
-/// in a casefolded Linux directory; Windows' canonical path is the on-disk name.
+/// system or a hard link. Unix compares device and inode, as realpath keeps
+/// the given case in a casefolded Linux directory.
+#[cfg(unix)]
 fn names_caller(root: &Path, relative: &str) -> bool {
-    #[cfg(unix)]
-    let id = |path: std::path::PathBuf| {
-        use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::MetadataExt;
+    same_file(root, relative, |path| {
         std::fs::metadata(path).map(|m| (m.dev(), m.ino()))
-    };
-    #[cfg(not(unix))]
-    let id = std::fs::canonicalize::<std::path::PathBuf>;
+    })
+}
+
+/// Windows compares the canonical path, which is the on-disk name, and the
+/// 128-bit file ID, which also finds a hard link but which some file systems
+/// do not give.
+#[cfg(windows)]
+fn names_caller(root: &Path, relative: &str) -> bool {
+    same_file(root, relative, std::fs::canonicalize::<std::path::PathBuf>)
+        || same_file(root, relative, file_id)
+}
+
+fn same_file<T: PartialEq>(
+    root: &Path,
+    relative: &str,
+    id: impl Fn(std::path::PathBuf) -> std::io::Result<T>,
+) -> bool {
     id(root.join(CALLER))
         .is_ok_and(|caller| id(root.join(relative)).is_ok_and(|path| path == caller))
+}
+
+/// The volume and 128-bit file ID, which ReFS needs; the 64-bit index can
+/// repeat there.
+#[cfg(windows)]
+fn file_id(path: std::path::PathBuf) -> std::io::Result<(u64, [u8; 16])> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+    };
+    let file = std::fs::File::open(path)?;
+    let mut info = FILE_ID_INFO::default();
+    // SAFETY: the handle stays open for the call, and the buffer is a
+    // FILE_ID_INFO of the size passed.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+    let read = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&raw mut info).cast(),
+            size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    (read != 0)
+        .then_some((info.VolumeSerialNumber, info.FileId.Identifier))
+        .ok_or_else(std::io::Error::last_os_error)
 }
 
 type Inputs = Vec<(&'static str, String)>;

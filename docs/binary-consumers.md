@@ -222,7 +222,8 @@ holds when you run the command. Each installer:
 
 - picks the archive for the running platform: Linux or macOS, x86_64 or
   arm64, through `install.sh`, and Windows x86_64 or arm64 through
-  `install.ps1`. It refuses any other platform, and Intel macOS and Windows
+  `install.ps1`. On Apple silicon it picks arm64 even from a shell running
+  under Rosetta. It refuses any other platform, and Intel macOS and Windows
   on Arm for a release made before those targets were built.
 - downloads `SHA256SUMS`, that archive and the provenance bundle from the
   release, and refuses on any failed or partial download, or unless
@@ -254,8 +255,8 @@ After a successful install:
 
 - `install.sh` appends one line, which adds the directory to the end of `PATH`
   unless it is already there, to the startup file of the login shell that
-  `$SHELL` names: `~/.zshrc` for zsh (in `$ZDOTDIR` when set), `~/.bashrc`
-  for bash on Linux and `~/.bash_profile` on macOS,
+  `$SHELL` names: `~/.zshrc` for zsh (in `$ZDOTDIR` when set, also by
+  `~/.zshenv`), `~/.bashrc` for bash on Linux and `~/.bash_profile` on macOS,
   `~/.config/fish/config.fish` for fish (in `$XDG_CONFIG_HOME/fish` when
   set) and `~/.profile` for any other shell.
   It checks before downloading anything that it can write that file and
@@ -267,7 +268,8 @@ After a successful install:
   (`HKCU:\Environment`) unless an entry already names it, keeping the rest
   of the value as written and its expandable type, then tells running
   programs that the environment changed. It never reads or writes the
-  machine `Path`.
+  machine `Path`. A directory holding `;` or `%` is refused before
+  anything is installed.
 
 Each prints the file or value it changed and how to undo it. Open a new
 terminal for the change to apply.
