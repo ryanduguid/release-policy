@@ -756,8 +756,8 @@ jobs:
           fi
 
   # The upload runs apart from the tests so the OIDC token is never available
-  # while test code runs. It is exempt from ci-gates: main requires
-  # Codecov's own project check, which codecov.yml holds at 100%.
+  # while test code runs. It is exempt from ci-gates: a Codecov outage must
+  # not block merges.
   codecov:
     name: upload coverage to Codecov
     needs: [checks, rust]
