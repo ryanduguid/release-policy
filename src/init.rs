@@ -67,11 +67,8 @@ const FAMILIES: [Family; 3] = [
 
 /// Write the caller and return the report of what is left for the owner.
 pub fn init(root: &Path, options: &Options) -> Result<String> {
-    let out = run(
-        root,
-        "git",
-        &["rev-parse", "--is-inside-work-tree", "--show-prefix"],
-    )?;
+    let args = ["rev-parse", "--is-inside-work-tree", "--show-prefix"];
+    let out = run(root, "git", &args)?;
     if !out.status.success() {
         return Err("run init inside a Git work tree".into());
     }
