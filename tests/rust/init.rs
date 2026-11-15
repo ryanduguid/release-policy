@@ -465,6 +465,63 @@ fn a_required_check_on_the_caller_in_other_letter_case_is_refused() {
     assert_eq!(golden(&repo.path(CALLER)), "name: Mine\n");
 }
 
+/// On a case-sensitive file system Release.yml is a workflow of its own.
+#[test]
+fn a_required_check_on_a_separate_release_yml_is_accepted() {
+    let repo = checkout("archive");
+    repo.write(CALLER, "name: Mine\n");
+    if repo.path(".github/workflows/Release.yml").exists() {
+        return; // A case-insensitive file system names the caller.
+    }
+    repo.write(".github/workflows/Release.yml", "name: Other\n");
+    let out = run(
+        &repo,
+        &[
+            "init",
+            "--artifact-stem",
+            "example",
+            "--required-check",
+            ".github/workflows/Release.yml: release",
+            "--force",
+        ],
+    );
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(
+        golden(&repo.path(CALLER)).ends_with(
+            "      required-checks: |\n        .github/workflows/Release.yml: release\n"
+        )
+    );
+    assert_eq!(
+        golden(&repo.path(".github/workflows/Release.yml")),
+        "name: Other\n"
+    );
+}
+
+/// A hard link is another name for the caller on every platform.
+#[test]
+fn a_required_check_on_a_hard_link_to_the_caller_is_refused() {
+    let repo = checkout("archive");
+    repo.write(CALLER, "name: Mine\n");
+    std::fs::hard_link(repo.path(CALLER), repo.path(".github/workflows/linked.yml")).unwrap();
+    let out = run(
+        &repo,
+        &[
+            "init",
+            "--artifact-stem",
+            "example",
+            "--required-check",
+            ".github/workflows/linked.yml: release",
+            "--force",
+        ],
+    );
+    assert_eq!(out.code, 1);
+    assert_eq!(
+        out.stderr,
+        "release-policy: required check '.github/workflows/linked.yml: release' names the release workflow init writes\n"
+    );
+    assert_eq!(golden(&repo.path(CALLER)), "name: Mine\n");
+}
+
 #[test]
 fn init_runs_at_the_top_of_a_linked_worktree() {
     let repo = checkout("archive");
