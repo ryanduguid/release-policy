@@ -215,6 +215,7 @@ fn file_id(path: std::path::PathBuf) -> std::io::Result<(u64, [u8; 16])> {
     let mut info = FILE_ID_INFO::default();
     // SAFETY: the handle stays open for the call, and the buffer is a
     // FILE_ID_INFO of the size passed.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
     let read = unsafe {
         GetFileInformationByHandleEx(
             file.as_raw_handle(),
