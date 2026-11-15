@@ -186,11 +186,12 @@ fn names_caller(root: &Path, relative: &str) -> bool {
 }
 
 /// Windows compares the canonical path, which is the on-disk name, and the
-/// file ID, which also finds a hard link but which FAT and some network
-/// shares do not give.
+/// 128-bit file ID, which also finds a hard link but which some file systems
+/// do not give.
 #[cfg(windows)]
 fn names_caller(root: &Path, relative: &str) -> bool {
-    same_file(root, relative, std::fs::canonicalize) || same_file(root, relative, file_id)
+    same_file(root, relative, std::fs::canonicalize::<std::path::PathBuf>)
+        || same_file(root, relative, file_id)
 }
 
 fn same_file<T: PartialEq>(
