@@ -20,14 +20,14 @@ release-policy is a set of reusable GitHub Actions workflows for repository main
 A consumer calls one with `uses:`, pinned to a full commit SHA of this repository. Before adopting, check 3 limits:
 
 - **PyPI:** PyPI cannot name a reusable workflow as a Trusted Publisher ([pypi/warehouse#11096](https://github.com/pypi/warehouse/issues/11096)), so the [publish step](docs/pypi-publishing.md) runs in the consumer, not here.
-- **Targets:** `release-binary.yml` builds Linux (static musl), macOS and Windows, each for x86_64 and arm64 only; no other operating system or architecture is built, and a release needs all 6 to build and pass their tests. [Alternatives](#alternatives) says when another tool fits better.
+- **Targets:** `release-binary.yml` builds Linux (static musl), macOS and Windows, each for x86_64 and arm64 only; no other operating system or architecture is built, and a release needs all 6 to build and pass their tests. v0.4.0, which `init` pins, predates the macOS x86_64 and Windows arm64 targets, so it builds 4. [Alternatives](#alternatives) says when another tool fits better.
 - **SLSA:** The release workflows are designed to support SLSA Build Level 3, but no audit has shown that a release reaches it. [SLSA Build Level](docs/guarantees-and-evidence.md#slsa-build-level) says what is unverified and why verification needs `--signer-workflow`.
 
 | Workflow | Use it to | Guide |
 | --- | --- | --- |
 | `release-python.yml` | Build, attest and hand a Python package to PyPI | [Packaged Python](docs/python-consumers.md) |
 | `release-archive.yml` | Publish a checksummed, attested source archive | [Source archives](docs/archive-consumers.md) |
-| `release-binary.yml` | Build and publish Linux, macOS and Windows Rust executables for x86_64 and arm64 | [Rust binaries](docs/binary-consumers.md) |
+| `release-binary.yml` | Build and publish Rust executables for the targets above | [Rust binaries](docs/binary-consumers.md) |
 | `release-skills.yml`, `verify-skills.yml` | Verify and release an agent skill pack | [Skill verification and releases](docs/skill-consumers.md) |
 | `virustotal-release.yml` | Scan a release's assets with VirusTotal | [VirusTotal release scans](docs/virustotal-consumers.md) |
 | `attribution-policy.yml` | Fail PR text and commits that carry AI attribution credits | [Attribution checks](docs/attribution-consumers.md) |

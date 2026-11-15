@@ -19,6 +19,9 @@ verifying it: see [Installing a release](binary-consumers.md#installing-a-releas
 
 ## 2. Run it at the top of your repository
 
+The repository must be a Git work tree, and for a Python package Git must
+track `pyproject.toml` and any `--version-file`.
+
 Name each check that must pass on `main` before a release, as
 `<workflow path>: <job name>`, with the job name GitHub shows:
 

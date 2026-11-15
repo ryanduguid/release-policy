@@ -369,6 +369,26 @@ fn init_runs_only_at_the_top_of_the_repository() {
 }
 
 #[test]
+fn init_outside_a_git_work_tree_is_refused() {
+    let dir = support::tempdir();
+    std::fs::write(dir.path().join("VERSION"), "1.0.0\n").unwrap();
+    // Stop Git's search at the temporary directory's parent.
+    let ceiling = dir.path().parent().unwrap().to_str().unwrap();
+    let out = support::cli_env(
+        dir.path(),
+        &["init", CHECK[0], CHECK[1]],
+        "",
+        &[("GIT_CEILING_DIRECTORIES", ceiling)],
+    );
+    assert_eq!(out.code, 1, "{}", out.stdout);
+    assert_eq!(
+        out.stderr,
+        "release-policy: run init inside a Git work tree\n"
+    );
+    assert!(!dir.path().join(CALLER).exists());
+}
+
+#[test]
 fn a_required_check_on_the_release_workflow_itself_is_refused() {
     let repo = checkout("archive");
     repo.write(CALLER, "name: Mine\n");
