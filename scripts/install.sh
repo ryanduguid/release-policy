@@ -53,6 +53,7 @@ pick_profile() {
     # ~/.zshenv often sets ZDOTDIR without exporting it; zsh -c reads that file.
     zsh)
       zdotdir=${ZDOTDIR:-}
+      # shellcheck disable=SC2016 # zsh expands ZDOTDIR.
       [ -n "$zdotdir" ] || zdotdir=$("$SHELL" -c 'printf %s "$ZDOTDIR"' 2>/dev/null < /dev/null) || zdotdir=
       profile=${zdotdir:-$HOME}/.zshrc ;;
     # macOS terminals start bash as a login shell, which skips .bashrc.
