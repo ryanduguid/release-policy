@@ -56,6 +56,13 @@ cp "$FAKE_RELEASE/$name" "$out"
 FAKE_UNAME = """#!/bin/sh
 case "$1" in -s) echo "$FAKE_OS" ;; -m) echo "$FAKE_ARCH" ;; esac
 """
+# Answers sysctl.proc_translated with FAKE_TRANSLATED: 1 under Rosetta, 0
+# natively; unset, the unknown name of an Intel Mac before macOS 11.
+FAKE_SYSCTL = """#!/bin/sh
+[ "$*" = "-n sysctl.proc_translated" ] || exit 2
+[ -n "${FAKE_TRANSLATED:-}" ] || { echo "sysctl: unknown oid 'sysctl.proc_translated'" >&2; exit 1; }
+echo "$FAKE_TRANSLATED"
+"""
 # The same fakes as PowerShell functions, which take precedence over the
 # cmdlet and over any gh on PATH.
 FAKE_POWERSHELL = """
@@ -313,7 +320,8 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
         """A directory of the fakes and the real tools install.sh may use, less those omitted."""
         directory = self.root / "-".join(("bin", *omit))
         directory.mkdir()
-        for name, text in (("gh", FAKE_GH), ("curl", FAKE_CURL), ("uname", FAKE_UNAME)):
+        for name, text in (("gh", FAKE_GH), ("curl", FAKE_CURL), ("uname", FAKE_UNAME),
+                           ("sysctl", FAKE_SYSCTL)):
             if name not in omit:
                 (directory / name).write_text(text, encoding="utf-8", newline="\n")
                 (directory / name).chmod(0o755)
@@ -341,6 +349,28 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertEqual(target.encode(), (destination / STEM).read_bytes())
                 self.assertTrue(os.access(destination / STEM, os.X_OK))
+
+    def test_installs_the_arm64_archive_from_a_shell_under_rosetta(self) -> None:
+        for translated, target in (("1", "aarch64-apple-darwin"), ("0", "x86_64-apple-darwin"),
+                                   ("", "x86_64-apple-darwin")):
+            with self.subTest(translated=translated):
+                self.TARGET = target
+                destination = self.root / f"rosetta-{translated}"
+                result = self.install(REPO, TAG, str(destination), FAKE_OS="Darwin",
+                                      FAKE_ARCH="x86_64", FAKE_TRANSLATED=translated)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual(target.encode(), (destination / STEM).read_bytes())
+
+    def test_takes_a_directory_named_like_an_option(self) -> None:
+        # A relative directory starting '-' reaches no tool as an option; one
+        # starting '--' follows the end-of-options marker.
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.root)
+        for arguments in ((REPO, TAG, "-dir"), ("--", REPO, TAG, "--dir")):
+            with self.subTest(arguments=arguments):
+                self.destination = self.root / arguments[-1]
+                self.log.unlink(missing_ok=True)
+                self.assert_installed(self.install(*arguments))
 
     def test_installs_into_the_data_directory_by_default(self) -> None:
         self.destination = self.root / "data" / STEM
@@ -483,6 +513,16 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertIn(f"Added this line to {elsewhere / profile}:", result.stdout)
                 self.assertEqual([], list(home.iterdir()))
+
+    @unittest.skipUnless(shutil.which("zsh"), "zsh required")
+    def test_modify_path_finds_a_zdotdir_that_zshenv_sets_without_exporting(self) -> None:
+        home = self.root / "home"
+        (home / "zsh").mkdir(parents=True)
+        (home / ".zshenv").write_text('ZDOTDIR="$HOME/zsh"\n', encoding="utf-8")
+        result = self.modify_path(str(shutil.which("zsh")), str(self.destination))
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(f"Added this line to {home / 'zsh' / '.zshrc'}:", result.stdout)
+        self.assertFalse((home / ".zshrc").exists())
 
     def test_modify_path_ends_a_last_line_that_lacks_a_newline(self) -> None:
         home = self.root / "home"
@@ -686,6 +726,15 @@ class PowerShellInstallerTests(InstallerCases, unittest.TestCase):
         self.destination = self.root / "a;b"
         result = self.install(REPO, TAG, str(self.destination), "-ModifyPath", **env)
         self.assert_refused(result, "-ModifyPath cannot add a directory holding ';' to Path")
+        self.assertFalse(self.log.exists())
+        self.assertEqual("C:\\Windows", self.stored_path())
+
+    def test_modify_path_refuses_a_directory_holding_a_percent_sign(self) -> None:
+        # Windows would read the entry as %TEMP%, the variable, not the folder.
+        env = self.user_path("C:\\Windows")
+        self.destination = self.root / "%TEMP%"
+        result = self.install(REPO, TAG, str(self.destination), "-ModifyPath", **env)
+        self.assert_refused(result, "-ModifyPath cannot add a directory holding '%' to Path")
         self.assertFalse(self.log.exists())
         self.assertEqual("C:\\Windows", self.stored_path())
 
