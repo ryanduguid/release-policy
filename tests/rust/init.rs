@@ -287,6 +287,15 @@ fn inputs_the_policy_would_refuse_are_refused_before_writing() {
         &["init", CHECK[0], CHECK[1]],
         "pyproject parser requires [project].version; for a dynamic version pass --version-file",
     );
+    // Other metadata errors pass through without the --version-file hint.
+    let nameless = checkout("python");
+    nameless.write("pyproject.toml", "[project]\nversion = \"1.2.3\"\n");
+    nameless.commit("no name");
+    refused(
+        &nameless,
+        &["init", CHECK[0], CHECK[1]],
+        "pyproject.toml must declare [project].name",
+    );
     refused(
         &python,
         &[
