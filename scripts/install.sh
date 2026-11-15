@@ -207,14 +207,15 @@ main() {
   modify_path='' count=0 repo='' tag='' chosen='' options=1
   for argument in "$@"; do
     # After --, every argument is an operand, such as a directory named --x.
-    case "$options$argument" in
-      1--) options='' ;;
-      1--modify-path) modify_path=1 ;;
-      1--*) refuse "unknown option $argument" ;;
-      *)
-        count=$((count + 1))
-        case "$count" in 1) repo=$argument ;; 2) tag=$argument ;; *) chosen=$argument ;; esac ;;
-    esac
+    if [ -n "$options" ]; then
+      case "$argument" in
+        --) options=''; continue ;;
+        --modify-path) modify_path=1; continue ;;
+        --*) refuse "unknown option $argument" ;;
+      esac
+    fi
+    count=$((count + 1))
+    case "$count" in 1) repo=$argument ;; 2) tag=$argument ;; *) chosen=$argument ;; esac
   done
   [ "$count" -ge 2 ] && [ "$count" -le 3 ] \
     || refuse "usage: install.sh [--modify-path] [--] OWNER/REPO TAG [DIRECTORY]"
