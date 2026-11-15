@@ -53,8 +53,12 @@ pick_profile() {
     # ~/.zshenv often sets ZDOTDIR without exporting it; zsh -c reads that file.
     zsh)
       zdotdir=${ZDOTDIR:-}
-      # shellcheck disable=SC2016 # zsh expands ZDOTDIR.
-      [ -n "$zdotdir" ] || zdotdir=$("$SHELL" -c 'printf %s "$ZDOTDIR"' 2>/dev/null < /dev/null) || zdotdir=
+      if [ -z "$zdotdir" ]; then
+        # shellcheck disable=SC2016 # zsh expands ZDOTDIR.
+        zdotdir=$("$SHELL" -c 'printf %s "$ZDOTDIR"' 2>/dev/null < /dev/null) || zdotdir=
+        # Text ~/.zshenv prints comes first; take only an absolute directory.
+        case "$zdotdir" in /*) ;; *) zdotdir= ;; esac
+      fi
       profile=${zdotdir:-$HOME}/.zshrc ;;
     # macOS terminals start bash as a login shell, which skips .bashrc.
     bash) if [ "$os" = Darwin ]; then profile=$HOME/.bash_profile; else profile=$HOME/.bashrc; fi ;;

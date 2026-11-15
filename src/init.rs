@@ -175,40 +175,56 @@ fn checked_required_checks(root: &Path, given: &[String]) -> Result<Vec<String>>
 
 /// Whether `relative` is the existing caller under any name the file system
 /// accepts for it, such as another letter case on a case-insensitive file
-/// system or a hard link. Each platform compares the file's identity, as a
-/// path can differ for the same file: realpath keeps the given case in a
-/// casefolded Linux directory, and Windows keeps a hard link's own name.
+/// system or a hard link. Unix compares device and inode, as realpath keeps
+/// the given case in a casefolded Linux directory.
+#[cfg(unix)]
 fn names_caller(root: &Path, relative: &str) -> bool {
-    #[cfg(unix)]
-    let id = |path: std::path::PathBuf| {
-        use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::MetadataExt;
+    same_file(root, relative, |path| {
         std::fs::metadata(path).map(|m| (m.dev(), m.ino()))
-    };
-    // The 128-bit file ID, which ReFS needs; the 64-bit index can repeat there.
-    #[cfg(windows)]
-    let id = |path: std::path::PathBuf| {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{
-            FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
-        };
-        let file = std::fs::File::open(path)?;
-        let mut info = FILE_ID_INFO::default();
-        // SAFETY: the handle stays open for the call, and the buffer is a
-        // FILE_ID_INFO of the size passed.
-        let read = unsafe {
-            GetFileInformationByHandleEx(
-                file.as_raw_handle(),
-                FileIdInfo,
-                (&raw mut info).cast(),
-                size_of::<FILE_ID_INFO>() as u32,
-            )
-        };
-        (read != 0)
-            .then_some((info.VolumeSerialNumber, info.FileId.Identifier))
-            .ok_or_else(std::io::Error::last_os_error)
-    };
+    })
+}
+
+/// Windows compares the canonical path, which is the on-disk name, and the
+/// file ID, which also finds a hard link but which FAT and some network
+/// shares do not give.
+#[cfg(windows)]
+fn names_caller(root: &Path, relative: &str) -> bool {
+    same_file(root, relative, std::fs::canonicalize) || same_file(root, relative, file_id)
+}
+
+fn same_file<T: PartialEq>(
+    root: &Path,
+    relative: &str,
+    id: impl Fn(std::path::PathBuf) -> std::io::Result<T>,
+) -> bool {
     id(root.join(CALLER))
         .is_ok_and(|caller| id(root.join(relative)).is_ok_and(|path| path == caller))
+}
+
+/// The volume and 128-bit file ID, which ReFS needs; the 64-bit index can
+/// repeat there.
+#[cfg(windows)]
+fn file_id(path: std::path::PathBuf) -> std::io::Result<(u64, [u8; 16])> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+    };
+    let file = std::fs::File::open(path)?;
+    let mut info = FILE_ID_INFO::default();
+    // SAFETY: the handle stays open for the call, and the buffer is a
+    // FILE_ID_INFO of the size passed.
+    let read = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&raw mut info).cast(),
+            size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    (read != 0)
+        .then_some((info.VolumeSerialNumber, info.FileId.Identifier))
+        .ok_or_else(std::io::Error::last_os_error)
 }
 
 type Inputs = Vec<(&'static str, String)>;

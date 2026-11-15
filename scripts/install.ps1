@@ -29,12 +29,21 @@ function Test-Argument {
     if (-not $Repository -or -not $Tag) {
         Deny-Install 'usage: install.ps1 OWNER/REPO TAG [DIRECTORY] [-ModifyPath]'
     }
-    if ($ModifyPath -and $Directory.Contains(';')) {
-        Deny-Install "-ModifyPath cannot add a directory holding ';' to Path: $Directory"
-    }
-    # Path is REG_EXPAND_SZ, which has no escape for '%'.
-    if ($ModifyPath -and $Directory.Contains('%')) {
-        Deny-Install "-ModifyPath cannot add a directory holding '%' to Path, which would read it as a variable: $Directory"
+    if ($ModifyPath) {
+        # The folder Path would gain, resolved; the default's last part is the
+        # stem, which holds neither character.
+        $folder = if ($Directory) {
+            $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Directory)
+        } else {
+            Join-Path $env:LOCALAPPDATA 'Programs'
+        }
+        if ($folder.Contains(';')) {
+            Deny-Install "-ModifyPath cannot add a directory holding ';' to Path: $folder"
+        }
+        # Path is REG_EXPAND_SZ, which has no escape for '%'.
+        if ($folder.Contains('%')) {
+            Deny-Install "-ModifyPath cannot add a directory holding '%' to Path, which would read it as a variable: $folder"
+        }
     }
     if ($Repository -cnotmatch '\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z') {
         Deny-Install "OWNER/REPO must be one owner and one repository: $Repository"
