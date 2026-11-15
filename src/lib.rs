@@ -10,6 +10,7 @@ pub mod common;
 pub mod egress;
 pub mod fuzz;
 pub mod git_revision;
+pub mod init;
 pub mod pin_families;
 pub mod py;
 pub mod pyjson;

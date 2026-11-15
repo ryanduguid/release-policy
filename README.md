@@ -11,7 +11,7 @@
 
 [![CI](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ryanduguid/release-policy/actions/workflows/ci.yml) [![Codecov](https://codecov.io/gh/ryanduguid/release-policy/graph/badge.svg)](https://codecov.io/gh/ryanduguid/release-policy) [![CodeQL](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/ryanduguid/release-policy/actions/workflows/codeql.yml) [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=ryanduguid_release-policy&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=ryanduguid_release-policy) [![Codacy code quality](https://app.codacy.com/project/badge/Grade/49440ac0ee144a12b5fc1380425e9773)](https://app.codacy.com/gh/ryanduguid/release-policy/dashboard)<br> [![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/ryanduguid/release-policy.svg)](https://scorecard.dev/viewer/?uri=github.com/ryanduguid/release-policy) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15422/badge)](https://www.bestpractices.dev/projects/15422)<br> [![release](https://badgen.net/github/release/ryanduguid/release-policy/stable?label=release&color=66023C&labelColor=000000)](https://github.com/ryanduguid/release-policy/releases/latest) [![licence: Ryan Duguid Public Attribution Licence 1.0](.github/assets/badges/licence.svg)](LICENSE)
 
-[Prerequisites](docs/consumer-prerequisites.md) · [Verify a release](docs/verify-a-release.md) · [Guarantees](docs/guarantees-and-evidence.md) · [Canaries](canaries.json) · [Alternatives](#alternatives) · [Development](#development) · [Licence](#licence)
+[Quickstart](docs/quickstart.md) · [Prerequisites](docs/consumer-prerequisites.md) · [Verify a release](docs/verify-a-release.md) · [Guarantees](docs/guarantees-and-evidence.md) · [Canaries](canaries.json) · [Alternatives](#alternatives) · [Development](#development) · [Licence](#licence)
 
 </div>
 
@@ -51,7 +51,7 @@ uses: ryanduguid/release-policy/.github/workflows/release-python.yml@0f7ca4ce0ba
 
 This snapshot was checked against [canaries.json](canaries.json) on 2 November 2026. The manifest retains the source commit, policy SHA and run identity; consult it for later updates.
 
-Start with the [consumer prerequisites](docs/consumer-prerequisites.md) before choosing a release workflow.
+To set up a release, run [`release-policy init`](docs/quickstart.md): it writes the release workflow for a Python package, Rust binary or source archive and lists what is left for the owner. Check the [consumer prerequisites](docs/consumer-prerequisites.md) before choosing a release workflow.
 
 <details>
 <summary>Consumer setup, policy guarantees and historical limits</summary>
@@ -85,6 +85,7 @@ The release-policy guides are grouped as how-to, reference and background pages.
 
 How-to:
 
+- [Quickstart: set up a release with init](docs/quickstart.md)
 - [Packaged Python](docs/python-consumers.md)
 - [PyPI hand-off and one-time setup](docs/pypi-publishing.md)
 - [Source archives](docs/archive-consumers.md)
@@ -118,6 +119,7 @@ release-policy fits maintainers who want reusable workflows pinned to a commit S
 
 - [dist](https://github.com/axodotdev/cargo-dist) (formerly cargo-dist) builds binaries, makes tarballs and installers, and can publish Homebrew formulae to your own tap. Its [v0.34.0](https://github.com/axodotdev/cargo-dist/releases/tag/v0.34.0) shell installer skips its checksum check when `sha256sum` is missing, its PowerShell installer has no checksum check, and neither verifies build provenance (read 15 November 2026).
 - [GoReleaser](https://goreleaser.com/) builds and releases Go, Rust, TypeScript, Python and Zig projects for multiple platforms and architectures, and can publish to package managers including Homebrew, Scoop and Winget.
+- Setup, read on 15 November 2026: `dist init` ([v0.34.0](https://github.com/axodotdev/cargo-dist/releases/tag/v0.34.0)) asks which platforms to build for, or takes its defaults with `--yes`, adds a build profile to `Cargo.toml`, writes `dist-workspace.toml` and generates `.github/workflows/release.yml`, which names actions by version tag, such as `actions/checkout@v6`, unless configured with commits. `goreleaser init` ([v2.20.2](https://github.com/goreleaser/goreleaser/releases/tag/v2.20.2)) picks one of 8 languages from the manifests it finds and writes an example `.goreleaser.yaml`, but no CI workflow: its [GitHub Actions page](https://goreleaser.com/customization/ci/actions/) gives one to copy. `release-policy init` writes the release workflow, pinned to a full commit SHA and without network access, for 3 families. It is on `main`, not in a release yet, and writes no caller for a monorepo component or skill pack and no PyPI publish job ([Quickstart](docs/quickstart.md)).
 - [slsa-github-generator](https://github.com/slsa-framework/slsa-github-generator) generates SLSA provenance for GitHub projects. Its README says it is no longer actively maintained.
 
 ## Development

@@ -54,6 +54,13 @@ bytes and file formats. Underscored names are accepted as aliases.
 For example, `python scripts/python_release.py tag --tag v1.2.3 --tag-prefix v`
 becomes `release-policy python-release tag --tag v1.2.3 --tag-prefix v`.
 
+`release-policy init` has no script behind it: it writes a consumer's
+release caller ([Quickstart](quickstart.md)). It pins that caller to the
+release `POLICY_RELEASE` and `POLICY_COMMIT` name in `src/init.rs`. After a
+release, move both, with the goldens in `tests/data/init`, in one pull request;
+`tests/test_init_goldens.py` checks that the pin is the commit of the tag it
+names and that the release's workflows accept each golden's inputs.
+
 `scripts/repin_issue.py` has no command yet. Only the `Attribution repin`
 workflow runs it, and like the release workflows it calls the scripts until
 the switch-over; port it then. The same holds for `scripts/binary_release.py`,

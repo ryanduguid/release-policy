@@ -64,6 +64,24 @@ enum Command {
         #[arg(num_args=0.., allow_hyphen_values=true)]
         revisions: Vec<String>,
     },
+    /// Write .github/workflows/release.yml for this repository, pinned to a released policy commit
+    Init {
+        /// The release family; detected from pyproject.toml, Cargo.toml or VERSION when left out
+        #[arg(long, value_parser=["python","binary","archive"])]
+        family: Option<String>,
+        /// A check that must pass on main before a release, as "<workflow path>: <job name>"; repeat for each
+        #[arg(long = "required-check", required = true)]
+        required_checks: Vec<String>,
+        /// The release assets' stem (binary and archive families)
+        #[arg(long)]
+        artifact_stem: Option<String>,
+        /// The Python file holding `__version__`, for a dynamic version
+        #[arg(long)]
+        version_file: Option<String>,
+        /// Replace an existing release.yml
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -268,6 +286,22 @@ fn execute(cli: Cli) -> Result<i32> {
                 print(&format!("verify_skills: {e}\n"), true);
                 return Ok(1);
             }
+        }
+        Command::Init {
+            family,
+            required_checks,
+            artifact_stem,
+            version_file,
+            force,
+        } => {
+            let options = release_policy::init::Options {
+                family,
+                required_checks,
+                artifact_stem,
+                version_file,
+                force,
+            };
+            print(&release_policy::init::init(&cwd, &options)?, false);
         }
         Command::PinFamilies { revisions } => {
             if revisions.len() != 2 {

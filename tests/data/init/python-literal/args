@@ -1,0 +1,7 @@
+init
+--version-file
+example_pkg/__init__.py
+--required-check
+.github/workflows/ci.yml: lint
+--required-check
+.github/workflows/ci.yml: test

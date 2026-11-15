@@ -1,0 +1,19 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  release:
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    uses: ryanduguid/release-policy/.github/workflows/release-binary.yml@ddb7c18953f5abef38ba164a0ae48dc7c6a0e1f3 # v0.4.0
+    with:
+      artifact-stem: "example-tool"
+      binary: "example_tool"
+      required-checks: |
+        .github/workflows/ci.yml: test
