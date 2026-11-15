@@ -4,15 +4,18 @@
 
 # Install one release that release-binary.yml published, on Linux or macOS:
 #
-#   sh install.sh OWNER/REPO TAG [DIRECTORY]
+#   sh install.sh [--modify-path] OWNER/REPO TAG [DIRECTORY]
 #
 # It downloads SHA256SUMS, this platform's archive and the provenance bundle
 # from the release, then installs nothing unless the GitHub CLI verifies
 # SHA256SUMS and the archive against that bundle, as signed by release-policy's
 # release-binary.yml for OWNER/REPO at TAG on a GitHub-hosted runner, and the
 # archive matches its line in SHA256SUMS. The archive's files go into
-# DIRECTORY, by default ${XDG_DATA_HOME:-$HOME/.local/share}/<stem>. Every
-# step runs inside main, so a truncated download of this script runs nothing.
+# DIRECTORY, by default ${XDG_DATA_HOME:-$HOME/.local/share}/<stem>. With
+# --modify-path it then appends one line that adds DIRECTORY to PATH to the
+# startup file of the login shell $SHELL names, unless that file already holds
+# the line. Every step runs inside main, so a truncated download of this script
+# runs nothing.
 set -eu
 
 SIGNER=ryanduguid/release-policy/.github/workflows/release-binary.yml
@@ -28,9 +31,76 @@ pick_target() {
   case "$os/$arch" in
     Linux/x86_64 | Linux/amd64) target=x86_64-unknown-linux-musl ;;
     Linux/aarch64 | Linux/arm64) target=aarch64-unknown-linux-musl ;;
+    Darwin/x86_64) target=x86_64-apple-darwin ;;
     Darwin/arm64) target=aarch64-apple-darwin ;;
-    *) refuse "no build for $os $arch: releases ship Linux x86_64 and arm64 and macOS arm64 here, Windows x86_64 through install.ps1" ;;
+    *) refuse "no build for $os $arch: releases ship Linux and macOS x86_64 and arm64 here, Windows through install.ps1" ;;
   esac
+}
+
+# Sets profile, the startup file of the login shell $SHELL names, and refuses
+# before anything is downloaded unless it can be written.
+pick_profile() {
+  shell=${SHELL:-}
+  shell=${shell##*/}
+  case "$shell" in
+    zsh) profile=${ZDOTDIR:-$HOME}/.zshrc ;;
+    # macOS terminals start bash as a login shell, which skips .bashrc.
+    bash) if [ "$os" = Darwin ]; then profile=$HOME/.bash_profile; else profile=$HOME/.bashrc; fi ;;
+    fish) profile=${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish ;;
+    *) profile=$HOME/.profile ;;
+  esac
+  # Appending through a link would change a file the user was not told of.
+  [ ! -L "$profile" ] \
+    || refuse "--modify-path will not write through the symbolic link $profile; nothing was installed"
+  if [ -e "$profile" ]; then
+    [ -f "$profile" ] && [ -w "$profile" ] \
+      || refuse "--modify-path cannot write to $profile; nothing was installed"
+  else
+    [ -d "${profile%/*}" ] && [ -w "${profile%/*}" ] \
+      || refuse "--modify-path cannot create $profile; nothing was installed"
+  fi
+}
+
+# Sets line, which adds the install directory to PATH where it is missing, in
+# the syntax of the shell that reads profile. The directory is written between
+# single quotes, so it may hold no quote, backslash or other shell syntax.
+path_line() {
+  case "$directory" in
+    /*) ;;
+    *) refuse "--modify-path needs an absolute directory, not $directory; nothing was installed" ;;
+  esac
+  case "$directory" in
+    *[!A-Za-z0-9_./+@,\ -]*) refuse "--modify-path cannot add $directory to PATH, which takes letters, digits, spaces and _ . / + @ , - only; nothing was installed" ;;
+  esac
+  marker="# added by release-policy install.sh"
+  if [ "$shell" = fish ]; then
+    line="contains -- '$directory' \$PATH; or set -gx PATH \$PATH '$directory' $marker"
+  else
+    line="case \":\${PATH}:\" in *:'$directory':*) ;; *) PATH=\"\${PATH:+\$PATH:}\"'$directory'; export PATH ;; esac $marker"
+  fi
+}
+
+# Appends line to profile unless a line of profile is already exactly it.
+add_to_path() {
+  found='' unterminated=''
+  if [ -f "$profile" ]; then
+    # The last line may lack a newline; it is read and remembered.
+    while IFS= read -r existing || { [ -n "$existing" ] && unterminated=1; }; do
+      [ "$existing" != "$line" ] || found=1
+    done < "$profile"
+  fi
+  if [ -n "$found" ]; then
+    echo "$profile already adds $directory to PATH; it is unchanged."
+    return
+  fi
+  if [ -n "$unterminated" ]; then
+    printf '\n%s\n' "$line"
+  else
+    printf '%s\n' "$line"
+  fi >> "$profile" || refuse "installed into $directory, but could not write to $profile"
+  echo "Added this line to $profile:"
+  echo "$line"
+  echo "Open a new shell to use it. To undo, delete that line from $profile."
 }
 
 check_arguments() {
@@ -122,10 +192,21 @@ install_files() {
 }
 
 main() {
-  [ "$#" -ge 2 ] && [ "$#" -le 3 ] || refuse "usage: install.sh OWNER/REPO TAG [DIRECTORY]"
-  repo=$1 tag=$2
+  modify_path='' count=0 repo='' tag='' chosen=''
+  for argument in "$@"; do
+    case "$argument" in
+      --modify-path) modify_path=1 ;;
+      --*) refuse "unknown option $argument" ;;
+      *)
+        count=$((count + 1))
+        case "$count" in 1) repo=$argument ;; 2) tag=$argument ;; *) chosen=$argument ;; esac ;;
+    esac
+  done
+  [ "$count" -ge 2 ] && [ "$count" -le 3 ] \
+    || refuse "usage: install.sh [--modify-path] OWNER/REPO TAG [DIRECTORY]"
   check_arguments
   pick_target
+  [ -z "$modify_path" ] || pick_profile
   command -v curl >/dev/null 2>&1 || refuse "curl is required to download the release"
   command -v gh >/dev/null 2>&1 \
     || refuse "the GitHub CLI (gh) is required to verify build provenance: https://cli.github.com/"
@@ -138,12 +219,17 @@ main() {
   base="https://github.com/$repo/releases/download/$tag"
   fetch SHA256SUMS
   read_sums
-  directory=${3:-${XDG_DATA_HOME:-$HOME/.local/share}/$stem}
+  directory=${chosen:-${XDG_DATA_HOME:-$HOME/.local/share}/$stem}
+  [ -z "$modify_path" ] || path_line
   fetch "$archive"
   fetch "$stem-$version.intoto.jsonl"
   verify
   install_files
   echo "Installed $archive into $directory, verified against SHA256SUMS and its provenance."
+  if [ -n "$modify_path" ]; then
+    add_to_path
+    return
+  fi
   case ":$PATH:" in
     *":$directory:"*) ;;
     *) echo "Add $directory to PATH to run it." ;;

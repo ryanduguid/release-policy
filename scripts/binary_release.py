@@ -72,8 +72,11 @@ TARGETS = {
         Target("x86_64-unknown-linux-musl", ".tar.gz", "", "elf64-x86-64", "x86_64", "linux"),
         Target("aarch64-unknown-linux-musl", ".tar.gz", "", "elf64-littleaarch64", "aarch64",
                "linux-arm64"),
+        Target("x86_64-apple-darwin", ".tar.gz", "", "Mach-O 64-bit x86-64", "x86_64", "macos"),
         Target("aarch64-apple-darwin", ".tar.gz", "", "Mach-O arm64", "aarch64", "macos-arm64"),
         Target("x86_64-pc-windows-msvc", ".zip", ".exe", "COFF-x86-64", "x86_64", "windows"),
+        Target("aarch64-pc-windows-msvc", ".zip", ".exe", "COFF-ARM64", "aarch64",
+               "windows-arm64"),
     )
 }
 # An archive holds the executables, the declared data files and up to 3
@@ -141,13 +144,14 @@ _MACOS_SYSTEM_LIBRARY = re.compile(
 # A macOS executable's linkage is read from its own load commands, not from
 # llvm-readobj, which reports each slice of a universal file separately and
 # does not show LC_DYLD_ENVIRONMENT. Values from <mach-o/loader.h>: the thin
-# 64-bit little-endian magic, CPU_TYPE_ARM64 and MH_EXECUTE, then the load
-# commands that make dyld load a library (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB,
-# LC_REEXPORT_DYLIB, LC_LAZY_LOAD_DYLIB, LC_LOAD_UPWARD_DYLIB) and those that
-# change where or how dyld looks (LC_LOAD_DYLINKER, LC_RPATH,
-# LC_DYLD_ENVIRONMENT).
+# 64-bit little-endian magic, CPU_TYPE_ARM64 or CPU_TYPE_X86_64 by the
+# target's architecture (with the name a refusal gives it) and MH_EXECUTE,
+# then the load commands that make dyld load a library (LC_LOAD_DYLIB,
+# LC_LOAD_WEAK_DYLIB, LC_REEXPORT_DYLIB, LC_LAZY_LOAD_DYLIB,
+# LC_LOAD_UPWARD_DYLIB) and those that change where or how dyld looks
+# (LC_LOAD_DYLINKER, LC_RPATH, LC_DYLD_ENVIRONMENT).
 _MACHO_MAGIC_64 = b"\xcf\xfa\xed\xfe"
-_MACHO_ARM64 = 0x0100000C
+_MACHO_CPU = {"aarch64": (0x0100000C, "arm64"), "x86_64": (0x01000007, "x86_64")}
 _MACHO_EXECUTE = 0x2
 _MACHO_LOAD_LIBRARY = frozenset({0xC, 0x80000018, 0x8000001F, 0x20, 0x80000023})
 _MACHO_LOAD_DYLINKER = 0xE
@@ -461,15 +465,16 @@ def needed_libraries(readobj_output: str) -> tuple[str, ...]:
     return tuple(line.strip() for line in match.group("names").splitlines() if line.strip())
 
 
-def _macho_load_commands(executable: bytes) -> tuple[int, int]:
-    """The load command count of a thin arm64 Mach-O executable, and where its commands end."""
+def _macho_load_commands(executable: bytes, target: Target) -> tuple[int, int]:
+    """The load command count of `target`'s thin Mach-O executable, and where its commands end."""
     if executable[:4] != _MACHO_MAGIC_64:
         raise ValueError("not a thin 64-bit little-endian Mach-O file")
     if len(executable) < 32:
         raise ValueError(_MACHO_MALFORMED)
     _, cputype, _, filetype, count, size = struct.unpack_from("<6I", executable)
-    if cputype != _MACHO_ARM64:
-        raise ValueError("not an arm64 Mach-O executable")
+    expected, name = _MACHO_CPU[target.arch]
+    if cputype != expected:
+        raise ValueError(f"not an {name} Mach-O executable")
     if filetype != _MACHO_EXECUTE:
         raise ValueError("not a Mach-O executable file type")
     if 32 + size > len(executable):
@@ -490,14 +495,15 @@ def _macho_path(executable: bytes, offset: int, length: int) -> str:
 
 
 def macho_linkage(executable: bytes, triple: str) -> tuple[str, ...]:
-    """The libraries a thin arm64 Mach-O executable loads, once each is one macOS ships.
+    """The libraries a thin Mach-O executable for `triple` loads, once each is one macOS ships.
 
     A universal file is refused whole, since a loader picks a slice this
     check would not see, and so is any command that points dyld elsewhere.
     """
-    if not _target(triple).object_format.startswith("Mach-O"):
+    target = _target(triple)
+    if not target.object_format.startswith("Mach-O"):
         raise ValueError(f"only a macOS executable's linkage is read from it, not {triple}'s")
-    count, end = _macho_load_commands(executable)
+    count, end = _macho_load_commands(executable, target)
     offset, needed = 32, []
     for _ in range(count):
         if offset + 8 > end:

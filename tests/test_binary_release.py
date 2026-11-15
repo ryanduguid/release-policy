@@ -35,14 +35,17 @@ import binary_release  # noqa: E402
 
 LINUX = "x86_64-unknown-linux-musl"
 LINUX_ARM64 = "aarch64-unknown-linux-musl"
+MACOS = "x86_64-apple-darwin"
 MACOS_ARM64 = "aarch64-apple-darwin"
 WINDOWS = "x86_64-pc-windows-msvc"
+WINDOWS_ARM64 = "aarch64-pc-windows-msvc"
 EPOCH = 1_790_000_000
 PACKAGE = '[package]\nname = "example"\nversion = "1.2.3"\npublish = false\n'
 # The header lines llvm-readobj prints for each target's executable.
 ELF = "File: example\nFormat: elf64-x86-64\nArch: x86_64\nAddressSize: 64bit\n"
 ELF_ARM64 = "File: example\nFormat: elf64-littleaarch64\nArch: aarch64\nAddressSize: 64bit\n"
 COFF = "File: example.exe\nFormat: COFF-x86-64\nArch: x86_64\nAddressSize: 64bit\n"
+COFF_ARM64 = "File: example.exe\nFormat: COFF-ARM64\nArch: aarch64\nAddressSize: 64bit\n"
 # What llvm-readobj 1.99.1 printed for a crafted arm64 Mach-O executable that
 # loads 2 system libraries and 2 system frameworks (see macho_header below).
 MACHO = """File: example
@@ -196,7 +199,7 @@ class PackageTests(Fixture):
         for stem, version, triple, message in (
             ("Example", "1.2.3", LINUX, "artifact-stem"),
             ("example", "1.2", LINUX, "version"),
-            ("example", "1.2.3", "x86_64-apple-darwin", "unsupported target"),
+            ("example", "1.2.3", "x86_64-unknown-freebsd", "unsupported target"),
         ):
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                 binary_release.asset_name(stem, version, triple)
@@ -204,7 +207,7 @@ class PackageTests(Fixture):
             binary_release.member_names("../x", LINUX, ())
 
     def test_each_unix_target_ships_an_executable_tar_archive(self) -> None:
-        for triple in (LINUX_ARM64, MACOS_ARM64):
+        for triple in (LINUX_ARM64, MACOS, MACOS_ARM64):
             with self.subTest(triple=triple):
                 archive = self.build(triple, triple)
                 self.assertEqual(archive.name, f"example-1.2.3-{triple}.tar.gz")
@@ -278,7 +281,8 @@ class VerifyTests(Fixture):
         return info
 
     def test_a_packaged_archive_verifies_and_extracts_exactly_its_members(self) -> None:
-        for triple, executable in ((LINUX, "example"), (WINDOWS, "example.exe")):
+        for triple, executable in ((LINUX, "example"), (WINDOWS, "example.exe"),
+                                   (WINDOWS_ARM64, "example.exe")):
             with self.subTest(triple=triple):
                 archive = self.build(triple, triple)
                 out = self.base / f"out-{triple}"
@@ -683,6 +687,15 @@ class CheckTests(Fixture):
             binary_release.macho_linkage(macho_header(8, *MACOS_SYSTEM), MACOS_ARM64)
         with self.assertRaisesRegex(ValueError, "not an arm64 Mach-O executable"):
             binary_release.macho_linkage(macho_header(2, cputype=X86_64), MACOS_ARM64)
+        # The Intel target is the same check with the x86_64 CPU type.
+        self.assertEqual(binary_release.macho_linkage(
+            macho_header(2, *MACOS_SYSTEM, cputype=X86_64), MACOS), MACOS_SYSTEM)
+        with self.assertRaisesRegex(ValueError, "not an x86_64 Mach-O executable"):
+            binary_release.macho_linkage(macho_header(2, *MACOS_SYSTEM), MACOS)
+        with self.assertRaisesRegex(ValueError, "loads libraries macOS does not ship"):
+            binary_release.macho_linkage(
+                macho_header(2, "/usr/lib/libSystem.B.dylib", "@rpath/libevil.dylib",
+                             cputype=X86_64), MACOS)
         with self.assertRaisesRegex(ValueError, "read from its load commands"):
             binary_release.linkage(MACHO, MACOS_ARM64)
         with self.assertRaisesRegex(ValueError, "only a macOS executable"):
@@ -782,6 +795,16 @@ class CheckTests(Fixture):
         for path in ("..\\..\\Temp\\helper.dll", "C:\\Temp\\helper.dll", "sub/helper.dll"):
             with self.subTest(path=path), self.assertRaisesRegex(ValueError, "by path"):
                 binary_release.linkage(listing.replace("ntdll.dll", path), WINDOWS)
+        # The arm64 build is held to the same set, and each target to its own machine.
+        arm64 = listing.replace(COFF, COFF_ARM64)
+        self.assertEqual(binary_release.linkage(arm64, WINDOWS_ARM64),
+                         ("KERNEL32.dll", "api-ms-win-core-synch-l1-2-0.dll", "ntdll.dll"))
+        with self.assertRaisesRegex(ValueError, "C runtime DLLs"):
+            binary_release.linkage(arm64.replace("ntdll", "VCRUNTIME140"), WINDOWS_ARM64)
+        with self.assertRaisesRegex(ValueError, "not an aarch64 COFF-ARM64 executable"):
+            binary_release.linkage(listing, WINDOWS_ARM64)
+        with self.assertRaisesRegex(ValueError, "not an x86_64 COFF-x86-64 executable"):
+            binary_release.linkage(arm64, WINDOWS)
         # A real Windows DLL outside the pinned set is refused as well.
         for name in ("example-helper", "d3d11"):
             with self.subTest(name=name), self.assertRaisesRegex(
@@ -884,7 +907,8 @@ class CommandTests(Fixture):
 
 class HandoffTests(Fixture):
     ARCHIVES = ("source-zip", "source-tar", "linux-archive", "linux-arm64-archive",
-                "macos-arm64-archive", "windows-archive")
+                "macos-archive", "macos-arm64-archive", "windows-archive",
+                "windows-arm64-archive")
     run_main = CommandTests.run_main
 
     def setUp(self) -> None:

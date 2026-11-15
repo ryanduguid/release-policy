@@ -65,7 +65,8 @@ while IFS=$'\t' read -r -u 3 repository tag commit policy; do
   while read -r _ name || [[ -n "$name" ]]; do
     case "$name" in
       *-x86_64-unknown-linux-musl.tar.gz | *-aarch64-unknown-linux-musl.tar.gz \
-        | *-aarch64-apple-darwin.tar.gz | *-x86_64-pc-windows-msvc.zip) archives+=("$name") ;;
+        | *-x86_64-apple-darwin.tar.gz | *-aarch64-apple-darwin.tar.gz \
+        | *-x86_64-pc-windows-msvc.zip | *-aarch64-pc-windows-msvc.zip) archives+=("$name") ;;
     esac
   done < SHA256SUMS
   if [[ "${#archives[@]}" -eq 0 ]]; then
