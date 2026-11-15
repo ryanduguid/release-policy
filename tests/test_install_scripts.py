@@ -27,7 +27,9 @@ REPO, TAG, VERSION, STEM = "owner/example-tool", "v1.2.3", "1.2.3", "example-too
 SIGNER = "ryanduguid/release-policy/.github/workflows/release-binary.yml"
 LINUX = "x86_64-unknown-linux-musl"
 WINDOWS = "x86_64-pc-windows-msvc"
-TARGETS = (LINUX, "aarch64-unknown-linux-musl", "aarch64-apple-darwin", WINDOWS)
+WINDOWS_ARM64 = "aarch64-pc-windows-msvc"
+TARGETS = (LINUX, "aarch64-unknown-linux-musl", "x86_64-apple-darwin", "aarch64-apple-darwin",
+           WINDOWS, WINDOWS_ARM64)
 DOCUMENTS = {"LICENSE": b"licence\n", "ca.pem": b"fabricated bundle\n"}
 
 # Logs each call, then refuses the subject named in FAKE_GH_REFUSE.
@@ -80,6 +82,30 @@ if ($env:FAKE_GH -eq 'silent') {
     function global:gh { }
     $global:LASTEXITCODE = 0
 }
+# The user's Path value lives in the file FAKE_USER_PATH, never the registry.
+# Each read and write of it is logged to FAKE_REGISTRY_LOG; FAKE_PATH_DENIED
+# refuses the write. Every other Get-Item, such as Expand-Archive's, is real.
+if ($env:FAKE_USER_PATH) {
+    function global:Get-Item {
+        [CmdletBinding()] param([string]$Path, [string]$LiteralPath)
+        if ($LiteralPath -ne 'HKCU:\\Environment') {
+            return Microsoft.PowerShell.Management\\Get-Item @PSBoundParameters
+        }
+        $key = [pscustomobject]@{}
+        $key | Add-Member -MemberType ScriptMethod -Name GetValue -Value {
+            param($Name, $Default, $Options)
+            Add-Content -LiteralPath $env:FAKE_REGISTRY_LOG -Value "read $Name $Options"
+            [IO.File]::ReadAllText($env:FAKE_USER_PATH)
+        }
+        $key
+    }
+    function global:Set-ItemProperty([string]$LiteralPath, [string]$Name, [string]$Type,
+                                     [string]$Value) {
+        if ($env:FAKE_PATH_DENIED) { throw 'Requested registry access is not allowed.' }
+        Add-Content -LiteralPath $env:FAKE_REGISTRY_LOG -Value "write $LiteralPath $Name $Type"
+        [IO.File]::WriteAllText($env:FAKE_USER_PATH, $Value)
+    }
+}
 """
 
 
@@ -96,7 +122,7 @@ class InstallerCases:
         self.release = self.root / "release"
         self.release.mkdir()
         for target in TARGETS:
-            executable = STEM + (".exe" if target == WINDOWS else "")
+            executable = STEM + (".exe" if target.endswith("-windows-msvc") else "")
             self.archive(target, {executable: target.encode(), **DOCUMENTS})
         self.write_sums()
         (self.release / f"{STEM}-{VERSION}.intoto.jsonl").write_text("{}\n", encoding="utf-8")
@@ -113,7 +139,7 @@ class InstallerCases:
 
     def archive(self, target: str, members: dict[str, bytes], link: str = "") -> None:
         path = self.release / f"{STEM}-{VERSION}-{target}"
-        if target == WINDOWS:
+        if target.endswith("-windows-msvc"):
             with zipfile.ZipFile(f"{path}.zip", "w") as opened:
                 for member, data in members.items():
                     opened.writestr(member, data)
@@ -136,7 +162,8 @@ class InstallerCases:
 
     @property
     def asset(self) -> str:
-        return f"{STEM}-{VERSION}-{self.TARGET}" + (".zip" if self.TARGET == WINDOWS else ".tar.gz")
+        suffix = ".zip" if self.TARGET.endswith("-windows-msvc") else ".tar.gz"
+        return f"{STEM}-{VERSION}-{self.TARGET}{suffix}"
 
     def install(self, *arguments: str, **env: str) -> subprocess.CompletedProcess[str]:
         raise NotImplementedError
@@ -278,6 +305,9 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
         super().setUp()
         self.env.update({"PATH": str(self.tools()), "FAKE_OS": "Linux", "FAKE_ARCH": "x86_64",
                          "HOME": str(self.root / "home")})
+        # The caller's own startup and data directories are never written.
+        for name in ("ZDOTDIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME"):
+            self.env.pop(name, None)
 
     def tools(self, *omit: str) -> Path:
         """A directory of the fakes and the real tools install.sh may use, less those omitted."""
@@ -302,6 +332,7 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
         for os_name, arch, target in (("Linux", "amd64", LINUX),
                                       ("Linux", "aarch64", "aarch64-unknown-linux-musl"),
                                       ("Linux", "arm64", "aarch64-unknown-linux-musl"),
+                                      ("Darwin", "x86_64", "x86_64-apple-darwin"),
                                       ("Darwin", "arm64", "aarch64-apple-darwin")):
             with self.subTest(os=os_name, arch=arch):
                 self.TARGET = target
@@ -318,7 +349,7 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
         self.assertIn(f"Add {self.destination} to PATH", result.stdout)
 
     def test_refuses_a_platform_without_a_build(self) -> None:
-        for os_name, arch in (("Darwin", "x86_64"), ("Linux", "riscv64"), ("FreeBSD", "amd64"),
+        for os_name, arch in (("Darwin", "i386"), ("Linux", "riscv64"), ("FreeBSD", "amd64"),
                               ("MINGW64_NT-10.0", "x86_64")):
             with self.subTest(os=os_name, arch=arch):
                 result = self.install(REPO, TAG, str(self.destination),
@@ -352,6 +383,166 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
         self.assert_refused(self.install(REPO, TAG, str(self.destination)),
                             "does not match SHA256SUMS")
 
+    def modify_path(self, shell: str = "/bin/sh", *arguments: str,
+                    **env: str) -> subprocess.CompletedProcess[str]:
+        # Last, as the guide shows it; the read-only case puts it first.
+        return self.install(REPO, TAG, *arguments, "--modify-path", SHELL=shell, **env)
+
+    def test_changes_no_startup_file_by_default(self) -> None:
+        home = self.root / "home"
+        home.mkdir()
+        (home / ".profile").write_text("umask 022\n", encoding="utf-8")
+        result = self.install(REPO, TAG, str(self.destination), SHELL="/bin/sh")
+        self.assert_installed(result)
+        self.assertIn(f"Add {self.destination} to PATH to run it.", result.stdout)
+        self.assertEqual({".profile": "umask 022\n"},
+                         {p.name: p.read_text(encoding="utf-8") for p in home.iterdir()})
+
+    def test_modify_path_appends_one_line_to_the_login_shells_file_once(self) -> None:
+        home = self.root / "home"
+        line = (f"case \":${{PATH}}:\" in *:'{self.destination}':*) ;; *) "
+                f"PATH=\"${{PATH:+$PATH:}}\"'{self.destination}'; export PATH ;; esac "
+                "# added by release-policy install.sh")
+        fish = (f"contains -- '{self.destination}' $PATH; or set -gx PATH $PATH "
+                f"'{self.destination}' # added by release-policy install.sh")
+        for shell, os_name, profile, expected in (
+            ("/bin/sh", "Linux", ".profile", line),
+            ("/usr/bin/dash", "Linux", ".profile", line),
+            ("/bin/bash", "Linux", ".bashrc", line),
+            ("/bin/bash", "Darwin", ".bash_profile", line),
+            ("/bin/zsh", "Darwin", ".zshrc", line),
+            ("/usr/bin/fish", "Linux", ".config/fish/config.fish", fish),
+        ):
+            with self.subTest(shell=shell, os=os_name):
+                shutil.rmtree(home, ignore_errors=True)
+                (home / ".config" / "fish").mkdir(parents=True)
+                path = home / profile
+                path.write_text("# mine\n", encoding="utf-8")
+                for run in range(2):
+                    self.log.unlink(missing_ok=True)
+                    shutil.rmtree(self.destination, ignore_errors=True)
+                    result = self.modify_path(shell, str(self.destination), FAKE_OS=os_name,
+                                              FAKE_ARCH="arm64")
+                    self.assertEqual(0, result.returncode, result.stderr)
+                    self.assertEqual(f"# mine\n{expected}\n", path.read_text(encoding="utf-8"))
+                    if run == 0:
+                        self.assertIn(f"Added this line to {path}:\n{expected}\n", result.stdout)
+                        self.assertIn(f"To undo, delete that line from {path}.", result.stdout)
+                    else:
+                        self.assertIn(f"{path} already adds {self.destination} to PATH; "
+                                      "it is unchanged.", result.stdout)
+                    self.assertNotIn("Add ", result.stdout)
+                # Only the one file changed.
+                self.assertEqual([path], [p for p in home.rglob("*") if p.is_file()])
+
+    def test_the_added_line_puts_the_directory_on_path_once(self) -> None:
+        home = self.root / "home"
+        # Read twice, as a nested shell would: the directory is added only once.
+        self.destination = self.root / "with space+@,-" / STEM
+        posix = 'PATH=$1; . "$2"; . "$2"; printf %s "$PATH"'
+        for shell, options, profile, command in (
+            ("sh", (), ".profile", posix),
+            ("dash", (), ".profile", posix),
+            ("bash", (), ".bashrc", posix),
+            ("zsh", ("-f",), ".zshrc", posix),
+            ("fish", ("--no-config",), ".config/fish/config.fish",
+             "set -gx PATH (string split --no-empty : -- $argv[1]); source $argv[2]; "
+             "source $argv[2]; string join : -- $PATH"),
+        ):
+            with self.subTest(shell=shell):
+                found = shutil.which(shell)
+                if not found:
+                    self.skipTest(f"{shell} is not installed")
+                shutil.rmtree(home, ignore_errors=True)
+                (home / ".config" / "fish").mkdir(parents=True)
+                result = self.modify_path(f"/bin/{shell}", str(self.destination))
+                self.assertEqual(0, result.returncode, result.stderr)
+                for start, expected in (("/usr/bin", f"/usr/bin:{self.destination}"),
+                                        ("", str(self.destination))):
+                    # fish takes the arguments after the command as $argv;
+                    # the others take the first as $0.
+                    arguments = (start, str(home / profile))
+                    if shell != "fish":
+                        arguments = (shell, *arguments)
+                    read = subprocess.run(  # nosec B603  # nosemgrep
+                        [found, *options, "-c", command, *arguments], env={"HOME": str(home)},
+                        check=False, capture_output=True, text=True)
+                    self.assertEqual(expected, read.stdout.rstrip("\n"), read.stderr)
+
+    def test_modify_path_honours_zdotdir_and_xdg_config_home(self) -> None:
+        home = self.root / "home"
+        for shell, variable, profile in (("/bin/zsh", "ZDOTDIR", ".zshrc"),
+                                         ("/usr/bin/fish", "XDG_CONFIG_HOME", "fish/config.fish")):
+            with self.subTest(shell=shell):
+                shutil.rmtree(home, ignore_errors=True)
+                home.mkdir()
+                elsewhere = self.root / variable
+                (elsewhere / "fish").mkdir(parents=True, exist_ok=True)
+                result = self.modify_path(shell, str(self.destination),
+                                          **{variable: str(elsewhere)})
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertIn(f"Added this line to {elsewhere / profile}:", result.stdout)
+                self.assertEqual([], list(home.iterdir()))
+
+    def test_modify_path_ends_a_last_line_that_lacks_a_newline(self) -> None:
+        home = self.root / "home"
+        home.mkdir()
+        (home / ".profile").write_text("umask 022", encoding="utf-8")
+        result = self.modify_path("/bin/sh", str(self.destination))
+        self.assertEqual(0, result.returncode, result.stderr)
+        lines = (home / ".profile").read_text(encoding="utf-8").split("\n")
+        self.assertEqual(["umask 022", ""], [lines[0], lines[2]])
+        self.assertTrue(lines[1].endswith("# added by release-policy install.sh"), lines)
+
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0,
+                     "root may write a read-only file")
+    def test_modify_path_refuses_a_read_only_file_before_installing(self) -> None:
+        home = self.root / "home"
+        home.mkdir()
+        profile = home / ".profile"
+        profile.write_text("umask 022\n", encoding="utf-8")
+        profile.chmod(0o444)
+        result = self.install("--modify-path", REPO, TAG, str(self.destination), SHELL="/bin/sh")
+        self.assert_refused(result, f"--modify-path cannot write to {profile}; nothing was installed")
+        self.assertFalse(self.log.exists(), "a refused install reached the network")
+        self.assertEqual("umask 022\n", profile.read_text(encoding="utf-8"))
+
+    def test_modify_path_refuses_a_startup_file_that_is_a_symbolic_link(self) -> None:
+        home = self.root / "home"
+        elsewhere = self.root / "dotfiles"
+        elsewhere.mkdir()
+        (elsewhere / "profile").write_text("umask 022\n", encoding="utf-8")
+        # A link to a writable file, and one to a file that does not exist yet.
+        for target in ("profile", "missing"):
+            with self.subTest(target=target):
+                shutil.rmtree(home, ignore_errors=True)
+                home.mkdir()
+                (home / ".profile").symlink_to(elsewhere / target)
+                result = self.modify_path("/bin/sh", str(self.destination))
+                self.assert_refused(result, f"--modify-path will not write through the symbolic "
+                                            f"link {home / '.profile'}; nothing was installed")
+                self.assertFalse(self.log.exists(), "a refused install reached the network")
+                self.assertEqual({"profile": "umask 022\n"},
+                                 {p.name: p.read_text(encoding="utf-8")
+                                  for p in elsewhere.iterdir()})
+
+    def test_modify_path_refuses_a_directory_it_cannot_quote(self) -> None:
+        home = self.root / "home"
+        home.mkdir()
+        for directory, reason in ((str(self.root / "it's"), "cannot add"),
+                                  (str(self.root / "a$b"), "cannot add"),
+                                  ("relative/dir", "needs an absolute directory")):
+            with self.subTest(directory=directory):
+                self.destination = Path(directory)
+                result = self.modify_path("/bin/sh", directory)
+                self.assert_refused(result, reason)
+                self.assertEqual([], list(home.iterdir()))
+
+    def test_refuses_an_unknown_option(self) -> None:
+        result = self.install("--modify_path", REPO, TAG, str(self.destination))
+        self.assert_refused(result, "unknown option --modify_path")
+        self.assertFalse(self.log.exists())
+
     def test_refuses_without_each_required_tool(self) -> None:
         for tools, reason in ((("gh",), "the GitHub CLI (gh) is required"),
                               (("curl",), "curl is required"),
@@ -363,7 +554,8 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 required")
 class PowerShellInstallerTests(InstallerCases, unittest.TestCase):
-    """install.ps1 as Windows x86_64 sees it, with PATH empty so only the fakes run."""
+    """install.ps1 as Windows sees it, x86_64 unless a test says otherwise, with PATH empty
+    so only the fakes run."""
 
     TARGET = WINDOWS
     EXECUTABLE = f"{STEM}.exe"
@@ -379,7 +571,8 @@ class PowerShellInstallerTests(InstallerCases, unittest.TestCase):
                          "LOCALAPPDATA": str(self.root / "local")})
 
     def install(self, *arguments: str, **env: str) -> subprocess.CompletedProcess[str]:
-        quoted = " ".join("'" + argument.replace("'", "''") + "'" for argument in arguments)
+        quoted = " ".join(argument if argument == "-ModifyPath" else
+                          "'" + argument.replace("'", "''") + "'" for argument in arguments)
         script = str(ROOT / "scripts" / "install.ps1").replace("'", "''")
         return subprocess.run(  # nosec B603  # nosemgrep
             [str(shutil.which("pwsh")), "-NoProfile", "-NonInteractive", "-Command",
@@ -395,14 +588,106 @@ class PowerShellInstallerTests(InstallerCases, unittest.TestCase):
         self.assert_installed(result)
         self.assertIn("to PATH", result.stdout)
 
+    def test_installs_the_arm64_archive_on_windows_on_arm(self) -> None:
+        self.TARGET = WINDOWS_ARM64
+        for env in ({"PROCESSOR_ARCHITECTURE": "ARM64"},
+                    {"PROCESSOR_ARCHITECTURE": "x86", "PROCESSOR_ARCHITEW6432": "ARM64"}):
+            with self.subTest(env=env):
+                shutil.rmtree(self.destination, ignore_errors=True)
+                self.log.unlink(missing_ok=True)
+                self.assert_installed(self.install(REPO, TAG, str(self.destination), **env))
+
     def test_refuses_a_platform_without_a_build(self) -> None:
-        for env, reason in (({"PROCESSOR_ARCHITECTURE": "ARM64"}, "no build for Windows ARM64"),
-                            ({"PROCESSOR_ARCHITECTURE": "x86", "PROCESSOR_ARCHITEW6432": "ARM64"},
-                             "no build for Windows ARM64"),
+        for env, reason in (({"PROCESSOR_ARCHITECTURE": "x86"}, "no build for Windows x86"),
+                            ({"PROCESSOR_ARCHITECTURE": "x86", "PROCESSOR_ARCHITEW6432": "IA64"},
+                             "no build for Windows IA64"),
                             ({"OS": "Linux"}, "use install.sh on Linux and macOS")):
             with self.subTest(env=env):
                 self.assert_refused(self.install(REPO, TAG, str(self.destination), **env), reason)
                 self.assertFalse(self.log.exists())
+
+    def user_path(self, value: str) -> dict[str, str]:
+        """Environment that keeps the user's Path in a file holding `value`."""
+        stored = self.root / "user-path"
+        stored.write_text(value, encoding="utf-8")
+        return {"FAKE_USER_PATH": str(stored), "FAKE_REGISTRY_LOG": str(self.root / "registry")}
+
+    def stored_path(self) -> str:
+        return (self.root / "user-path").read_text(encoding="utf-8")
+
+    def test_changes_no_path_by_default(self) -> None:
+        env = self.user_path("C:\\Windows")
+        result = self.install(REPO, TAG, str(self.destination), **env)
+        self.assert_installed(result)
+        self.assertIn(f"Add {self.destination} to PATH to run it.", result.stdout)
+        self.assertEqual("C:\\Windows", self.stored_path())
+        self.assertFalse((self.root / "registry").exists())
+
+    def test_modify_path_adds_the_directory_to_the_user_path_once(self) -> None:
+        start = "%USERPROFILE%\\bin;C:\\Tools"
+        env = self.user_path(start)
+        for run in range(2):
+            self.log.unlink(missing_ok=True)
+            result = self.install(REPO, TAG, str(self.destination), "-ModifyPath", **env)
+            self.assert_installed(result)
+            # Entries stay as written, %USERPROFILE% unexpanded, and the
+            # value keeps its expandable type.
+            self.assertEqual(f"{start};{self.destination}", self.stored_path())
+            if run == 0:
+                self.assertIn(f"Added {self.destination} to the end of your user Path "
+                              "(HKCU:\\Environment, value Path).", result.stdout)
+                self.assertIn(f"To undo, remove {self.destination} from Path", result.stdout)
+            else:
+                self.assertIn(f"Your user Path already holds {self.destination}; it is unchanged.",
+                              result.stdout)
+            self.assertNotIn("to PATH to run it", result.stdout)
+        self.assertEqual(["read Path DoNotExpandEnvironmentNames",
+                          "write HKCU:\\Environment Path ExpandString",
+                          "read Path DoNotExpandEnvironmentNames"],
+                         (self.root / "registry").read_text(encoding="utf-8").splitlines())
+
+    def test_modify_path_appends_to_the_value_as_written(self) -> None:
+        # Empty entries and a trailing separator stay; only the new entry is added.
+        for start, expected in (("C:\\A;;C:\\B;", f"C:\\A;;C:\\B;{self.destination}"),
+                                ("", str(self.destination))):
+            with self.subTest(start=start):
+                env = self.user_path(start)
+                self.log.unlink(missing_ok=True)
+                self.assert_installed(self.install(REPO, TAG, str(self.destination),
+                                                   "-ModifyPath", **env))
+                self.assertEqual(expected, self.stored_path())
+
+    def test_modify_path_adds_the_default_directory(self) -> None:
+        self.destination = self.root / "local" / "Programs" / STEM
+        env = self.user_path("C:\\Tools")
+        self.assert_installed(self.install(REPO, TAG, "-ModifyPath", **env))
+        self.assertEqual(f"C:\\Tools;{self.destination}", self.stored_path())
+
+    def test_modify_path_knows_the_directory_through_a_variable(self) -> None:
+        env = self.user_path("%RP_TOOLS%\\")
+        result = self.install(REPO, TAG, str(self.destination), "-ModifyPath",
+                              RP_TOOLS=str(self.destination), **env)
+        self.assert_installed(result)
+        self.assertIn("already holds", result.stdout)
+        self.assertEqual("%RP_TOOLS%\\", self.stored_path())
+
+    def test_modify_path_reports_a_refused_change_and_leaves_the_path(self) -> None:
+        env = self.user_path("C:\\Windows")
+        result = self.install(REPO, TAG, str(self.destination), "-ModifyPath",
+                              FAKE_PATH_DENIED="1", **env)
+        self.assertNotEqual(0, result.returncode, result.stdout)
+        self.assertIn(f"installed into {self.destination}, but could not change your user Path, "
+                      "which is unchanged: Requested registry access is not allowed.",
+                      result.stderr)
+        self.assertEqual("C:\\Windows", self.stored_path())
+
+    def test_modify_path_refuses_a_directory_holding_a_separator(self) -> None:
+        env = self.user_path("C:\\Windows")
+        self.destination = self.root / "a;b"
+        result = self.install(REPO, TAG, str(self.destination), "-ModifyPath", **env)
+        self.assert_refused(result, "-ModifyPath cannot add a directory holding ';' to Path")
+        self.assertFalse(self.log.exists())
+        self.assertEqual("C:\\Windows", self.stored_path())
 
     def test_refuses_when_gh_leaves_no_exit_code(self) -> None:
         result = self.install(REPO, TAG, str(self.destination), FAKE_GH="silent")
