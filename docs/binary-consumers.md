@@ -258,13 +258,14 @@ After a successful install:
   for bash on Linux and `~/.bash_profile` on macOS,
   `~/.config/fish/config.fish` for fish (in `$XDG_CONFIG_HOME/fish` when
   set) and `~/.profile` for any other shell.
-  It checks before downloading anything that it can write that file, and the
-  directory must be absolute and hold only letters, digits, spaces and
+  It checks before downloading anything that it can write that file and
+  that the file is not a symbolic link, and the directory must be absolute
+  and hold only letters, digits, spaces and
   `_ . / + @ , -`, else nothing is installed. A file that already holds the
   line is left as it is.
 - `install.ps1` adds the directory to the end of your user `Path`
-  (`HKCU:\Environment`) unless an entry already names it, keeping the other
-  entries as written and the value's expandable type, then tells running
+  (`HKCU:\Environment`) unless an entry already names it, keeping the rest
+  of the value as written and its expandable type, then tells running
   programs that the environment changed. It never reads or writes the
   machine `Path`.
 

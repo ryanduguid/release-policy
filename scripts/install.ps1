@@ -135,21 +135,22 @@ function Install-Archive([string]$Archive, [string]$Destination) {
 }
 
 # Adds Folder to the end of the user's Path in HKCU:\Environment unless an
-# entry already names it, keeping the value's REG_EXPAND_SZ type and its
-# entries as written, %VARIABLES% included, then tells running programs.
+# entry already names it. The value as written, %VARIABLES% and empty entries
+# included, gains only the new entry, keeps its REG_EXPAND_SZ type, and running
+# programs are told.
 function Add-UserPath([string]$Folder) {
     $current = [string](Get-Item -LiteralPath 'HKCU:\Environment').GetValue(
         'Path', '', 'DoNotExpandEnvironmentNames')
-    $entries = @($current -split ';' | Where-Object { $_ })
-    $same = @($entries | Where-Object {
-        [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') -eq $Folder.TrimEnd('\') })
+    $same = @($current -split ';' | Where-Object {
+        $_ -and [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') -eq $Folder.TrimEnd('\') })
     if ($same.Count -gt 0) {
         Write-Output "Your user Path already holds $Folder; it is unchanged."
         return
     }
+    $separator = if ($current -and -not $current.EndsWith(';')) { ';' } else { '' }
     try {
         Set-ItemProperty -LiteralPath 'HKCU:\Environment' -Name Path -Type ExpandString `
-            -Value (($entries + $Folder) -join ';')
+            -Value "$current$separator$Folder"
     } catch {
         Deny-Install "installed into $Folder, but could not change your user Path, which is unchanged: $($_.Exception.Message)"
     }

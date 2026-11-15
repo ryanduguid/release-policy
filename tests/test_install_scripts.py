@@ -507,6 +507,25 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
         self.assertFalse(self.log.exists(), "a refused install reached the network")
         self.assertEqual("umask 022\n", profile.read_text(encoding="utf-8"))
 
+    def test_modify_path_refuses_a_startup_file_that_is_a_symbolic_link(self) -> None:
+        home = self.root / "home"
+        elsewhere = self.root / "dotfiles"
+        elsewhere.mkdir()
+        (elsewhere / "profile").write_text("umask 022\n", encoding="utf-8")
+        # A link to a writable file, and one to a file that does not exist yet.
+        for target in ("profile", "missing"):
+            with self.subTest(target=target):
+                shutil.rmtree(home, ignore_errors=True)
+                home.mkdir()
+                (home / ".profile").symlink_to(elsewhere / target)
+                result = self.modify_path("/bin/sh", str(self.destination))
+                self.assert_refused(result, f"--modify-path will not write through the symbolic "
+                                            f"link {home / '.profile'}; nothing was installed")
+                self.assertFalse(self.log.exists(), "a refused install reached the network")
+                self.assertEqual({"profile": "umask 022\n"},
+                                 {p.name: p.read_text(encoding="utf-8")
+                                  for p in elsewhere.iterdir()})
+
     def test_modify_path_refuses_a_directory_it_cannot_quote(self) -> None:
         home = self.root / "home"
         home.mkdir()
@@ -626,6 +645,23 @@ class PowerShellInstallerTests(InstallerCases, unittest.TestCase):
                           "write HKCU:\\Environment Path ExpandString",
                           "read Path DoNotExpandEnvironmentNames"],
                          (self.root / "registry").read_text(encoding="utf-8").splitlines())
+
+    def test_modify_path_appends_to_the_value_as_written(self) -> None:
+        # Empty entries and a trailing separator stay; only the new entry is added.
+        for start, expected in (("C:\\A;;C:\\B;", f"C:\\A;;C:\\B;{self.destination}"),
+                                ("", str(self.destination))):
+            with self.subTest(start=start):
+                env = self.user_path(start)
+                self.log.unlink(missing_ok=True)
+                self.assert_installed(self.install(REPO, TAG, str(self.destination),
+                                                   "-ModifyPath", **env))
+                self.assertEqual(expected, self.stored_path())
+
+    def test_modify_path_adds_the_default_directory(self) -> None:
+        self.destination = self.root / "local" / "Programs" / STEM
+        env = self.user_path("C:\\Tools")
+        self.assert_installed(self.install(REPO, TAG, "-ModifyPath", **env))
+        self.assertEqual(f"C:\\Tools;{self.destination}", self.stored_path())
 
     def test_modify_path_knows_the_directory_through_a_variable(self) -> None:
         env = self.user_path("%RP_TOOLS%\\")

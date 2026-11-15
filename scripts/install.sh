@@ -49,6 +49,9 @@ pick_profile() {
     fish) profile=${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish ;;
     *) profile=$HOME/.profile ;;
   esac
+  # Appending through a link would change a file the user was not told of.
+  [ ! -L "$profile" ] \
+    || refuse "--modify-path will not write through the symbolic link $profile; nothing was installed"
   if [ -e "$profile" ]; then
     [ -f "$profile" ] && [ -w "$profile" ] \
       || refuse "--modify-path cannot write to $profile; nothing was installed"
