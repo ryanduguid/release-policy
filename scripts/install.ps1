@@ -32,6 +32,10 @@ function Test-Argument {
     if ($ModifyPath -and $Directory.Contains(';')) {
         Deny-Install "-ModifyPath cannot add a directory holding ';' to Path: $Directory"
     }
+    # Path is REG_EXPAND_SZ, which has no escape for '%'.
+    if ($ModifyPath -and $Directory.Contains('%')) {
+        Deny-Install "-ModifyPath cannot add a directory holding '%' to Path, which would read it as a variable: $Directory"
+    }
     if ($Repository -cnotmatch '\A[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\z') {
         Deny-Install "OWNER/REPO must be one owner and one repository: $Repository"
     }
