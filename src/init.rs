@@ -186,34 +186,13 @@ fn names_caller(root: &Path, relative: &str) -> Result<bool> {
 }
 
 /// Windows compares the canonical path, which is the on-disk name, then the
-/// file IDs, which also find a hard link. Where both names exist but either
-/// cannot be identified, init refuses, as it could not rule out the caller.
+/// file IDs, which also find a hard link.
 #[cfg(windows)]
 fn names_caller(root: &Path, relative: &str) -> Result<bool> {
-    if same_file(root, relative, std::fs::canonicalize::<std::path::PathBuf>) {
-        return Ok(true);
-    }
-    let caller = open_for_id(&root.join(CALLER));
-    let path = open_for_id(&root.join(relative));
-    let missing = |file: &std::io::Result<std::fs::File>| {
-        file.as_ref()
-            .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
-    };
-    if missing(&caller) || missing(&path) {
-        return Ok(false);
-    }
-    let unknown = |e: std::io::Error| {
-        format!(
-            "cannot tell whether {} is the release workflow init writes: {e}",
-            py::repr_str(relative)
-        )
-    };
-    same_id(
-        [&caller.map_err(unknown)?, &path.map_err(unknown)?],
-        file_id,
-        file_index,
+    Ok(
+        same_file(root, relative, std::fs::canonicalize::<std::path::PathBuf>)
+            || same_id(root, relative, file_id, file_index)?,
     )
-    .map_err(unknown)
 }
 
 fn same_file<T: PartialEq>(
@@ -237,20 +216,39 @@ fn open_for_id(path: &Path) -> std::io::Result<std::fs::File> {
         .open(path)
 }
 
-/// Whether 2 open files are one, by volume and file ID: the 128-bit ID where
-/// both give it, as ReFS can repeat the 64-bit index, else the 64-bit index,
-/// for a file system without the 128-bit ID. Both use the same kind, so a
-/// failure on one file alone cannot make the pair look different.
+/// Whether `relative` and the caller both exist and are one file, by volume
+/// and file ID: the 128-bit ID where both give it, as ReFS can repeat the
+/// 64-bit index, else the 64-bit index, for a file system without the 128-bit
+/// ID. Both use the same kind, so a failure on one name alone cannot make the
+/// pair look different. Where both names exist but either cannot be opened or
+/// identified, init refuses, as it could not rule out the caller.
 #[cfg(windows)]
 fn same_id<W: PartialEq, N: PartialEq>(
-    [one, other]: [&std::fs::File; 2],
+    root: &Path,
+    relative: &str,
     wide: impl Fn(&std::fs::File) -> std::io::Result<W>,
     narrow: impl Fn(&std::fs::File) -> std::io::Result<N>,
-) -> std::io::Result<bool> {
-    if let (Ok(one), Ok(other)) = (wide(one), wide(other)) {
+) -> Result<bool> {
+    let caller = open_for_id(&root.join(CALLER));
+    let path = open_for_id(&root.join(relative));
+    let missing = |file: &std::io::Result<std::fs::File>| {
+        file.as_ref()
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+    };
+    if missing(&caller) || missing(&path) {
+        return Ok(false);
+    }
+    let unknown = |e: std::io::Error| {
+        format!(
+            "cannot tell whether {} is the release workflow init writes: {e}",
+            py::repr_str(relative)
+        )
+    };
+    let [one, other] = [caller.map_err(unknown)?, path.map_err(unknown)?];
+    if let (Ok(one), Ok(other)) = (wide(&one), wide(&other)) {
         return Ok(one == other);
     }
-    Ok(narrow(one)? == narrow(other)?)
+    Ok(narrow(&one).map_err(unknown)? == narrow(&other).map_err(unknown)?)
 }
 
 /// The volume and 128-bit file ID.
@@ -452,17 +450,18 @@ mod tests {
     use super::*;
     use std::fs::File;
 
-    /// A caller, a hard link to it and a copy of it, each opened as init
-    /// opens a name to identify it.
-    fn files() -> (tempfile::TempDir, [File; 3]) {
+    const LINKED: &str = ".github/workflows/linked.yml";
+    const COPY: &str = ".github/workflows/copy.yml";
+
+    /// A root holding the caller, a hard link to it and a copy of it.
+    fn root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let path = |name: &str| dir.path().join(name);
-        std::fs::write(path("release.yml"), "name: Mine\n").unwrap();
-        std::fs::hard_link(path("release.yml"), path("linked.yml")).unwrap();
-        std::fs::write(path("copy.yml"), "name: Mine\n").unwrap();
-        let open = |name: &str| open_for_id(&path(name)).unwrap();
-        let files = [open("release.yml"), open("linked.yml"), open("copy.yml")];
-        (dir, files)
+        std::fs::create_dir_all(path(".github/workflows")).unwrap();
+        std::fs::write(path(CALLER), "name: Mine\n").unwrap();
+        std::fs::hard_link(path(CALLER), path(LINKED)).unwrap();
+        std::fs::write(path(COPY), "name: Mine\n").unwrap();
+        dir
     }
 
     /// What a volume without the 128-bit file ID returns for it.
@@ -472,16 +471,22 @@ mod tests {
 
     #[test]
     fn a_hard_link_is_found_by_the_64_bit_index_where_the_128_bit_id_fails() {
-        let (_dir, [caller, linked, copy]) = files();
-        assert!(same_id([&caller, &linked], unsupported, file_index).unwrap());
-        assert!(!same_id([&caller, &copy], unsupported, file_index).unwrap());
+        let dir = root();
+        assert_eq!(
+            same_id(dir.path(), LINKED, unsupported, file_index),
+            Ok(true)
+        );
+        assert_eq!(
+            same_id(dir.path(), COPY, unsupported, file_index),
+            Ok(false)
+        );
     }
 
     /// A 128-bit ID for one name and a 64-bit index for the other would
     /// never be equal, so a failure on either name moves both to the index.
     #[test]
     fn a_128_bit_id_failing_on_one_name_alone_moves_both_to_the_index() {
-        let (_dir, [caller, linked, _]) = files();
+        let dir = root();
         let calls = std::cell::Cell::new(0);
         let first_only = |file: &File| {
             calls.set(calls.get() + 1);
@@ -491,20 +496,37 @@ mod tests {
                 Err(std::io::ErrorKind::Unsupported.into())
             }
         };
-        assert!(same_id([&caller, &linked], first_only, file_index).unwrap());
+        assert_eq!(
+            same_id(dir.path(), LINKED, first_only, file_index),
+            Ok(true)
+        );
     }
 
     /// With neither ID, init cannot rule out the caller, so it refuses.
     #[test]
-    fn a_name_without_either_id_is_an_error_not_another_file() {
-        let (_dir, [caller, _, copy]) = files();
-        assert!(same_id([&caller, &copy], unsupported, unsupported).is_err());
+    fn a_name_without_either_id_is_refused_not_taken_for_another_file() {
+        let dir = root();
+        assert_eq!(
+            same_id(dir.path(), COPY, unsupported, unsupported),
+            Err("cannot tell whether '.github/workflows/copy.yml' is the release workflow init writes: unsupported".into())
+        );
+    }
+
+    /// A name that does not exist cannot be the caller, whatever the volume.
+    #[test]
+    fn a_missing_name_is_not_the_caller_without_reading_an_id() {
+        let dir = root();
+        let missing = ".github/workflows/missing.yml";
+        assert_eq!(
+            same_id(dir.path(), missing, unsupported, unsupported),
+            Ok(false)
+        );
     }
 
     #[test]
     fn the_128_bit_id_finds_a_hard_link_where_the_volume_gives_it() {
-        let (_dir, [caller, linked, copy]) = files();
-        assert!(same_id([&caller, &linked], file_id, unsupported).unwrap());
-        assert!(!same_id([&caller, &copy], file_id, unsupported).unwrap());
+        let dir = root();
+        assert_eq!(same_id(dir.path(), LINKED, file_id, unsupported), Ok(true));
+        assert_eq!(same_id(dir.path(), COPY, file_id, unsupported), Ok(false));
     }
 }
