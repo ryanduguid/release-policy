@@ -16,6 +16,8 @@ action it uses and the scripts it names, sources or runs. Comment lines are not
 followed; a script named in other prose is, which can name a family that did not need a
 re-pin but never misses one that did. Re-pin the consumers of each named family and no
 others. A change outside these families, such as documentation or tests, moves no pin.
+The secrets scan action is no family: its callers pin a release tag's commit and
+Dependabot proposes the next one ([Secrets scan](secrets-scan-consumers.md)).
 
 The scheduled CI run's `pin-lag` job runs the same comparison from the pin a consumer
 declares today to `main`, one consumer per family: each canary in `canaries.json`, and

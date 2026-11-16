@@ -35,8 +35,8 @@ CANONICAL_SHA256 = {
     ".github/ci/check_gates.py": "f10beb3a9a7c61412dd444ced5664662f9444764591d01a670319c51bc5d9323",
     ".github/actions/no-ai-attribution/action.yml": "c9181672a3b2e4ab7a486f906ba8481d33aabac5d7fcf21979d32d6b74fe9243",
     ".gitattributes": "15950beebac9cc61cd4ee661d408e3f7e132c92e5d5f1f3fc0a27c6958eb70c4",
-    ".github/dependabot.yml": "a2e60e605ef8847b1e051d42da813238b3d6601f5448436f0c2aeddf8373db40",
-    ".github/workflows/ci.yml": "d1275083472ed15481994899be35f307a5a6321ba48570d82498cc11c12cbf20",
+    ".github/dependabot.yml": "651615f519b7dec01b5b67bf3b0810403e61ff36fc20a175bd3f50b94aa73fdf",
+    ".github/workflows/ci.yml": "18519195dd70027f58ddc09b400f35fbbc7e660944be3598add76970d1acb65c",
     ".github/workflows/codeql.yml": "005ca9e67d092a2ad7defde67fc00672b8f18f6453490a6fec63fc0b1c77e5c7",
     ".github/workflows/scorecard.yml": "0cfb357dd0c38ab298a1c761f83f8c087997b05b6038a838ee27655a9199780c",
     ".github/workflows/no-ai-attribution.yml": "2c517d6f7eda8667c8a2eba186ef15d9e27b4c91d4617a39083b0a31f26f2834",
@@ -61,8 +61,14 @@ CANONICAL_SHA256 = {
     "docs/guarantees-and-evidence.md": "84f821eb9f40a89e410c5c8799ef59c0a1a8da5e40457221c0f9d7a5ecd92394",
     "docs/verify-a-release.md": "4186fdde430804bba4d6c1153c1cd736ec0f29ded5e64a5ea189205946bd37b6",
     "docs/egress-check.md": "2d8f86aad40c65edec23d370cbfb39864cf5a101d24839055c7b2718592f5994",
-    "docs/re-pinning.md": "89076862ed4ae6c2f9a08c722082c9e65c83e5084e4429ee21a9ed1d017913ff",
+    "docs/re-pinning.md": "01d18ca687f3cdb9a4890d3daa53954e99dbf4a52e93b83237ab3da20ad918a8",
     "SECURITY.md": "9f9cea868cdb60a00c98ebaa892125d83a94fba1589d55227cd239c6af7804f9",
+    "docs/secrets-scan-consumers.md": "6fdf273e6b16291a621a00742bf1d4766e63efd52cb34c124571fe832d22afc5",
+    ".github/actions/secrets-scan/rules.toml": "0f9c6175f79012af334a0c0ffdcb5860ecbf6d7e432361577354ee0fd1606017",
+    ".github/actions/secrets-scan/scan.sh": "70a4df01f0ef3562dbc1cb3f26b035d64cb1fa935d09974206420c772da66b70",
+    ".github/actions/secrets-scan/install.sh": "dc5b8b422a3c880dc096c1dbbb3a9d5c208aef9d3ff37942735b188c77eff2ea",
+    ".github/actions/secrets-scan/action.yml": "203e6ea46dcdfb1057e3802fa53bc0424913ff276b56d1c4b294430c0a957227",
+    ".github/workflows/betterleaks-release.yml": "4cfc2ace35d233dc0ef77e835af99ad4b828fd0f37da980e1f14b477f119d6b9",
 }
 
 # A third-party pin is hashed as action@<40 zeros> # vMAJOR, so a Dependabot minor

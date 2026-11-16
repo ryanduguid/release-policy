@@ -54,8 +54,8 @@ titled 'Repin the attribution action'. It refreshes its own open issue rather
 than opening another. Apply the patch from a checkout whose credentials may
 push workflow changes.
 
-CI also runs pinned ShellCheck and actionlint over `scripts/*.sh`, `tests/*.sh`
-and the workflows, and pinned zizmor over the workflows, actions and Dependabot
+CI also runs pinned ShellCheck and actionlint over `scripts/*.sh`, `tests/*.sh`,
+the secrets scan action's scripts and the workflows, and pinned zizmor over the workflows, actions and Dependabot
 configuration. Record an accepted zizmor finding, with its reason, in
 `.github/zizmor.yml`. Changed lines in `scripts/*.py` need complete branch
 coverage.
