@@ -240,7 +240,7 @@ jobs:
       - name: Shellcheck the scripts and tests
         if: matrix.python == '3.14'
         run: |
-          "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" -x scripts/*.sh tests/*.sh
+          "./shellcheck-v${SHELLCHECK_VERSION}/shellcheck" -x scripts/*.sh tests/*.sh .github/actions/secrets-scan/*.sh
 
       - name: Download and verify actionlint
         if: matrix.python == '3.14'
@@ -809,12 +809,30 @@ jobs:
           advanced-security: false
           min-severity: low
 
+  # The secrets scan action's own cases, run with the betterleaks release its
+  # install.sh pins: a caller's pull request, push and scheduled run, and each
+  # way a pull request might allowlist or hide what it adds.
+  secrets-scan:
+    name: secrets scan cases
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned betterleaks
+        run: bash .github/actions/secrets-scan/install.sh
+      - name: Run the scan over every case
+        run: bash tests/test_secrets_scan.sh
+
   ci-gates:
     # The one context branch protection requires from this workflow. It fails
     # unless every job it needs succeeded, when a job in this file is missing
     # from needs, or when a pull request removes a job without adding a
     # "# removed-jobs: <job>" comment to this file.
-    needs: [checks, windows, rust, binary-self-check, binary-sbom-check, zizmor]
+    needs: [checks, windows, rust, binary-self-check, binary-sbom-check, zizmor, secrets-scan]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
