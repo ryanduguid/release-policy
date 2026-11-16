@@ -43,6 +43,14 @@ trailing comment, so Dependabot proposes the next release. The action accepts
 an issue when betterleaks has a newer release. `docs/secrets-scan-consumers.md`
 is the guide. (#302)
 
+The scan that guards what PR review sends to a model now runs Betterleaks
+1.10.1 in place of Gitleaks 8.30.1: once with Gitleaks 8.30.1's rule file and
+once with Betterleaks' rules, and a finding in either stops the request. A
+line marked `gitleaks:allow` no longer passes the scan. The scripts'
+`--gitleaks` option is now `--betterleaks`, and a snapshot stamped
+`gitleaks/8.30.1` fails verification. `pr-review-central.yml` calls the
+workflow at a pinned commit, so nothing changes until that pin moves. (#303)
+
 Codecov's project check now fails below 100% and `main` requires it, so a pull
 request cannot merge whilst Codecov is down, and one from a fork cannot merge
 at all, because the upload job skips forks (#297, #299).
@@ -63,7 +71,8 @@ workflows still run the Python scripts.
 Known issues: the installers have not been run live on macOS or Windows on Arm,
 and `init`'s hard-link check has not been run on FAT, exFAT or network
 volumes. The secrets scan does not read text in another encoding, such as
-UTF-16, or compressed files. The macOS archives are not notarised, and the
+UTF-16, or compressed files. No hosted run has yet exercised the PR review
+scan's 2 downloads. The macOS archives are not notarised, and the
 binary guide gives no Gatekeeper advice; a copy downloaded through a browser
 may be blocked (not tried on a Mac). `virustotal-release.yml` uploads one
 asset every 16 seconds and stops after 30 minutes, so it cannot scan a release
