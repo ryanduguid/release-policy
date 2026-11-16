@@ -90,10 +90,11 @@ if ($env:FAKE_GH -eq 'silent') {
     $global:LASTEXITCODE = 0
 }
 # The user's Path value lives in the file FAKE_USER_PATH, never the registry:
-# without it, reading the user Path and every Set-ItemProperty are refused, so
-# no test can change the real one. Each read and write of it is logged to
-# FAKE_REGISTRY_LOG; FAKE_PATH_DENIED refuses the write. Every other Get-Item,
-# such as Expand-Archive's, is real.
+# without it, these fakes refuse install.ps1's calls, Get-Item -LiteralPath
+# 'HKCU:\\Environment' and an unqualified Set-ItemProperty, so it cannot change
+# the real one; a module-qualified cmdlet or Get-Item -Path would pass them by.
+# Each read and write of it is logged to FAKE_REGISTRY_LOG; FAKE_PATH_DENIED
+# refuses the write. Every other Get-Item, such as Expand-Archive's, is real.
 $unfaked = 'the tests keep the user Path in FAKE_USER_PATH, which is not set'
 function global:Get-Item {
     [CmdletBinding()] param([string]$Path, [string]$LiteralPath)
