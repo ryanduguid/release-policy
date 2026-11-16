@@ -354,14 +354,16 @@ def scan_context(snapshot: dict[str, Any], executable: str, gitleaks_rules: Path
     # an allow comment in PR source exempts nothing. Betterleaks' own rules pass
     # some keys that the Gitleaks 8.30.1 rules stop, so each rule file gets a
     # scan and a finding in either stops the request.
-    require(hashlib.sha256(gitleaks_rules.read_bytes()).hexdigest() == GITLEAKS_RULES_SHA256,
-            "secret_scan_failed_or_unavailable")
+    # The operator names the rule file and the executable; no PR content does.
+    require(hashlib.sha256(gitleaks_rules.read_bytes()).hexdigest()  # NOSONAR: any other file is refused
+            == GITLEAKS_RULES_SHA256, "secret_scan_failed_or_unavailable")
     raw_source = "\n".join(f[field] for f in snapshot["files"] for field in ("before", "after", "patch"))
     for config in (gitleaks_rules, BETTERLEAKS_CONFIG):
-        process = subprocess.run([executable, "stdin", "--config", str(config), "--ignore-gitleaks-allow",
-                                  "--no-banner", "--redact", "--exit-code", "1"],
-                                 input=scanned_source(raw_source).encode(), stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL, check=False, timeout=60)
+        process = subprocess.run(  # NOSONAR  # nosemgrep  # nosec B603: an argument list, no shell
+            [executable, "stdin", "--config", str(config), "--ignore-gitleaks-allow",
+             "--no-banner", "--redact", "--exit-code", "1"],
+            input=scanned_source(raw_source).encode(), stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, check=False, timeout=60)
         require(process.returncode == 0, "secret_scan_failed_or_unavailable")
 
 
