@@ -364,11 +364,12 @@ def scan_context(snapshot: dict[str, Any], executable: str, gitleaks_rules: Path
     require(hashlib.sha256(gitleaks_rules.read_bytes()).hexdigest()  # NOSONAR: any other file is refused
             == GITLEAKS_RULES_SHA256, "secret_scan_failed_or_unavailable")
     raw_source = "\n".join(f[field] for f in snapshot["files"] for field in ("before", "after", "patch"))
+    scanned = scanned_source(raw_source).encode()
     for config in (gitleaks_rules, BETTERLEAKS_CONFIG):
         process = subprocess.run(  # NOSONAR  # nosemgrep  # nosec B603: an argument list, no shell
             [executable, "stdin", "--config", str(config), "--ignore-gitleaks-allow",
              "--no-banner", "--redact", "--exit-code", "1"],
-            input=scanned_source(raw_source).encode(), stdout=subprocess.DEVNULL,
+            input=scanned, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, check=False, timeout=60)
         require(process.returncode == 0, "secret_scan_failed_or_unavailable")
 
