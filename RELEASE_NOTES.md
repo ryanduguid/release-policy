@@ -48,8 +48,10 @@ The scan that guards what PR review sends to a model now runs Betterleaks
 once with Betterleaks' rules, and a finding in either stops the request. A
 line marked `gitleaks:allow` no longer passes the scan. The scripts'
 `--gitleaks` option is now `--betterleaks`, and a snapshot stamped
-`gitleaks/8.30.1` fails verification. `pr-review-central.yml` calls the
-workflow at a pinned commit, so nothing changes until that pin moves. (#303)
+`gitleaks/8.30.1` fails verification. The workflow now also downloads
+Gitleaks' rule file from `raw.githubusercontent.com`, and a failed download
+stops the review. `pr-review-central.yml` calls the workflow at a pinned
+commit, so nothing changes until that pin moves. (#303)
 
 Codecov's project check now fails below 100% and `main` requires it, so a pull
 request cannot merge whilst Codecov is down, and one from a fork cannot merge
