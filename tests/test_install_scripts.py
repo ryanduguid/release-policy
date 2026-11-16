@@ -89,29 +89,33 @@ if ($env:FAKE_GH -eq 'silent') {
     function global:gh { }
     $global:LASTEXITCODE = 0
 }
-# The user's Path value lives in the file FAKE_USER_PATH, never the registry.
+# The user's Path value lives in the file FAKE_USER_PATH, never the registry:
+# without it, these fakes refuse install.ps1's calls, Get-Item -LiteralPath
+# 'HKCU:\\Environment' and an unqualified Set-ItemProperty, so it cannot change
+# the real one; a module-qualified cmdlet or Get-Item -Path would pass them by.
 # Each read and write of it is logged to FAKE_REGISTRY_LOG; FAKE_PATH_DENIED
 # refuses the write. Every other Get-Item, such as Expand-Archive's, is real.
-if ($env:FAKE_USER_PATH) {
-    function global:Get-Item {
-        [CmdletBinding()] param([string]$Path, [string]$LiteralPath)
-        if ($LiteralPath -ne 'HKCU:\\Environment') {
-            return Microsoft.PowerShell.Management\\Get-Item @PSBoundParameters
-        }
-        $key = [pscustomobject]@{}
-        $key | Add-Member -MemberType ScriptMethod -Name GetValue -Value {
-            param($Name, $Default, $Options)
-            Add-Content -LiteralPath $env:FAKE_REGISTRY_LOG -Value "read $Name $Options"
-            [IO.File]::ReadAllText($env:FAKE_USER_PATH)
-        }
-        $key
+$unfaked = 'the tests keep the user Path in FAKE_USER_PATH, which is not set'
+function global:Get-Item {
+    [CmdletBinding()] param([string]$Path, [string]$LiteralPath)
+    if ($LiteralPath -ne 'HKCU:\\Environment') {
+        return Microsoft.PowerShell.Management\\Get-Item @PSBoundParameters
     }
-    function global:Set-ItemProperty([string]$LiteralPath, [string]$Name, [string]$Type,
-                                     [string]$Value) {
-        if ($env:FAKE_PATH_DENIED) { throw 'Requested registry access is not allowed.' }
-        Add-Content -LiteralPath $env:FAKE_REGISTRY_LOG -Value "write $LiteralPath $Name $Type"
-        [IO.File]::WriteAllText($env:FAKE_USER_PATH, $Value)
+    if (-not $env:FAKE_USER_PATH) { throw $unfaked }
+    $key = [pscustomobject]@{}
+    $key | Add-Member -MemberType ScriptMethod -Name GetValue -Value {
+        param($Name, $Default, $Options)
+        Add-Content -LiteralPath $env:FAKE_REGISTRY_LOG -Value "read $Name $Options"
+        [IO.File]::ReadAllText($env:FAKE_USER_PATH)
     }
+    $key
+}
+function global:Set-ItemProperty([string]$LiteralPath, [string]$Name, [string]$Type,
+                                 [string]$Value) {
+    if (-not $env:FAKE_USER_PATH) { throw $unfaked }
+    if ($env:FAKE_PATH_DENIED) { throw 'Requested registry access is not allowed.' }
+    Add-Content -LiteralPath $env:FAKE_REGISTRY_LOG -Value "write $LiteralPath $Name $Type"
+    [IO.File]::WriteAllText($env:FAKE_USER_PATH, $Value)
 }
 """
 
@@ -533,6 +537,18 @@ class ShellInstallerTests(InstallerCases, unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn(f"Added this line to {home / 'zsh' / '.zshrc'}:", result.stdout)
 
+    @unittest.skipUnless(shutil.which("zsh"), "zsh required")
+    def test_modify_path_uses_home_when_zshenv_closes_the_answers_descriptor(self) -> None:
+        # zsh cannot answer on descriptor 3, so install.sh falls back to $HOME
+        # quietly instead of stopping under set -e or passing on zsh's error.
+        home = self.root / "home"
+        home.mkdir()
+        (home / ".zshenv").write_text("exec 3>&-\n", encoding="utf-8")
+        result = self.modify_path(str(shutil.which("zsh")), str(self.destination))
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(f"Added this line to {home / '.zshrc'}:", result.stdout)
+        self.assertEqual("", result.stderr)
+
     def test_modify_path_ends_a_last_line_that_lacks_a_newline(self) -> None:
         home = self.root / "home"
         home.mkdir()
@@ -729,6 +745,13 @@ class PowerShellInstallerTests(InstallerCases, unittest.TestCase):
                       "which is unchanged: Requested registry access is not allowed.",
                       result.stderr)
         self.assertEqual("C:\\Windows", self.stored_path())
+
+    def test_modify_path_without_a_fake_user_path_never_reaches_the_registry(self) -> None:
+        # A test that forgets user_path() is refused instead of changing the real Path.
+        result = self.install(REPO, TAG, str(self.destination), "-ModifyPath")
+        self.assertNotEqual(0, result.returncode, result.stdout)
+        self.assertIn("the tests keep the user Path in FAKE_USER_PATH, which is not set",
+                      result.stderr)
 
     def test_modify_path_refuses_a_directory_holding_a_separator(self) -> None:
         env = self.user_path("C:\\Windows")
