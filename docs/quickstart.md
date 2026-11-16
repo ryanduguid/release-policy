@@ -7,15 +7,15 @@ and refuses inputs the release jobs would refuse.
 
 ## 1. Install the command
 
-`init` is on `main` but not in a release yet: v0.4.0 predates it. Build it
-from a commit on `main` with Rust 1.99 or later:
+v0.5.0 is the first release with `init`. Install it or a later release, after
+verifying it: see [Installing a release](binary-consumers.md#installing-a-release).
+
+Or build it from a commit you have reviewed, v0.5.0's or a later one, with
+Rust 1.99 or later:
 
 ```sh
 cargo install --locked --git https://github.com/ryanduguid/release-policy --rev <full-40-char-commit-sha> --bin release-policy release-policy
 ```
-
-Once a release includes `init`, install that release instead, after
-verifying it: see [Installing a release](binary-consumers.md#installing-a-release).
 
 ## 2. Run it at the top of your repository
 

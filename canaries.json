@@ -15,7 +15,7 @@
       "workflow_path": ".github/workflows/release.yml"
     },
     {
-      "current_policy_sha": "efac799b4380171e9f392e392a20e80f285bfa25",
+      "current_policy_sha": "c92ff2f6abdc1e2d1062a120c12d68b24368a56c",
       "evidence": {
         "head_sha": "ddb7c18953f5abef38ba164a0ae48dc7c6a0e1f3",
         "policy_sha": "efac799b4380171e9f392e392a20e80f285bfa25",
