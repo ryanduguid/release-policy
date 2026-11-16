@@ -60,7 +60,7 @@ def public_fetch(repository=None, pr=None):
 
 def central_snapshot():
     with mock.patch.dict(os.environ, CALLER), mock.patch.object(public, "scan_context"):
-        return public.capture(URL, POLICY, POLICY_SHA, "scanner", public_fetch())
+        return public.capture(URL, POLICY, POLICY_SHA, "scanner", Path("rules"), public_fetch())
 
 
 class PublicReviewTests(unittest.TestCase):
@@ -89,7 +89,7 @@ class PublicReviewTests(unittest.TestCase):
             fetch = mock.Mock()
             with mock.patch.dict(os.environ, {"GITHUB_REF": "refs/heads/feature"}), \
                     self.assertRaisesRegex(review.ReviewError, "untrusted_central_dispatch"):
-                public.capture(URL, POLICY, POLICY_SHA, "scanner", fetch)
+                public.capture(URL, POLICY, POLICY_SHA, "scanner", Path("rules"), fetch)
             fetch.assert_not_called()
         with mock.patch.object(public, "request_json", return_value={}) as send, \
                 mock.patch.dict(os.environ, {"GH_TOKEN": "synthetic-token-must-not-be-used"}):  # nosec B105: fabricated sentinel
@@ -122,13 +122,13 @@ class PublicReviewTests(unittest.TestCase):
             for implementation in cases:
                 fetch = mock.Mock(side_effect=implementation)
                 with self.assertRaises((review.ReviewError, TypeError, KeyError)):
-                    public.capture(URL, POLICY, POLICY_SHA, "scanner", fetch)
+                    public.capture(URL, POLICY, POLICY_SHA, "scanner", Path("rules"), fetch)
                 self.assertFalse(any("/contents/" in call.args[0] for call in fetch.call_args_list))
             scan.assert_not_called()
 
     def test_capture_freezes_identity_and_checks_it_before_inference_and_summary(self):
         with mock.patch.dict(os.environ, CALLER), mock.patch.object(public, "scan_context") as scan:
-            snap = public.capture(URL, POLICY, POLICY_SHA, "scanner", public_fetch())
+            snap = public.capture(URL, POLICY, POLICY_SHA, "scanner", Path("rules"), public_fetch())
             scan.assert_called_once()
             public.verify_live(snap, POLICY, POLICY_SHA, public_fetch())
             changed = public_fetch()(f"repos/{REPO}/pulls/{PR}")
@@ -149,11 +149,11 @@ class PublicReviewTests(unittest.TestCase):
                 return original(path)
 
             with self.assertRaisesRegex(review.ReviewError, "target_repository_mismatch"):
-                public.capture(URL, POLICY, POLICY_SHA, "scanner", moving)
+                public.capture(URL, POLICY, POLICY_SHA, "scanner", Path("rules"), moving)
             with mock.patch.object(public, "public_identity", side_effect=[snap["target_identity"],
                                                                           {**snap["target_identity"], "author_id": 1}]), \
                     self.assertRaisesRegex(review.ReviewError, "identity_changed"):
-                public.capture(URL, POLICY, POLICY_SHA, "scanner", public_fetch())
+                public.capture(URL, POLICY, POLICY_SHA, "scanner", Path("rules"), public_fetch())
             with mock.patch.object(public, "verify_live", side_effect=review.ReviewError("stale")) as live, \
                     mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
                 send = mock.Mock(return_value={"data": {"limit": None, "limit_remaining": None}})
@@ -217,9 +217,10 @@ class PublicReviewTests(unittest.TestCase):
             self.assertEqual(public.main(["gate", *args, "--mode", "unknown", "--url", URL]), 1)
             self.assertEqual(public.main(["gate", *args, "--policy-sha", "invalid", "--url", URL]), 1)
             with mock.patch.object(public, "request_json", side_effect=lambda url, key: public_fetch()(url.removeprefix("https://api.github.com/"))), \
-                    mock.patch.object(public, "scan_context"), \
+                    mock.patch.object(public, "scan_context") as scan, \
                     mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary)}):
                 self.assertEqual(public.main(["capture", *args, "--url", URL]), 0)
+                scan.assert_called_with(mock.ANY, "betterleaks", Path("gitleaks-8.30.1.toml"))
                 self.assertEqual(public.main(["summary", *args]), 0)
                 self.assertIn("incomplete", summary.read_text())
                 review.write_json(report, model_report(review.read_json(snap)))
