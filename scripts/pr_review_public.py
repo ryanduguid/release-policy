@@ -92,7 +92,7 @@ def public_identity(fetch: Fetch, repo: str, number: int) -> dict[str, Any]:
     return bound
 
 
-def capture(url: str, policy: dict[str, Any], policy_sha: str, scanner: str,
+def capture(url: str, policy: dict[str, Any], policy_sha: str, scanner: str, gitleaks_rules: Path,
             fetch: Fetch = anonymous) -> dict[str, Any]:
     caller = caller_context()
     repo, number = parse_url(url)
@@ -107,7 +107,7 @@ def capture(url: str, policy: dict[str, Any], policy_sha: str, scanner: str,
                     repository_id=initial["repository_id"], caller=caller, target_identity=initial)
     snapshot["context_hash"] = digest({key: value for key, value in snapshot.items()
                                        if key != "context_hash"})
-    scan_context(snapshot, scanner)
+    scan_context(snapshot, scanner, gitleaks_rules)
     return snapshot
 
 
@@ -151,7 +151,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--policy-sha", required=True)
     parser.add_argument("--snapshot", type=Path, default=Path("evidence/snapshot.json"))
     parser.add_argument("--report", type=Path, default=Path("evidence/review.json"))
-    parser.add_argument("--gitleaks", default="gitleaks")
+    parser.add_argument("--betterleaks", default="betterleaks")
+    parser.add_argument("--gitleaks-rules", type=Path, default=Path("gitleaks-8.30.1.toml"))
     args = parser.parse_args(argv)
     try:
         require(args.mode == MODE, "unknown_review_mode")
@@ -167,7 +168,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             parse_url(args.url)
             if args.command == "capture":
-                write_json(args.snapshot, capture(args.url, policy, args.policy_sha, args.gitleaks))
+                write_json(args.snapshot, capture(args.url, policy, args.policy_sha, args.betterleaks,
+                                                  args.gitleaks_rules))
         return 0
     except Exception as error:
         code = str(error) if isinstance(error, ReviewError) else "invalid_input_or_runtime"

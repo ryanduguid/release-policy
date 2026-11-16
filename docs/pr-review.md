@@ -86,7 +86,8 @@ to disk. Posting a status is a separate explicit `publish` command.
 ```bash
 python scripts/pr_review.py capture --repo OWNER/REPO --pr PR_NUMBER \
   --policy .github/pr-review-policy.json --policy-sha "$PUBLISHED_POLICY_SHA" \
-  --snapshot "$REVIEW_DIRECTORY/snapshot.json" --gitleaks "$GITLEAKS_BINARY"
+  --snapshot "$REVIEW_DIRECTORY/snapshot.json" --betterleaks "$BETTERLEAKS_BINARY" \
+  --gitleaks-rules "$GITLEAKS_RULES"
 # Use the locked environment and pinned engine source for the model step.
 PYTHONPATH="$PR_AGENT_SOURCE" "$PR_AGENT_PYTHON" scripts/pr_review.py review \
   --policy .github/pr-review-policy.json --policy-sha "$PUBLISHED_POLICY_SHA" \
@@ -226,7 +227,18 @@ complete before/after source for every changed text file, including removals
 and renames. It checks pagination, changed-line counts and the revision again
 before writing the snapshot. Excluded credential paths, binary files,
 unavailable blobs, truncated patches and excessive source stop the run.
-Gitleaks 8.30.1 scans raw source before it can enter a model request.
+Betterleaks 1.10.1 scans raw source twice before it can enter a model request:
+once with the rules of Gitleaks 8.30.1 and once with its own default rules,
+extended by `.github/pr-review-betterleaks.toml`. A finding in either scan
+stops the run. A `gitleaks:allow` or `betterleaks:allow` comment in the source
+exempts nothing. `--gitleaks-rules` names the Gitleaks rules, which are
+`config/gitleaks.toml` at its `v8.30.1` tag; without the option, capture reads
+`gitleaks-8.30.1.toml` in the working directory. It refuses a file with any
+other SHA-256. Two things Gitleaks stopped need more than its rules: it decoded
+a run of hex digits that other base64 characters follow, and it ended its
+chunks at other offsets. So each scan also reads a second copy of the source,
+with a line break after such digits and a blank line at least every 8,000
+bytes.
 
 Each chunk contains unsplit complete file records and is limited to 180,000
 canonical UTF-8 bytes, including source, diff, paths and JSON escaping. The
@@ -418,7 +430,8 @@ Prepare a small batch without paid calls:
 python scripts/pr_review_benchmark.py \
   --cases benchmarks/pr-review-cases.json \
   --policy .github/pr-review-policy.json --policy-sha "$PUBLISHED_POLICY_SHA" \
-  --output "$BENCHMARK_DIRECTORY" --limit 10 --gitleaks "$GITLEAKS_BINARY"
+  --output "$BENCHMARK_DIRECTORY" --limit 10 --betterleaks "$BETTERLEAKS_BINARY" \
+  --gitleaks-rules "$GITLEAKS_RULES"
 ```
 
 Public GitHub API access needs enough read quota. Once the pinned PR-Agent
@@ -450,7 +463,8 @@ python scripts/pr_review_benchmark.py \
 ```
 
 Set `POLICY_SHA` to the reviewed full source commit and make the pinned
-`gitleaks` executable available as described above. Preparation makes no model
+`betterleaks` executable and the Gitleaks rules available as described above.
+Preparation makes no model
 calls; synthetic snapshots have no live publication capability. Unit tests use
 fabricated outputs. Passing them cannot qualify provider behaviour, deletion
 recall or human accuracy. Paid reruns require the existing spending authority

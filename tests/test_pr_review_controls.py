@@ -84,6 +84,7 @@ class QualificationControlsTests(unittest.TestCase):
             self.assertEqual(result, 0)
             paid.assert_not_called()
             self.assertEqual(scan.call_count, 6)
+            scan.assert_called_with(mock.ANY, "betterleaks", Path("gitleaks-8.30.1.toml"))
             manifest = review.read_json(output / "manifest.json")
             self.assertEqual(manifest["cases"], [case["id"] for case in self.cases])
             self.assertEqual([record["state"] for record in manifest["records"]], ["prepared"] * 6)

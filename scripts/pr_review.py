@@ -32,6 +32,16 @@ from required_checks import _FULL_SHA, _REPOSITORY
 MODELS = ("z-ai/glm-5.3", "xiaomi/mimo-v2.6-pro")
 PR_AGENT_SHA = "3be92e293fc55b24a54aa303595e9eaa32519954"
 CONTEXT = "Independent PR review (advisory)"
+SCANNER_VERSION = "betterleaks/1.10.1"
+# config/gitleaks.toml of Gitleaks 8.30.1: the rules this scan ran before Betterleaks.
+GITLEAKS_RULES_SHA256 = "e163e53b9e7e8a8511e77271e2b323ed057759542a6d988258afe3a1fa329caf"
+BETTERLEAKS_CONFIG = Path(__file__).resolve().parent.parent / ".github/pr-review-betterleaks.toml"
+# Gitleaks 8.30.1 decodes 32 or more hex digits even when other base64
+# characters follow them; Betterleaks then reads the whole word as base64.
+HEX_BEFORE_BASE64 = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{32,}+(?=[G-Zg-z_/+-])")
+# Both scanners end a chunk at the first blank line, or 25,000 bytes on when
+# there is none, and miss a credential cut there. Each cuts at its own offsets.
+MAX_UNBROKEN_BYTES = 8_000
 MAX_RESPONSE_BYTES = 12_000_000
 Fetch = Callable[[str], Any]
 
@@ -282,7 +292,7 @@ def collect(fetch: Fetch, repo: str, number: int, policy_sha: str,
             "revision_changed_during_capture")
     snapshot = {"schema": 1, **identity(repo, number, pr), "policy_sha": policy_sha,
                 "policy_hash": digest(policy), "engine_sha": PR_AGENT_SHA, "merge_base": merge_base,
-                "scanner_version": "gitleaks/8.30.1", "files": frozen}
+                "scanner_version": SCANNER_VERSION, "files": frozen}
     snapshot.update(snapshot_kind="installed_pr_review_v1", publication_capability="status",
                     caller_repository=repo, repository_id=pr["base"]["repo"].get("id"),
                     caller_repository_id=pr["base"]["repo"].get("id"))
@@ -301,7 +311,7 @@ def verify_snapshot(snapshot: dict[str, Any], policy: dict[str, Any], policy_sha
     require(_REPOSITORY.fullmatch(snapshot["repository"]) and type(snapshot["pr"]) is int
             and snapshot["pr"] > 0, "invalid_pr")
     require(all(_FULL_SHA.fullmatch(snapshot[side]) for side in ("head", "base", "merge_base")), "invalid_commit")
-    require(snapshot["scanner_version"] == "gitleaks/8.30.1", "missing_secret_scan")
+    require(snapshot["scanner_version"] == SCANNER_VERSION, "missing_secret_scan")
     require(snapshot["files"] and len({f["path"] for f in snapshot["files"]}) == len(snapshot["files"]),
             "invalid_snapshot_files")
     for f in snapshot["files"]:
@@ -323,13 +333,36 @@ def chunks(snapshot: dict[str, Any], policy: dict[str, Any]) -> list[list[dict[s
     return result
 
 
-def scan_context(snapshot: dict[str, Any], executable: str) -> None:
-    # The binary is installed from a verified pin, with no PR configuration.
+def scanned_source(raw_source: str) -> str:
+    # The source, then a copy in which Betterleaks finds what Gitleaks 8.30.1
+    # found in the source: a line break follows hex digits that Gitleaks
+    # decoded, and blank lines keep every chunk from ending inside a line.
+    lines: list[str] = []
+    unbroken = 0
+    for line in HEX_BEFORE_BASE64.sub(r"\g<0>\n", raw_source).splitlines(keepends=True):
+        lines.append(line)
+        unbroken += len(line.encode())
+        if unbroken >= MAX_UNBROKEN_BYTES:
+            lines.append("\n\n")
+            unbroken = 0
+    copy = "".join(lines)
+    return raw_source if copy == raw_source else f"{raw_source}\n\n{copy}"
+
+
+def scan_context(snapshot: dict[str, Any], executable: str, gitleaks_rules: Path) -> None:
+    # The binary is installed from a verified pin, with no PR configuration:
+    # an allow comment in PR source exempts nothing. Betterleaks' own rules pass
+    # some keys that the Gitleaks 8.30.1 rules stop, so each rule file gets a
+    # scan and a finding in either stops the request.
+    require(hashlib.sha256(gitleaks_rules.read_bytes()).hexdigest() == GITLEAKS_RULES_SHA256,
+            "secret_scan_failed_or_unavailable")
     raw_source = "\n".join(f[field] for f in snapshot["files"] for field in ("before", "after", "patch"))
-    process = subprocess.run([executable, "stdin", "--no-banner", "--redact", "--exit-code", "1"],
-                             input=raw_source.encode(), stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, check=False, timeout=60)
-    require(process.returncode == 0, "secret_scan_failed_or_unavailable")
+    for config in (gitleaks_rules, BETTERLEAKS_CONFIG):
+        process = subprocess.run([executable, "stdin", "--config", str(config), "--ignore-gitleaks-allow",
+                                  "--no-banner", "--redact", "--exit-code", "1"],
+                                 input=scanned_source(raw_source).encode(), stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, check=False, timeout=60)
+        require(process.returncode == 0, "secret_scan_failed_or_unavailable")
 
 
 REVIEW_SCHEMA: dict[str, Any] = {
@@ -583,7 +616,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report", type=Path, default=Path("review.json"))
     parser.add_argument("--pr", type=int)
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
-    parser.add_argument("--gitleaks", default="gitleaks")
+    parser.add_argument("--betterleaks", default="betterleaks")
+    parser.add_argument("--gitleaks-rules", type=Path, default=Path("gitleaks-8.30.1.toml"))
     parser.add_argument("--jobs-ok", action="store_true")
     parser.add_argument("--publish-pending", action="store_true")
     args = parser.parse_args(argv)
@@ -618,7 +652,7 @@ def main(argv: list[str] | None = None) -> int:
                                      "pending", github)
             snapshot = collect(github, args.repo, number, args.policy_sha, policy)
             require({key: snapshot[key] for key in minimal} == minimal, "revision_changed_before_capture")
-            scan_context(snapshot, args.gitleaks)
+            scan_context(snapshot, args.betterleaks, args.gitleaks_rules)
             write_json(args.snapshot, snapshot)
             capture_disposition("captured")
         elif args.command == "review":

@@ -6,6 +6,7 @@ from __future__ import annotations
 import ast
 import base64
 import copy
+import hashlib
 import importlib
 import io
 import json
@@ -433,14 +434,55 @@ class ReviewBoundaryTests(unittest.TestCase):
             review.chunks(snap, {**policy, "chunk_bytes": 1})
 
     def test_scan_errors_prevent_sending_source(self):
-        with mock.patch.object(review.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)) as run:
-            review.scan_context(snapshot(), "verified-gitleaks")
-            self.assertEqual(run.call_args.kwargs["stdout"], subprocess.DEVNULL)
-            self.assertIn("--redact", run.call_args.args[0])
-        with mock.patch.object(review.subprocess, "run", return_value=types.SimpleNamespace(returncode=1)):
-            with self.assertRaisesRegex(review.ReviewError, "secret_scan"):
-                review.scan_context(snapshot(), "verified-gitleaks")
+        with tempfile.TemporaryDirectory() as directory:
+            rules = Path(directory) / "gitleaks.toml"
+            rules.write_bytes(b"fabricated rules")
+            pinned = mock.patch.object(review, "GITLEAKS_RULES_SHA256", hashlib.sha256(b"fabricated rules").hexdigest())
+            with mock.patch.object(review.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)) as run:
+                # Only the pinned Gitleaks rule file may stand in for the scan it replaces.
+                with self.assertRaisesRegex(review.ReviewError, "secret_scan"):
+                    review.scan_context(snapshot(), "verified-betterleaks", rules)
+                run.assert_not_called()
+                with pinned:
+                    review.scan_context(snapshot(), "verified-betterleaks", rules)
+                self.assertEqual(run.call_args.kwargs["stdout"], subprocess.DEVNULL)
+                # One scan for each rule file. Without the flag, an allow comment
+                # in PR source passes a credential.
+                commands = [call.args[0] for call in run.call_args_list]
+                self.assertEqual([Path(command[command.index("--config") + 1]) for command in commands],
+                                 [rules, ROOT / ".github/pr-review-betterleaks.toml"])
+                self.assertTrue(review.BETTERLEAKS_CONFIG.is_file())
+                source = "\n".join(f[field] for f in snapshot()["files"] for field in ("before", "after", "patch"))
+                for call in run.call_args_list:
+                    self.assertEqual(call.args[0][1], "stdin")
+                    self.assertEqual(call.kwargs["input"], source.encode())
+                    self.assertIn("--redact", call.args[0])
+                    self.assertIn("--ignore-gitleaks-allow", call.args[0])
+                encoded = {"files": [{"before": "", "after": f'blob = "{"ab" * 16}-staging"\n', "patch": ""}]}
+                with pinned:
+                    review.scan_context(encoded, "verified-betterleaks", rules)
+                self.assertIn(b'"' + b"ab" * 16 + b"\n-staging", run.call_args.kwargs["input"])
+            for codes in ((1, 0), (0, 1), (126, 0), (0, 126)):
+                results = [types.SimpleNamespace(returncode=code) for code in codes]
+                with pinned, mock.patch.object(review.subprocess, "run", side_effect=results):
+                    with self.assertRaisesRegex(review.ReviewError, "secret_scan"):
+                        review.scan_context(snapshot(), "verified-betterleaks", rules)
 
+
+    def test_scan_adds_a_copy_that_betterleaks_reads_as_gitleaks_read_the_source(self):
+        plain = "value = 1\n" * 10
+        self.assertEqual(review.scanned_source(plain), plain)
+        encoded = "ab" * 16
+        self.assertEqual(review.scanned_source(f'blob = "{encoded}"\n'), f'blob = "{encoded}"\n')
+        for suffix in ("-staging", "_v2"):
+            source = f'blob = "{encoded}{suffix}"\n'
+            self.assertEqual(review.scanned_source(source), f'{source}\n\nblob = "{encoded}\n{suffix}"\n')
+        # No stretch of the copy is long enough for a scanner to cut a line of it.
+        line = "x" * 99 + "\n"
+        unbroken = line * 200
+        copy = review.scanned_source(unbroken).removeprefix(unbroken + "\n\n")
+        self.assertEqual(copy.replace("\n\n\n", "\n"), unbroken)
+        self.assertEqual(max(map(len, copy.split("\n\n\n"))), review.MAX_UNBROKEN_BYTES - 1)
 
     def test_patch_matches_frozen_source_including_unchanged_gaps(self):
         review.verify_patch("a\nb\nc\n", "a\nx\nc\n", "@@ -1,3 +1,3 @@ function\n a\n-b\n+x\n c\n\\ No newline at end of file")
@@ -1097,8 +1139,9 @@ class ReviewCliTests(unittest.TestCase):
                     "--report", str(report_path), "--repo", REPO]
             fetch = fake_fetch()
             post = mock.Mock(side_effect=lambda path, payload=None: fetch(path) if payload is None else {})
-            with mock.patch.object(review, "github", post), mock.patch.object(review, "scan_context"), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            with mock.patch.object(review, "github", post), mock.patch.object(review, "scan_context") as scan, redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 self.assertEqual(review.main(["capture", *args, "--pr", str(PR)]), 0)
+                scan.assert_called_with(mock.ANY, "betterleaks", Path("gitleaks-8.30.1.toml"))
                 self.assertFalse(any(len(call.args) > 1 for call in post.call_args_list))
                 self.assertEqual(review.main(["capture", *args, "--pr", str(PR), "--publish-pending"]), 0)
                 with mock.patch.object(agent, "review_snapshot", return_value=model_report()):

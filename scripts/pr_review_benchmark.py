@@ -95,7 +95,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--offset", type=int, default=0)
-    parser.add_argument("--gitleaks", default="gitleaks")
+    parser.add_argument("--betterleaks", default="betterleaks")
+    parser.add_argument("--gitleaks-rules", type=Path, default=Path("gitleaks-8.30.1.toml"))
     parser.add_argument("--run", action="store_true", help="Make paid calls under the trusted spending policy")
     args = parser.parse_args(argv)
     manifest: dict[str, Any] | None = None
@@ -154,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
                 snap = read_json(path)
             else:
                 snap = prepare_case(case, policy, args.policy_sha)
-                scan_context(snap, args.gitleaks)
+                scan_context(snap, args.betterleaks, args.gitleaks_rules)
                 write_json(path, snap)
             verify_snapshot(snap, policy, args.policy_sha)
             require(snap["repository"] == case["repository"] and snap["pr"] == case["pr"]
