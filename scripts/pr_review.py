@@ -360,9 +360,10 @@ def scan_context(snapshot: dict[str, Any], executable: str, gitleaks_rules: Path
     # an allow comment in PR source exempts nothing. Betterleaks' own rules pass
     # some keys that the Gitleaks 8.30.1 rules stop, so each rule file gets a
     # scan and a finding in either stops the request.
-    # The operator names the rule file and the executable; no PR content does.
-    require(hashlib.sha256(gitleaks_rules.read_bytes()).hexdigest()  # NOSONAR: any other file is refused
-            == GITLEAKS_RULES_SHA256, "secret_scan_failed_or_unavailable")
+    # The operator names the rule file and the executable; no PR content does,
+    # and any rule file but the pinned one is refused.
+    rules_sha256 = hashlib.sha256(gitleaks_rules.read_bytes()).hexdigest()  # NOSONAR
+    require(rules_sha256 == GITLEAKS_RULES_SHA256, "secret_scan_failed_or_unavailable")
     raw_source = "\n".join(f[field] for f in snapshot["files"] for field in ("before", "after", "patch"))
     scanned = scanned_source(raw_source).encode()
     for config in (gitleaks_rules, BETTERLEAKS_CONFIG):
