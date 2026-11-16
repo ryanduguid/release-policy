@@ -1,0 +1,67 @@
+name: Betterleaks release
+
+# The secrets scan action pins a betterleaks release by version and SHA-256 in
+# .github/actions/secrets-scan/install.sh. betterleaks publishes no GitHub
+# Action, so Dependabot never proposes a newer one. Each week this compares the
+# pin with the latest release and, when they differ, files an issue naming it,
+# once: an issue for that release, open or closed, is left alone, so closing
+# one declines the release. It runs on main only, executes
+# no pull request code and holds no credential beyond the job token, which may
+# read the source and write issues.
+
+on:
+  schedule:
+    - cron: "17 6 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time, so 2 runs cannot both find no issue and open 2.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    name: compare the pin with the latest release
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: File an issue for a release the pin does not name
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pinned="$(sed -n 's/^BETTERLEAKS_VERSION=//p' .github/actions/secrets-scan/install.sh)"
+          # releases/latest never names a draft or a pre-release.
+          latest="$(gh api repos/betterleaks/betterleaks/releases/latest --jq .tag_name)"
+          # Both values reach a title and a search below, so each must be a
+          # plain version before it is used.
+          version='^[0-9]+\.[0-9]+\.[0-9]+$'
+          if ! [[ "$pinned" =~ $version && "${latest#v}" =~ $version ]]; then
+            echo "::error::Expected plain versions, found the pin '$pinned' and the latest release '$latest'."
+            exit 1
+          fi
+          latest="${latest#v}"
+          if [ "$pinned" = "$latest" ]; then
+            echo "betterleaks $pinned is the latest release."
+            exit 0
+          fi
+          title="Bump betterleaks to $latest"
+          filed="$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --search "\"$title\" in:title" --json title --jq "[.[] | select(.title == \"$title\")] | length")"
+          if [ "$filed" -gt 0 ]; then
+            echo "An issue already asks for betterleaks $latest."
+            exit 0
+          fi
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "The secrets scan pins betterleaks $pinned; the latest release is $latest.
+
+          Change BETTERLEAKS_VERSION and BETTERLEAKS_SHA256 in .github/actions/secrets-scan/install.sh together, taking the digest of the Linux x64 archive from the release's checksums.txt, and run tests/test_secrets_scan.sh with the new release. docs/secrets-scan-consumers.md describes how the change reaches the callers. A new major version may reject the configuration format the callers use."

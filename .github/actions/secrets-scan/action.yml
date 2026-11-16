@@ -1,0 +1,47 @@
+name: Secrets scan
+description: Scan a repository's commits for credentials and client identifiers with pinned betterleaks and shared rules.
+
+# The whole body of a caller's secrets job: the caller's step is one `uses:`
+# line pinned to a commit of this repository, with no inputs, so no caller can
+# get the checkout depth, the scanner version or a flag wrong.
+# docs/secrets-scan-consumers.md describes what a caller commits.
+
+runs:
+  using: composite
+  steps:
+    - name: Check out full history
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        # betterleaks scans commits, so a shallow checkout would leave every
+        # earlier commit unscanned.
+        fetch-depth: 0
+        persist-credentials: false
+
+    # On pull_request_target the checkout above holds the base branch, whose
+    # workflow file and action pin a pull request cannot edit. This adds the
+    # pull request's commits as git objects and checks out none of its files.
+    - name: Fetch the pull request's commits
+      if: github.event_name == 'pull_request_target'
+      shell: bash
+      env:
+        PULL_REQUEST: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        git fetch --no-tags origin "+refs/pull/${PULL_REQUEST:?}/head:refs/remotes/pull/head"
+        git cat-file -e "${HEAD_SHA:?}^{commit}"
+
+    - name: Install betterleaks
+      shell: bash
+      run: bash "$GITHUB_ACTION_PATH/install.sh"
+
+    - name: Betterleaks
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        # The commit whose configuration the event scan reads: the merge commit
+        # on pull_request, the head on pull_request_target (where github.sha
+        # is the base branch), the pushed or scheduled commit otherwise.
+        CONFIG_SHA: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.sha }}
+      run: bash "$GITHUB_ACTION_PATH/scan.sh"
