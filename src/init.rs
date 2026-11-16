@@ -156,7 +156,7 @@ fn checked_required_checks(root: &Path, given: &[String]) -> Result<Vec<String>>
                     py::repr_str(&label)
                 ));
             }
-            if names_caller(root, &check.workflow) {
+            if names_caller(root, &check.workflow)? {
                 return Err(format!(
                     "required check {} names the release workflow init writes",
                     py::repr_str(&label)
@@ -178,20 +178,42 @@ fn checked_required_checks(root: &Path, given: &[String]) -> Result<Vec<String>>
 /// system or a hard link. Unix compares device and inode, as realpath keeps
 /// the given case in a casefolded Linux directory.
 #[cfg(unix)]
-fn names_caller(root: &Path, relative: &str) -> bool {
+fn names_caller(root: &Path, relative: &str) -> Result<bool> {
     use std::os::unix::fs::MetadataExt;
-    same_file(root, relative, |path| {
+    Ok(same_file(root, relative, |path| {
         std::fs::metadata(path).map(|m| (m.dev(), m.ino()))
-    })
+    }))
 }
 
-/// Windows compares the canonical path, which is the on-disk name, and the
-/// 128-bit file ID, which also finds a hard link but which some file systems
-/// do not give.
+/// Windows compares the canonical path, which is the on-disk name, then the
+/// file IDs, which also find a hard link. Where both names exist but either
+/// cannot be identified, init refuses, as it could not rule out the caller.
 #[cfg(windows)]
-fn names_caller(root: &Path, relative: &str) -> bool {
-    same_file(root, relative, std::fs::canonicalize::<std::path::PathBuf>)
-        || same_file(root, relative, file_id)
+fn names_caller(root: &Path, relative: &str) -> Result<bool> {
+    if same_file(root, relative, std::fs::canonicalize::<std::path::PathBuf>) {
+        return Ok(true);
+    }
+    let caller = open_for_id(&root.join(CALLER));
+    let path = open_for_id(&root.join(relative));
+    let missing = |file: &std::io::Result<std::fs::File>| {
+        file.as_ref()
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+    };
+    if missing(&caller) || missing(&path) {
+        return Ok(false);
+    }
+    let unknown = |e: std::io::Error| {
+        format!(
+            "cannot tell whether {} is the release workflow init writes: {e}",
+            py::repr_str(relative)
+        )
+    };
+    same_id(
+        [&caller.map_err(unknown)?, &path.map_err(unknown)?],
+        file_id,
+        file_index,
+    )
+    .map_err(unknown)
 }
 
 fn same_file<T: PartialEq>(
@@ -203,15 +225,41 @@ fn same_file<T: PartialEq>(
         .is_ok_and(|caller| id(root.join(relative)).is_ok_and(|path| path == caller))
 }
 
-/// The volume and 128-bit file ID, which ReFS needs; the 64-bit index can
-/// repeat there.
+/// A handle that reads only attributes, as `std::fs::metadata` opens one, so
+/// a file whose data the user may not read, or a directory, still opens.
 #[cfg(windows)]
-fn file_id(path: std::path::PathBuf) -> std::io::Result<(u64, [u8; 16])> {
+fn open_for_id(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
+    std::fs::OpenOptions::new()
+        .access_mode(0)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+}
+
+/// Whether 2 open files are one, by volume and file ID: the 128-bit ID where
+/// both give it, as ReFS can repeat the 64-bit index, else the 64-bit index,
+/// for a file system without the 128-bit ID. Both use the same kind, so a
+/// failure on one file alone cannot make the pair look different.
+#[cfg(windows)]
+fn same_id<W: PartialEq, N: PartialEq>(
+    [one, other]: [&std::fs::File; 2],
+    wide: impl Fn(&std::fs::File) -> std::io::Result<W>,
+    narrow: impl Fn(&std::fs::File) -> std::io::Result<N>,
+) -> std::io::Result<bool> {
+    if let (Ok(one), Ok(other)) = (wide(one), wide(other)) {
+        return Ok(one == other);
+    }
+    Ok(narrow(one)? == narrow(other)?)
+}
+
+/// The volume and 128-bit file ID.
+#[cfg(windows)]
+fn file_id(file: &std::fs::File) -> std::io::Result<(u64, [u8; 16])> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
     };
-    let file = std::fs::File::open(path)?;
     let mut info = FILE_ID_INFO::default();
     // SAFETY: the handle stays open for the call, and the buffer is a
     // FILE_ID_INFO of the size passed.
@@ -226,6 +274,27 @@ fn file_id(path: std::path::PathBuf) -> std::io::Result<(u64, [u8; 16])> {
     };
     (read != 0)
         .then_some((info.VolumeSerialNumber, info.FileId.Identifier))
+        .ok_or_else(std::io::Error::last_os_error)
+}
+
+/// The volume and 64-bit file index.
+#[cfg(windows)]
+fn file_index(file: &std::fs::File) -> std::io::Result<(u32, u32, u32)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: the handle stays open for the call, and the buffer is a
+    // BY_HANDLE_FILE_INFORMATION.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
+    let read = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) };
+    (read != 0)
+        .then_some((
+            info.dwVolumeSerialNumber,
+            info.nFileIndexHigh,
+            info.nFileIndexLow,
+        ))
         .ok_or_else(std::io::Error::last_os_error)
 }
 
@@ -248,7 +317,7 @@ fn python_inputs(root: &Path, version_file: Option<&str>) -> Result<Inputs> {
             py::repr_str(file)
         ));
     }
-    if names_caller(root, file) {
+    if names_caller(root, file)? {
         return Err(format!(
             "version-file {} names the release workflow init writes",
             py::repr_str(file)
@@ -376,4 +445,66 @@ fn report(family: &Family) -> String {
         family.guide
     );
     text
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::fs::File;
+
+    /// A caller, a hard link to it and a copy of it, each opened as init
+    /// opens a name to identify it.
+    fn files() -> (tempfile::TempDir, [File; 3]) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = |name: &str| dir.path().join(name);
+        std::fs::write(path("release.yml"), "name: Mine\n").unwrap();
+        std::fs::hard_link(path("release.yml"), path("linked.yml")).unwrap();
+        std::fs::write(path("copy.yml"), "name: Mine\n").unwrap();
+        let open = |name: &str| open_for_id(&path(name)).unwrap();
+        let files = [open("release.yml"), open("linked.yml"), open("copy.yml")];
+        (dir, files)
+    }
+
+    /// What a volume without the 128-bit file ID returns for it.
+    fn unsupported(_: &File) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+
+    #[test]
+    fn a_hard_link_is_found_by_the_64_bit_index_where_the_128_bit_id_fails() {
+        let (_dir, [caller, linked, copy]) = files();
+        assert!(same_id([&caller, &linked], unsupported, file_index).unwrap());
+        assert!(!same_id([&caller, &copy], unsupported, file_index).unwrap());
+    }
+
+    /// A 128-bit ID for one name and a 64-bit index for the other would
+    /// never be equal, so a failure on either name moves both to the index.
+    #[test]
+    fn a_128_bit_id_failing_on_one_name_alone_moves_both_to_the_index() {
+        let (_dir, [caller, linked, _]) = files();
+        let calls = std::cell::Cell::new(0);
+        let first_only = |file: &File| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 1 {
+                file_id(file)
+            } else {
+                Err(std::io::ErrorKind::Unsupported.into())
+            }
+        };
+        assert!(same_id([&caller, &linked], first_only, file_index).unwrap());
+    }
+
+    /// With neither ID, init cannot rule out the caller, so it refuses.
+    #[test]
+    fn a_name_without_either_id_is_an_error_not_another_file() {
+        let (_dir, [caller, _, copy]) = files();
+        assert!(same_id([&caller, &copy], unsupported, unsupported).is_err());
+    }
+
+    #[test]
+    fn the_128_bit_id_finds_a_hard_link_where_the_volume_gives_it() {
+        let (_dir, [caller, linked, copy]) = files();
+        assert!(same_id([&caller, &linked], file_id, unsupported).unwrap());
+        assert!(!same_id([&caller, &copy], file_id, unsupported).unwrap());
+    }
 }
