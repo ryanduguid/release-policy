@@ -282,17 +282,23 @@ git checkout -q -b merge-l "$base_p"
 git merge -q --no-ff -m 'merge pr-l' pr-l
 merge_l=$(git rev-parse HEAD)
 
-# (r) puts this git first on PATH: it fails every git log. scan.sh runs none
-# itself, so this is the scanner's own git log failing.
-fakebin="$scratch/fakebin"
-mkdir "$fakebin"
+# (r) and (r2) put a git first on PATH that fails one subcommand. scan.sh runs
+# no git log itself, so (r) is the scanner's own git log failing; (r2) fails
+# the ls-tree that looks for the commit's .gitleaksignore.
 real_git=$(command -v git)
-cat > "$fakebin/git" <<EOF
+fake_git() { # <folder> <subcommand>
+  mkdir "$1"
+  cat > "$1/git" <<EOF
 #!/usr/bin/env bash
-for a in "\$@"; do [ "\$a" = log ] && { echo 'injected: git log failed' >&2; exit 1; }; done
+for a in "\$@"; do [ "\$a" = $2 ] && { echo 'injected: git $2 failed' >&2; exit 1; }; done
 exec "$real_git" "\$@"
 EOF
-chmod +x "$fakebin/git"
+  chmod +x "$1/git"
+}
+fakebin="$scratch/fakebin"
+fake_git "$fakebin" log
+fakebin_tree="$scratch/fakebin-tree"
+fake_git "$fakebin_tree" ls-tree
 
 # Each case runs with the head checked out, as actions/checkout leaves a pull
 # request, so a scan that read the work tree would read the head's files.
@@ -357,6 +363,7 @@ run o-pr-edits-toml-clean "$base" "$head_o" pass
 run p-base-toml-allowlists-pr "$base_p" "$head_p" pass
 run q-pr-gitattributes-no-diff "$base" "$head_q" leak
 run r-injected-scan-git-failure "$base" "$head_l" clean-fail pull_request "$fakebin"
+run r2-injected-ls-tree-failure "$base" "$head_l" clean-fail pull_request "$fakebin_tree"
 run s-pr-inline-betterleaks-allow "$base" "$head_s" leak
 run t-pr-betterleaksignore-fingerprint "$base" "$head_t" leak
 run u-pr-betterleaks-toml-allowlists "$base" "$head_u" leak

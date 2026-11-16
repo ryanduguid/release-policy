@@ -63,15 +63,17 @@ check_mirror() { # <commit>
 # Scans with <commit>'s configuration. Every step is checked by hand because
 # the callers below test this function's status, which turns errexit off in it.
 scan() { # <label> <commit> [betterleaks git arguments]
-  local label=$1 commit=$2 folder="$work/$1" canary=0
+  local label=$1 commit=$2 folder="$work/$1" canary=0 ignore
   shift 2
   mkdir -p "$folder/.github" || return 1
   if ! git show "$commit:.gitleaks.toml" > "$folder/.gitleaks.toml"; then
     error "Commit $commit has no .gitleaks.toml, so the $label scan has no reviewed configuration to scan with."
     return 1
   fi
-  # A commit without .gitleaksignore leaves every finding in force.
-  if git cat-file -e "$commit:.gitleaksignore" 2> /dev/null; then
+  # A commit without .gitleaksignore leaves every finding in force. ls-tree
+  # lists nothing for an absent file and fails only when Git itself does.
+  ignore="$(git ls-tree --name-only "$commit" -- .gitleaksignore)" || return 1
+  if [ -n "$ignore" ]; then
     git show "$commit:.gitleaksignore" > "$folder/.gitleaksignore" || return 1
   fi
   cp "$rules" "$folder/$mirror" || return 1

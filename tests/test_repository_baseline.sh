@@ -65,7 +65,7 @@ CANONICAL_SHA256 = {
     "SECURITY.md": "9f9cea868cdb60a00c98ebaa892125d83a94fba1589d55227cd239c6af7804f9",
     "docs/secrets-scan-consumers.md": "6fdf273e6b16291a621a00742bf1d4766e63efd52cb34c124571fe832d22afc5",
     ".github/actions/secrets-scan/rules.toml": "0f9c6175f79012af334a0c0ffdcb5860ecbf6d7e432361577354ee0fd1606017",
-    ".github/actions/secrets-scan/scan.sh": "765c55eeb267da27641273cc32d218820c9707e4ede126e7f2e42dbf7838d296",
+    ".github/actions/secrets-scan/scan.sh": "70a4df01f0ef3562dbc1cb3f26b035d64cb1fa935d09974206420c772da66b70",
     ".github/actions/secrets-scan/install.sh": "dc5b8b422a3c880dc096c1dbbb3a9d5c208aef9d3ff37942735b188c77eff2ea",
     ".github/actions/secrets-scan/action.yml": "203e6ea46dcdfb1057e3802fa53bc0424913ff276b56d1c4b294430c0a957227",
     ".github/workflows/betterleaks-release.yml": "4cfc2ace35d233dc0ef77e835af99ad4b828fd0f37da980e1f14b477f119d6b9",
