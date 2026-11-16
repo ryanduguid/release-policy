@@ -1,0 +1,43 @@
+# Copyright 2026 Ryan Duguid
+# SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+
+# Betterleaks' own rules for the scan that precedes a model request
+# (scripts/pr_review.py), which also scans with the rules of Gitleaks 8.30.1.
+# Betterleaks reads this file only because --config names it.
+#
+# Its default rules report the 7 credentials below only beside a companion
+# value: an AWS access key ID only within 5 lines of its secret key, for
+# example. Clearing `components` reports each by itself, so a credential that
+# arrives alone still stops the request.
+title = "PR review source scan"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "algolia-api-key"
+components = []
+
+[[rules]]
+id = "artifactory-api-key"
+components = []
+
+[[rules]]
+id = "artifactory-reference-token"
+components = []
+
+[[rules]]
+id = "aws-access-token"
+components = []
+
+[[rules]]
+id = "azure-ad-client-secret"
+components = []
+
+[[rules]]
+id = "clickhouse-cloud-api-secret-key"
+components = []
+
+[[rules]]
+id = "planetscale-api-token"
+components = []

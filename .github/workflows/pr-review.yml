@@ -60,10 +60,14 @@ jobs:
         run: |
           set -euo pipefail
           curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
-            --output gitleaks.tar.gz
-          echo '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz' | sha256sum --check
-          tar -xzf gitleaks.tar.gz gitleaks
+            https://github.com/betterleaks/betterleaks/releases/download/v1.10.1/betterleaks_1.10.1_linux_x64.tar.gz \
+            --output betterleaks.tar.gz
+          echo 'c174b42d7aa60caf58c0c3e555c0e4bed01fe6b0d99a412bce777b5af4ce913e  betterleaks.tar.gz' | sha256sum --check
+          tar -xzf betterleaks.tar.gz betterleaks
+          # The rules of Gitleaks 8.30.1; the capture refuses any other SHA-256.
+          curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
+            https://raw.githubusercontent.com/gitleaks/gitleaks/83d9cd684c87d95d656c1458ef04895a7f1cbd8e/config/gitleaks.toml \
+            --output gitleaks-8.30.1.toml
           mkdir evidence
       - name: Capture and scan immutable source
         id: capture_context
@@ -73,7 +77,8 @@ jobs:
         run: >-
           python3 policy/scripts/pr_review.py capture --publish-pending
           --policy policy/.github/pr-review-policy.json --policy-sha "$POLICY_SHA"
-          --snapshot evidence/snapshot.json --gitleaks "$GITHUB_WORKSPACE/gitleaks"
+          --snapshot evidence/snapshot.json --betterleaks "$GITHUB_WORKSPACE/betterleaks"
+          --gitleaks-rules "$GITHUB_WORKSPACE/gitleaks-8.30.1.toml"
       - name: Fail the captured head if capture did not finish
         if: ${{ always() && job.status != 'success' }}
         env:
@@ -123,10 +128,14 @@ jobs:
         run: |
           set -euo pipefail
           curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
-            --output gitleaks.tar.gz
-          echo '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz' | sha256sum --check
-          tar -xzf gitleaks.tar.gz gitleaks
+            https://github.com/betterleaks/betterleaks/releases/download/v1.10.1/betterleaks_1.10.1_linux_x64.tar.gz \
+            --output betterleaks.tar.gz
+          echo 'c174b42d7aa60caf58c0c3e555c0e4bed01fe6b0d99a412bce777b5af4ce913e  betterleaks.tar.gz' | sha256sum --check
+          tar -xzf betterleaks.tar.gz betterleaks
+          # The rules of Gitleaks 8.30.1; the capture refuses any other SHA-256.
+          curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
+            https://raw.githubusercontent.com/gitleaks/gitleaks/83d9cd684c87d95d656c1458ef04895a7f1cbd8e/config/gitleaks.toml \
+            --output gitleaks-8.30.1.toml
           mkdir evidence
       - name: Capture and scan public source without a GitHub token
         env:
@@ -135,7 +144,8 @@ jobs:
         run: >-
           python3 policy/scripts/pr_review_public.py capture --url "$PUBLIC_PR_URL"
           --policy policy/.github/pr-review-policy.json --policy-sha "$POLICY_SHA"
-          --snapshot evidence/snapshot.json --gitleaks "$GITHUB_WORKSPACE/gitleaks"
+          --snapshot evidence/snapshot.json --betterleaks "$GITHUB_WORKSPACE/betterleaks"
+          --gitleaks-rules "$GITHUB_WORKSPACE/gitleaks-8.30.1.toml"
       - name: Retain this run's frozen public source
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
