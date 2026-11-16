@@ -455,7 +455,8 @@ class ReviewBoundaryTests(unittest.TestCase):
                 source = "\n".join(f[field] for f in snapshot()["files"] for field in ("before", "after", "patch"))
                 for call in run.call_args_list:
                     self.assertEqual(call.args[0][1], "stdin")
-                    self.assertEqual(call.kwargs["input"], source.encode())
+                    # The source, then its copy without the blank lines between fields.
+                    self.assertEqual(call.kwargs["input"], f"{source}\n\n{source.replace('\n\n', '\n')}".encode())
                     self.assertIn("--redact", call.args[0])
                     self.assertIn("--ignore-gitleaks-allow", call.args[0])
                 encoded = {"files": [{"before": "", "after": f'blob = "{"ab" * 16}-staging"\n', "patch": ""}]}
@@ -477,12 +478,15 @@ class ReviewBoundaryTests(unittest.TestCase):
         for suffix in ("-staging", "_v2"):
             source = f'blob = "{encoded}{suffix}"\n'
             self.assertEqual(review.scanned_source(source), f'{source}\n\nblob = "{encoded}\n{suffix}"\n')
-        # No stretch of the copy is long enough for a scanner to cut a line of it.
-        line = "x" * 99 + "\n"
-        unbroken = line * 200
-        copy = review.scanned_source(unbroken).removeprefix(unbroken + "\n\n")
-        self.assertEqual(copy.replace("\n\n\n", "\n"), unbroken)
-        self.assertEqual(max(map(len, copy.split("\n\n\n"))), review.MAX_UNBROKEN_BYTES - 1)
+        # The copies drop the source's blank lines and add their own 8,000 bytes
+        # apart, so lines that take under 8,000 bytes are unbroken in one of them,
+        # and no stretch is long enough for a scanner to cut a line of it.
+        lines = [f"{number:098d}\n" for number in range(400)]
+        source = "y" * 15_999 + "\n" + "".join(lines).replace(lines[7], lines[7] + " \t\r\n\n")
+        copies = review.scanned_source(source).removeprefix(source + "\n\n")
+        for start in range(len(lines) - 79):
+            self.assertIn("".join(lines[start:start + 80]), copies)
+        self.assertLess(max(map(len, copies.split("\n\n\n"))), review.COPY_STRETCH_BYTES + len(lines[0]))
 
     def test_patch_matches_frozen_source_including_unchanged_gaps(self):
         review.verify_patch("a\nb\nc\n", "a\nx\nc\n", "@@ -1,3 +1,3 @@ function\n a\n-b\n+x\n c\n\\ No newline at end of file")

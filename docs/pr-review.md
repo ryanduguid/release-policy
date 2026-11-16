@@ -236,9 +236,10 @@ exempts nothing. `--gitleaks-rules` names the Gitleaks rules, which are
 `gitleaks-8.30.1.toml` in the working directory. It refuses a file with any
 other SHA-256. Two things Gitleaks stopped need more than its rules: it decoded
 a run of hex digits that other base64 characters follow, and it ended its
-chunks at other offsets. So each scan also reads a second copy of the source,
-with a line break after such digits and a blank line at least every 8,000
-bytes.
+chunks at other offsets. So each scan also reads 2 copies of the source, with
+a line break after such digits. A copy's only blank lines are those added
+after each 16,000 bytes, 8,000 bytes apart in the 2 copies, so lines that
+together take under 8,000 bytes fall within one chunk of one copy.
 
 Each chunk contains unsplit complete file records and is limited to 180,000
 canonical UTF-8 bytes, including source, diff, paths and JSON escaping. The

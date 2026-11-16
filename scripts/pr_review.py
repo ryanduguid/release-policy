@@ -41,7 +41,8 @@ BETTERLEAKS_CONFIG = Path(__file__).resolve().parent.parent / ".github/pr-review
 HEX_BEFORE_BASE64 = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{32,}+(?=[G-Zg-z_/+-])")
 # Both scanners end a chunk at the first blank line, or 25,000 bytes on when
 # there is none, and miss a credential cut there. Each cuts at its own offsets.
-MAX_UNBROKEN_BYTES = 8_000
+BLANK_LINES = re.compile(r"\n[ \t\r]*+(?=\n)")
+COPY_STRETCH_BYTES = 16_000
 MAX_RESPONSE_BYTES = 12_000_000
 Fetch = Callable[[str], Any]
 
@@ -334,19 +335,24 @@ def chunks(snapshot: dict[str, Any], policy: dict[str, Any]) -> list[list[dict[s
 
 
 def scanned_source(raw_source: str) -> str:
-    # The source, then a copy in which Betterleaks finds what Gitleaks 8.30.1
-    # found in the source: a line break follows hex digits that Gitleaks
-    # decoded, and blank lines keep every chunk from ending inside a line.
-    lines: list[str] = []
-    unbroken = 0
-    for line in HEX_BEFORE_BASE64.sub(r"\g<0>\n", raw_source).splitlines(keepends=True):
-        lines.append(line)
-        unbroken += len(line.encode())
-        if unbroken >= MAX_UNBROKEN_BYTES:
-            lines.append("\n\n")
-            unbroken = 0
-    copy = "".join(lines)
-    return raw_source if copy == raw_source else f"{raw_source}\n\n{copy}"
+    # The source, then 2 copies in which Betterleaks finds what Gitleaks 8.30.1
+    # found in the source. A line break follows hex digits that Gitleaks decoded.
+    # A copy's only blank lines are those added after each 16,000 bytes, so its
+    # chunks end there and never inside a line. The 2 copies add them 8,000 bytes
+    # apart, so lines that together take under 8,000 bytes are whole in a chunk
+    # of one copy, whatever the reads return.
+    lines = BLANK_LINES.sub("", HEX_BEFORE_BASE64.sub(r"\g<0>\n", raw_source)).splitlines(keepends=True)
+    copies = []
+    for unbroken in (0, COPY_STRETCH_BYTES // 2):
+        copy: list[str] = []
+        for line in lines:
+            copy.append(line)
+            unbroken += len(line.encode())
+            if unbroken >= COPY_STRETCH_BYTES:
+                copy.append("\n\n")
+                unbroken %= COPY_STRETCH_BYTES
+        copies.append("".join(copy))
+    return "\n\n".join([raw_source, *(copy for copy in dict.fromkeys(copies) if copy != raw_source)])
 
 
 def scan_context(snapshot: dict[str, Any], executable: str, gitleaks_rules: Path) -> None:
