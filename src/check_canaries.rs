@@ -538,13 +538,26 @@ pub fn parse_started_at(value: &str) -> Result<DateTime, Failure> {
         number(14..16).unwrap(),
         number(17..19).unwrap(),
     );
+    python_datetime(year, month, day, hour, minute, second)
+}
+
+/// `datetime(year, month, day, hour, minute, second)`, or its `ValueError`
+/// text, for fields `parse_started_at` read from a matching value.
+fn python_datetime(
+    year: u32,
+    month: u32,
+    day: u32,
+    hour: u32,
+    minute: u32,
+    second: u32,
+) -> Result<DateTime, Failure> {
     if year == 0 {
         return Err(Failure::Unexpected(
             "ValueError: year must be in 1..9999, not 0".into(),
         ));
     }
-    // The checks above bound every field: year 1..9999, month 1..12, day
-    // 1..31, hour 0..23, minute 0..59, second 0..61.
+    // The format check bounds every field: year 1..9999 (0 is refused above),
+    // month 1..12, day 1..31, hour 0..23, minute 0..59, second 0..61.
     let (year, month, day) = (year as i16, month as i8, day as i8);
     let date = Date::new(year, month, day).map_err(|_| {
         let last = Date::new(year, month, 1).unwrap().days_in_month();

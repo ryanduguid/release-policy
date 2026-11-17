@@ -427,8 +427,8 @@ class SbomTargetCheckTests(YamlContractAssertions, unittest.TestCase):
     LISTS = {
         "linux": ("linux-raw-sys", "rustix"),
         "linux-arm64": ("linux-raw-sys", "rustix", "errno"),
-        "macos": ("core-foundation-sys", "errno"),
-        "macos-arm64": ("core-foundation-sys", "errno"),
+        "macos": ("rustix", "errno"),
+        "macos-arm64": ("rustix", "errno"),
         "windows": ("windows-sys",),
         "windows-arm64": ("windows-sys",),
     }
