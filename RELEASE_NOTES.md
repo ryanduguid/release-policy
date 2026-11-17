@@ -71,7 +71,9 @@ Dependency updates through #310 also update Rust dependencies, lint tools and
 pinned GitHub Actions (#304 to #307 and #310).
 
 The `release-policy` executable ships for all 6 targets and gains `init`. The
-workflows still run the Python scripts.
+workflows still run the Python scripts. The executable uses jiff in place of
+chrono, which RustSec marked unmaintained (RUSTSEC-2026-0543) and the release
+audit refuses (#311).
 
 Known issues: the installers have not been run live on macOS or Windows on Arm,
 and `init`'s hard-link check has not been run on FAT, exFAT or network
