@@ -6,7 +6,9 @@
 use crate::common::{REPOSITORY, SHA, full, repr_list, sha256};
 use crate::py;
 use crate::pyjson::{self, Dump, Json};
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use jiff::civil::{Date, DateTime};
+use jiff::tz::Offset;
+use jiff::{SignedDuration, Timestamp};
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -487,14 +489,17 @@ pub fn latest_relevant_run(payload: &Json, canary: &Canary) -> Option<Json> {
     None
 }
 
-/// `datetime.strptime(started_at, "%Y-%m-%dT%H:%M:%SZ")` in UTC, or the
-/// `ValueError` text where Python's parser or `datetime` refuses the value.
-fn started_at(canary: &Canary) -> Result<DateTime<Utc>, Failure> {
+/// `datetime.strptime(started_at, "%Y-%m-%dT%H:%M:%SZ")` as UTC wall-clock
+/// time, or the `ValueError` text where Python's parser or `datetime` refuses
+/// the value.
+fn started_at(canary: &Canary) -> Result<DateTime, Failure> {
     parse_started_at(&canary.evidence.started_at)
 }
 
-/// The start time of a manifest that passed the UTC-timestamp check.
-pub fn parse_started_at(value: &str) -> Result<DateTime<Utc>, Failure> {
+/// The start time, in UTC, of a manifest that passed the UTC-timestamp check.
+/// It stays a civil date and time: years 1 to 9999 all fit, whereas
+/// `Timestamp` ends at 9999-12-30T22:00:00.999999999Z.
+pub fn parse_started_at(value: &str) -> Result<DateTime, Failure> {
     let refused = || {
         Failure::Unexpected(format!(
             "ValueError: time data {} does not match format '%Y-%m-%dT%H:%M:%SZ'",
@@ -538,11 +543,11 @@ pub fn parse_started_at(value: &str) -> Result<DateTime<Utc>, Failure> {
             "ValueError: year must be in 1..9999, not 0".into(),
         ));
     }
-    let date = NaiveDate::from_ymd_opt(year as i32, month, day).ok_or_else(|| {
-        let last = (28..=31)
-            .rev()
-            .find(|d| NaiveDate::from_ymd_opt(year as i32, month, *d).is_some())
-            .unwrap();
+    // The checks above bound every field: year 1..9999, month 1..12, day
+    // 1..31, hour 0..23, minute 0..59, second 0..61.
+    let (year, month, day) = (year as i16, month as i8, day as i8);
+    let date = Date::new(year, month, day).map_err(|_| {
+        let last = Date::new(year, month, 1).unwrap().days_in_month();
         Failure::Unexpected(format!(
             "ValueError: day {day} must be in range 1..{last} for month {month} in year {year}"
         ))
@@ -552,8 +557,7 @@ pub fn parse_started_at(value: &str) -> Result<DateTime<Utc>, Failure> {
             "ValueError: second must be in 0..59, not {second}"
         )));
     }
-    let time = date.and_hms_opt(hour, minute, second).unwrap();
-    Ok(Utc.from_utc_datetime(&time))
+    Ok(date.at(hour as i8, minute as i8, second as i8, 0))
 }
 
 fn review_instruction(canary: &Canary, newer: &str) -> String {
@@ -966,7 +970,7 @@ pub fn check_live(
     canaries: &[Canary],
     live: &mut dyn Live,
     release_evidence: bool,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<CheckResult, String> {
     let mut result = CheckResult::default();
     let errors = &mut result.errors;
@@ -1058,7 +1062,10 @@ pub fn check_live(
                     let started = started_at(canary).map_err(|f| match f {
                         Failure::Runtime(m) | Failure::Unexpected(m) => m,
                     })?;
-                    if now - started > chrono::Duration::days(RETENTION_DAYS + EXPIRY_MARGIN_DAYS) {
+                    let age = Offset::UTC.to_datetime(now).duration_since(started);
+                    let kept =
+                        SignedDuration::from_hours((RETENTION_DAYS + EXPIRY_MARGIN_DAYS) * 24);
+                    if age > kept {
                         run_expired = true;
                     } else {
                         errors.push(format!(
