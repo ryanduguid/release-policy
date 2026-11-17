@@ -458,8 +458,9 @@ class SbomTargetCheckTests(YamlContractAssertions, unittest.TestCase):
 
     def test_swapped_macos_and_linux_arm64_lists_fail(self) -> None:
         for sbom, other in (("macos-arm64", "linux-arm64"), ("linux-arm64", "macos-arm64"),
-                            ("macos", "linux"), ("windows-arm64", "linux-arm64")):
-            with self.subTest(sbom=sbom):
+                            ("macos", "linux"), ("windows-arm64", "linux-arm64"),
+                            ("macos", "windows"), ("macos-arm64", "windows-arm64")):
+            with self.subTest(sbom=sbom, other=other):
                 self.assertNotEqual(0, self.check({**self.LISTS, sbom: self.LISTS[other]}).returncode)
 
 
