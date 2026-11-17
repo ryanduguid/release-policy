@@ -59,13 +59,16 @@ at all, because the upload job skips forks (#297, #299).
 
 `canaries.json` records the v0.4.0 release run as the binary family's evidence
 (#293). `release.yml` and the disposable binary canary now call
-`release-binary.yml` at #302's merge commit, so the live canary audit fails
+`release-binary.yml` at #310's merge commit, including the later pinned build-tool update, so the live canary audit fails
 for the binary family until v0.5.0's release run is recorded.
 
 Moving a binary pin to this release can fail a release that passed before:
 the consumer's code and tests must build and pass on all 6 targets. No other
 family changed since v0.4.0; `scripts/pin_families.py <old-commit>
 <new-commit>` names the families that changed.
+
+Dependency updates through #310 also update Rust dependencies, lint tools and
+pinned GitHub Actions (#304 to #307 and #310).
 
 The `release-policy` executable ships for all 6 targets and gains `init`. The
 workflows still run the Python scripts.
