@@ -731,9 +731,9 @@ jobs:
       # cargo-auditable embeds the target's own dependency list: a direct and
       # a transitive dependency on each, and a platform crate only on its
       # platforms. The list also keeps optional dependencies cargo tree drops,
-      # so rustix's errno and libc appear for Linux too; core-foundation-sys
-      # is the crate only macOS lists (the self-check archives, 10 November
-      # 2026).
+      # so rustix's errno and libc appear for Linux too. No crate is listed by
+      # macOS alone since chrono went: macOS lists rustix, as Linux does, but
+      # not linux-raw-sys (the self-check archives, 18 November 2026).
       - name: Require each SBOM to describe its own target's dependencies
         run: |
           set -euo pipefail
@@ -745,11 +745,11 @@ jobs:
           done
           lists linux linux-raw-sys
           lists linux-arm64 linux-raw-sys
-          lists macos core-foundation-sys
-          lists macos-arm64 core-foundation-sys
+          lists macos rustix
+          lists macos-arm64 rustix
           lists windows windows-sys
           lists windows-arm64 windows-sys
-          if lists linux windows-sys || lists linux-arm64 core-foundation-sys \
+          if lists linux windows-sys || lists linux-arm64 windows-sys \
               || lists macos linux-raw-sys || lists macos-arm64 linux-raw-sys \
               || lists windows rustix || lists windows-arm64 rustix; then
             echo "an SBOM lists another platform's crate" >&2
