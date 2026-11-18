@@ -36,6 +36,7 @@ class InstallerTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.engine = Path(self.directory.name)
         (self.engine / "uv.lock").write_text("fixture")
+        (self.engine / "pr-review-runtime-requirements.txt").write_text("html2text==2024.2.26\n")
         self.packages = locked_packages()
         self.git = self.enterContext(mock.patch.object(installer.subprocess, "run", side_effect=[
             types.SimpleNamespace(stdout=review.PR_AGENT_SHA), types.SimpleNamespace(stdout="")]))
@@ -65,9 +66,20 @@ class InstallerTests(unittest.TestCase):
                 installer.prepare_sources(self.engine)
         self.opener.assert_not_called()
 
+    def test_source_package_outside_the_runtime_set_is_not_fetched(self):
+        optional = {**self.packages[0], "name": "giteapy", "version": "1.0.8"}
+        self.toml.return_value = {"package": self.packages + [optional]}
+        installer.prepare_sources(self.engine)
+        self.assertNotIn("giteapy", (self.engine / "pr-review-source-exceptions.txt").read_text())
+        self.assertEqual(self.opener.return_value.open.call_count, len(installer.EXCEPTIONS))
+
     def test_unexpected_or_duplicate_source_package_is_not_added(self):
-        for packages in (self.packages[:1], self.packages + [self.packages[0]],
-                         [self.packages[0], {**self.packages[1], "version": "wrong"}]):
+        optional = {**self.packages[0], "name": "giteapy", "version": "1.0.8"}
+        for packages, runtime in (([], "html2text==2024.2.26\n"),
+                                  (self.packages + [self.packages[0]], "html2text==2024.2.26\n"),
+                                  ([{**self.packages[0], "version": "wrong"}], "html2text==2024.2.26\n"),
+                                  (self.packages + [optional], "html2text==2024.2.26\ngiteapy==1.0.8\n")):
+            (self.engine / "pr-review-runtime-requirements.txt").write_text(runtime)
             self.git.side_effect = [types.SimpleNamespace(stdout=review.PR_AGENT_SHA), types.SimpleNamespace(stdout="")]
             self.toml.return_value = {"package": packages}
             with self.assertRaisesRegex(review.ReviewError, "unexpected_source_dependency"):
@@ -75,25 +87,25 @@ class InstallerTests(unittest.TestCase):
         self.opener.assert_not_called()
 
     def test_archive_origin_filename_size_and_checksum_fail_closed(self):
-        variants = [{"url": "http://files.pythonhosted.org/giteapy-1.0.8.tar.gz"},
+        variants = [{"url": "http://files.pythonhosted.org/html2text-2024.2.26.tar.gz"},
                     {"url": "https://files.pythonhosted.org/packages/other.tar.gz"},
                     {"size": True}, {"size": 0}, {"size": 1_000_001},
                     {"size": len(RAW) + 1}, {"hash": "sha256:" + "0" * 64}]
         for changes in variants:
             with self.subTest(changes=changes):
                 self.git.side_effect = [types.SimpleNamespace(stdout=review.PR_AGENT_SHA), types.SimpleNamespace(stdout="")]
-                self.toml.return_value = {"package": [{**self.packages[0], "sdist": {**self.packages[0]["sdist"], **changes}}, self.packages[1]]}
+                self.toml.return_value = {"package": [{**self.packages[0], "sdist": {**self.packages[0]["sdist"], **changes}}]}
                 with self.assertRaises(review.ReviewError):
                     installer.prepare_sources(self.engine)
         self.git.side_effect = [types.SimpleNamespace(stdout=review.PR_AGENT_SHA), types.SimpleNamespace(stdout="")]
-        self.toml.return_value = {"package": [{**self.packages[0], "source": {"registry": "https://other.invalid"}}, self.packages[1]]}
+        self.toml.return_value = {"package": [{**self.packages[0], "source": {"registry": "https://other.invalid"}}]}
         with self.assertRaisesRegex(review.ReviewError, "untrusted_archive_source"):
             installer.prepare_sources(self.engine)
         self.assertFalse((self.engine / "pr-review-source-exceptions.txt").exists())
 
     def metadata_fixture(self, requirements=None, distributions=None):
         if requirements is None:
-            requirements = "giteapy==1.0.8\nhtml2text==2024.2.26\nabsent==1 ; python_version < '1'\n"
+            requirements = "html2text==2024.2.26\nabsent==1 ; python_version < '1'\n"
         (self.engine / "pr-review-runtime-requirements.txt").write_text(requirements)
         items = [types.SimpleNamespace(metadata={"Name": name}, version=version)
                  for name, version in installer.EXCEPTIONS.items()]
@@ -119,7 +131,7 @@ class InstallerTests(unittest.TestCase):
     def test_source_distribution_metadata_is_rechecked(self):
         distribution = self.metadata_fixture()
         distribution.side_effect = None
-        for name, version in (("other", "1.0.8"), ("giteapy", "wrong")):
+        for name, version in (("other", "2024.2.26"), ("html2text", "wrong")):
             distribution.return_value = types.SimpleNamespace(metadata={"Name": name}, version=version)
             with self.assertRaisesRegex(review.ReviewError, "source_package_metadata_mismatch"):
                 installer.verify_packages(self.engine)

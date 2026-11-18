@@ -133,14 +133,16 @@ provides no verdict. A complete review containing findings is shown as such.
 
 The only permitted models are `z-ai/glm-5.3` and `xiaomi/mimo-v2.6-pro`.
 PR-Agent's review prompt, token budget and output type are reused from commit
-`3be92e293fc55b24a54aa303595e9eaa32519954` of
-[PR-Agent](https://github.com/The-PR-Agent/pr-agent), the first commit with
-PyYAML 6.0.3 wheels for Python 3.14.
-The dependency lock is installed with uv 0.13.5, without cache reads. The
+`06a2991c0ce6b055c77fbcbd7f09faf4c5acfcaf` of
+[PR-Agent](https://github.com/The-PR-Agent/pr-agent), the first commit whose
+uv requirement accepts uv 0.13.4 or later, which GHSA-hq85-5cpj-mr62 requires.
+Later releases rename the merge recommendation values this report uses.
+The dependency lock is installed with uv 0.13.9, without cache reads. The
 workflow omits project installation and imports PR-Agent from the trusted pinned
 checkout through `PYTHONPATH`. Its lock has no other local or editable package.
-The runtime sync rejects source builds. The two source-only dependencies,
-`giteapy==1.0.8` and `html2text==2024.2.26`, use separate hash-verified archives
+Optional provider integrations, including the source-only `giteapy`, are not
+installed. The runtime sync rejects source builds. The source-only runtime
+dependency, `html2text==2024.2.26`, uses a separate hash-verified archive
 from that lock, fixed backend wheels and an offline install with no dependency
 resolution or build isolation. The backend packages are then removed and the
 complete runtime lock is checked again before the model key is injected.

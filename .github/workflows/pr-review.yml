@@ -185,7 +185,7 @@ jobs:
       - name: Set up the engine's locked installer
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.5"
+          version: "0.13.9"
           enable-cache: false
       - name: Install trusted PR-Agent without model credentials
         shell: bash
@@ -193,11 +193,13 @@ jobs:
           set -euo pipefail
           git init engine
           git -C engine remote add origin https://github.com/The-PR-Agent/pr-agent.git
-          git -C engine fetch --depth=1 origin 3be92e293fc55b24a54aa303595e9eaa32519954
+          git -C engine fetch --depth=1 origin 06a2991c0ce6b055c77fbcbd7f09faf4c5acfcaf
           git -C engine checkout --detach FETCH_HEAD
           cd engine
           uv sync --frozen --python 3.14 --no-dev --no-install-project --no-build --no-cache \
-            --no-install-package giteapy --no-install-package html2text
+            --no-install-package html2text
+          uv export --frozen --no-dev --no-emit-project --no-hashes --no-header --no-annotate \
+            --no-cache --output-file pr-review-runtime-requirements.txt
           uv pip install --python .venv/bin/python --require-hashes --only-binary :all: \
             --no-deps --no-cache --requirement ../policy/.github/pr-review-build-wheels.txt
           .venv/bin/python ../policy/scripts/pr_review_install.py prepare .
@@ -205,9 +207,7 @@ jobs:
             --no-deps --no-cache --offline --requirement pr-review-source-exceptions.txt
           uv pip uninstall --python .venv/bin/python setuptools wheel
           uv sync --frozen --python 3.14 --no-dev --no-install-project --no-build --no-cache \
-            --no-install-package giteapy --no-install-package html2text --inexact --check
-          uv export --frozen --no-dev --no-emit-project --no-hashes --no-header --no-annotate \
-            --no-cache --output-file pr-review-runtime-requirements.txt
+            --no-install-package html2text --inexact --check
           .venv/bin/python ../policy/scripts/pr_review_install.py verify .
           uv pip check --python .venv/bin/python
       - name: Review both models against identical frozen context
