@@ -28,4 +28,4 @@ jobs:
       mode: central_public_report_v1
       pr-url: ${{ inputs.pr-url }}
     secrets:
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

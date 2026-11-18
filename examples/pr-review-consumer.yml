@@ -35,4 +35,4 @@ jobs:
     # Replace the all-zero SHA with the full reviewed commit containing pr-review.yml.
     uses: ryanduguid/release-policy/.github/workflows/pr-review.yml@0000000000000000000000000000000000000000
     secrets:
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

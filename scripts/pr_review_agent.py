@@ -13,33 +13,37 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
-import math
 import os
 import subprocess
-from decimal import Context, Decimal, localcontext
+from decimal import Decimal, localcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
 
 from pr_review import (
+    _MONEY,
+    ANTHROPIC_API,
     MODELS,
     PR_AGENT_SHA,
     REVIEW_SCHEMA,
     ReviewError,
+    call_cost,
     canonical,
     chunks,
     digest,
+    guard_amount,
     request_json,
     require,
-    reserve_budget,
     validate_completion,
     validate_review,
 )
 
-# Fixed context ceiling; the byte-based input allowance is a local estimate.
-# Runtime usage and exact-route canaries can detect underestimation.
-CONTEXT_TOKENS = 1_048_576
-_MONEY = Context(prec=700)
+# Fixed context ceiling. The byte-based input allowance is checked against
+# Anthropic's token counter before any paid call and against usage after it.
+CONTEXT_TOKENS = 1_000_000
+# Structured outputs refuse these keywords with a 400; validate_review and the
+# native model still enforce every one of them on each response.
+_UNSUPPORTED_SCHEMA_KEYWORDS = {"minLength", "maxLength", "maxItems", "minimum"}
 
 
 def input_token_bound(body: dict[str, Any]) -> int:
@@ -48,25 +52,20 @@ def input_token_bound(body: dict[str, Any]) -> int:
     return bound
 
 
-def guard_amount(value: Decimal) -> float:
-    """Pass a one-sided bound to the existing numeric key guard and reports."""
-    amount = float(value)
-    return math.nextafter(amount, math.inf) if Decimal.from_float(amount) < value else amount
+def wire_schema(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: wire_schema(item) for key, item in value.items() if key not in _UNSUPPORTED_SCHEMA_KEYWORDS}
+    return value
 
 
 def request_body(model: str, policy: dict[str, Any], system: str, user: str) -> dict[str, Any]:
     require(model in MODELS, "forbidden_model_or_fallback")
-    route = policy["routes"][model]
-    return {"model": model, "messages": [{"role": "system", "content": system},
-                                            {"role": "user", "content": user}],
-            "max_tokens": policy["output_tokens"], "temperature": 0, "stream": False,
-            "response_format": {"type": "json_schema", "json_schema": {
-                "name": "pr_review", "strict": True, "schema": REVIEW_SCHEMA}},
-            "reasoning": {"effort": "high"} if model == MODELS[0] else {"enabled": True},
-            "provider": {"only": [route["slug"]], "allow_fallbacks": False,
-                         "quantizations": ["fp8"],
-                         "require_parameters": True, "data_collection": "deny",
-                         "max_price": {"prompt": route["prompt"], "completion": route["completion"]}}}
+    # "global" overrides any workspace default of US-only inference, billed at 1.1 times.
+    return {"model": model, "max_tokens": policy["output_tokens"], "system": system,
+            "messages": [{"role": "user", "content": user}], "thinking": {"type": "adaptive"},
+            "output_config": {"effort": "high",
+                              "format": {"type": "json_schema", "schema": wire_schema(REVIEW_SCHEMA)}},
+            "inference_geo": "global"}
 
 
 def prepare_prompts(snapshot: dict[str, Any], groups: list[list[dict[str, Any]]],
@@ -155,15 +154,14 @@ def prepare_prompts(snapshot: dict[str, Any], groups: list[list[dict[str, Any]]]
         settings.set("pr_review_prompt.system", system_template)
         settings.set("pr_review_prompt.user", user_template)
         for model in MODELS:
-            native_model = "openrouter/" + model
             for field in ("model", "model_weak", "model_reasoning"):
-                settings.set("config." + field, native_model)
-            reviewer = FrozenReviewer(native_model)
+                settings.set("config." + field, model)
+            reviewer = FrozenReviewer(model)
             prompts = []
             for group in groups:
                 # JSON encodes source delimiters and file names without allowing
                 # them to alter the prompt template or add another message role.
-                await reviewer._get_prediction(native_model, canonical(group).decode())
+                await reviewer._get_prediction(model, canonical(group).decode())
                 prompts.append(reviewer.ai_handler.prompt)
             result[model] = prompts
         settings.set("pr_review_prompt.system", original_system)
@@ -213,64 +211,58 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
                     send: Callable[..., Any] = request_json,
                     prompt_builder: Callable[..., Any] = prepare_prompts,
                     parser: Callable[[str], Any] = parse_review, *,
-                    receipt_path: Path | None = None,
-                    metadata_lookup: Callable[..., Any] | None = None) -> dict[str, Any]:
-    key = os.environ.get("OPENROUTER_API_KEY", "")
-    require(key, "openrouter_key_not_provisioned")
+                    receipt_path: Path | None = None) -> dict[str, Any]:
+    # Only this transport receives the key; PR-Agent and its dependencies,
+    # imported later, cannot read it from the environment.
+    key = os.environ.pop("ANTHROPIC_API_KEY", "")
+    require(key, "anthropic_key_not_provisioned")
     groups = chunks(snapshot, policy)
     prompts = prompt_builder(snapshot, groups, policy)
     require(prompts[MODELS[0]] == prompts[MODELS[1]], "independent_context_mismatch")
     bodies = {model: [request_body(model, policy, system, user) for system, user in prompts[model]]
               for model in MODELS}
-    # Local reservation estimate: one input token per UTF-8 byte plus a fixed
-    # margin and output including reasoning. Upstream token counts may differ.
+    bounds = {model: [input_token_bound(body) for body in bodies[model]] for model in MODELS}
+    # Each call may bill at most its input bound and output cap at list prices,
+    # and usage beyond either fails the review, so no call can spend past this.
     with localcontext(_MONEY):
-        call_reservations = {
-            model: [(Decimal(input_token_bound(body)) * Decimal(str(policy["routes"][model]["prompt"]))
-                     + Decimal(policy["output_tokens"]) * Decimal(str(policy["routes"][model]["completion"])))
-                    / Decimal(1_000_000) for body in bodies[model]] for model in MODELS}
-        reservation = sum((value for values in call_reservations.values() for value in values), Decimal(0))
+        reservation = sum((call_cost({"input_tokens": bound, "output_tokens": policy["output_tokens"]},
+                                     policy["prices"][model]) for model in MODELS for bound in bounds[model]),
+                          Decimal(0))
     require(reservation <= Decimal(str(policy["max_review_usd"])), "review_budget_exceeded")
     guarded_reservation = guard_amount(reservation)
-    reserve_budget(send("https://openrouter.ai/api/v1/key", key), policy, guarded_reservation)
     if snapshot.get("snapshot_kind") == "central_public_report_v1":
         from pr_review_public import verify_live
         verify_live(snapshot, policy, snapshot["policy_sha"])
-    from pr_review_receipts import ReceiptJournal, empty_lookup, metadata
-    journal = ReceiptJournal(receipt_path, snapshot, groups, policy, guarded_reservation,
-                             lookup_enabled=metadata_lookup is not None)
-    report: dict[str, Any] = {"schema": 2, "context_hash": snapshot["context_hash"],
+    # The byte bound is not a documented token ceiling: Anthropic's own count
+    # must fit it, leaving the 1,000-token margin for the count's estimate error.
+    for model in MODELS:
+        for body in bodies[model]:
+            counted = send(ANTHROPIC_API + "messages/count_tokens", key,
+                           {field: body[field] for field in body if field not in ("max_tokens", "inference_geo")})
+            require(isinstance(counted, dict) and type(counted.get("input_tokens")) is int  # pylint: disable=unidiomatic-typecheck
+                    and 0 < counted["input_tokens"] <= len(canonical(body)), "unbounded_input_tokens")
+    from pr_review_receipts import ReceiptJournal, metadata
+    journal = ReceiptJournal(receipt_path, snapshot, groups, guarded_reservation)
+    report: dict[str, Any] = {"schema": 3, "context_hash": snapshot["context_hash"],
                               "engine_sha": PR_AGENT_SHA, "complete": False,
                               "remaining_files": [f["path"] for f in snapshot["files"]],
-                              "failed_chunks": 0, "spending_mode": policy["spending_mode"],
-                              "reservation_usd": guarded_reservation, "reviews": []}
+                              "failed_chunks": 0, "reservation_usd": guarded_reservation, "reviews": []}
     spent = Decimal(0)
-    remaining_reservation = reservation
     generation_ids: set[str] = set()
     ordinal = 0
     for model in MODELS:
-        entry: dict[str, Any] = {"model": model, "provider": policy["routes"][model]["name"],
-                                 "chunk_hashes": [], "results": [], "generations": []}
-        for group, body, call_reservation in zip(groups, bodies[model],
-                                                          call_reservations[model], strict=True):
-            require(_MONEY.add(spent, remaining_reservation) <= reservation, "unexpected_billed_cost")
+        entry: dict[str, Any] = {"model": model, "chunk_hashes": [], "results": [], "generations": []}
+        for group, body, bound in zip(groups, bodies[model], bounds[model], strict=True):
             journal.update(ordinal, transport_state="request_intended")
-            response = send("https://openrouter.ai/api/v1/chat/completions", key,
-                            body,
+            response = send(ANTHROPIC_API + "messages", key, body, timeout=600,
                             response_observer=lambda: journal.update(ordinal, transport_state="response_observed"))
-            receipt = metadata(response, model, policy["routes"][model]["name"],
-                               output_tokens=policy["output_tokens"])
+            receipt = metadata(response, model, policy["prices"][model], output_tokens=policy["output_tokens"])
             journal.update(ordinal, transport_state="response_received", **receipt)
-            if metadata_lookup is not None:
-                journal.update(ordinal, generation_metadata=empty_lookup(
-                    "lookup_intended" if receipt["generation_id_valid"] else "not_eligible"))
-                journal.update(ordinal, generation_metadata=metadata_lookup(
-                    response, model, policy["routes"][model]["name"], key))
             category = "completion_contract"
             try:
-                content = validate_completion(response, model, policy["routes"][model])
-                require(response["usage"]["prompt_tokens"] <= input_token_bound(body)
-                        and response["usage"]["completion_tokens"] <= policy["output_tokens"],
+                content = validate_completion(response, model)
+                require(response["usage"]["input_tokens"] <= bound
+                        and response["usage"]["output_tokens"] <= policy["output_tokens"],
                         "unexpected_token_usage")
                 require(receipt["generation_id_valid"] and response["id"] not in generation_ids,
                         "unusable_or_duplicate_generation_id")
@@ -286,20 +278,19 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
             except Exception:
                 journal.update(ordinal, output_state="indeterminate", diagnostic_category="unexpected_runtime")
                 raise ReviewError("invalid_model_output") from None
-            spent = _MONEY.add(spent, Decimal(str(response["usage"]["cost"])))
-            remaining_reservation = _MONEY.subtract(remaining_reservation, call_reservation)
-            require(spent <= reservation and spent <= Decimal(str(policy["max_review_usd"])),
-                    "unexpected_billed_cost")
+            spent = _MONEY.add(spent, call_cost(response["usage"], policy["prices"][model]))
             generation_ids.add(response["id"])
             journal.update(ordinal, output_state="valid")
             entry["results"].append(review)
             entry["chunk_hashes"].append(digest(group))
-            entry["generations"].append({"generation_id_sha256": receipt["generation_id_sha256"], "finish_reason": "stop",
-                                         "usage": {field: response["usage"][field]
-                                                   for field in ("prompt_tokens", "completion_tokens", "cost")}})
+            entry["generations"].append({"generation_id_sha256": receipt["generation_id_sha256"],
+                                         "stop_reason": "end_turn",
+                                         "usage": {"input_tokens": response["usage"]["input_tokens"],
+                                                   "output_tokens": response["usage"]["output_tokens"],
+                                                   "cost": receipt["usage"]["cost"]}})
             ordinal += 1
         report["reviews"].append(entry)
-    report.update(complete=True, remaining_files=[], spent_usd=float(spent))
+    report.update(complete=True, remaining_files=[], spent_usd=guard_amount(spent))
     public_bytes = canonical(report)
     require(all(identifier.encode("ascii") not in public_bytes for identifier in generation_ids),
             "raw_generation_id_in_report")

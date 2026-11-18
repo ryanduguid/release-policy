@@ -1,7 +1,11 @@
-# Independent PR reviews with your own API key
+# Claude PR reviews with your own API key
 
-This workflow runs GLM 5.3 and MiMo V2.6 Pro independently against the same
-frozen PR evidence. It starts advisory. It does not approve or merge PRs.
+This workflow runs Claude Opus 5.5 and Claude Sonnet 5.5 separately, through
+Anthropic's API, against the same frozen PR evidence. Both reviewers are
+Claude models from one vendor. They are not independent of each other, and
+neither is independent of a PR that Claude wrote. The status keeps its
+existing name, **Independent PR review (advisory)**, for existing callers.
+It starts advisory. It does not approve or merge PRs.
 Tests, linters, security checks and human review remain necessary.
 
 ## Provision and install
@@ -9,9 +13,8 @@ Tests, linters, security checks and human review remain necessary.
 1. Publish the reviewed policy change and record its full commit SHA. The
    commit must contain `.github/workflows/pr-review.yml`; a SHA from before
    this change cannot run it. Consumer repositories migrate separately.
-2. The supplied policy uses `spending_mode: payg`, as authorised for the
-   existing OpenRouter key. Put the key in
-   an Actions secret named `OPENROUTER_API_KEY` in each participating repository,
+2. Put an Anthropic API key in
+   an Actions secret named `ANTHROPIC_API_KEY` in each participating repository,
    or use an organisation secret with access restricted to those repositories.
    The workflow passes this one secret explicitly. It does not use
    `secrets: inherit`. Never put a key in source, a PR, an issue or a Hub note.
@@ -32,10 +35,10 @@ Tests, linters, security checks and human review remain necessary.
    [GitHub's requirements](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target).
    GitHub's announced enforcement date is 2 November 2026.
 5. Run a manual review of an open, non-draft public PR. Confirm both generation
-   ID digests, model IDs, provider names, billed usage and coverage in `review.json`.
+   ID digests, model IDs, token usage, computed costs and coverage in `review.json`.
    Inspect the publisher's summary and the status on that exact head commit.
-   Test key limit/reset metadata, exhaustion and concurrent capped requests,
-   missing keys, stale revisions, provider failures, forks, Dependabot,
+   Test missing keys, a refused token count, an over-budget PR,
+   stale revisions, API failures, forks, Dependabot,
    PRs that share a commit, rejected reruns and cancellation before rolling out to
    other repositories.
 
@@ -129,9 +132,12 @@ and base check is not an atomic attestation of a branch that may advance later.
 If a model job fails, the summary states that the review is incomplete and
 provides no verdict. A complete review containing findings is shown as such.
 
-## Models, routes and spending
+## Models and spending
 
-The only permitted models are `z-ai/glm-5.3` and `xiaomi/mimo-v2.6-pro`.
+The only permitted models are `claude-opus-5-5` and `claude-sonnet-5-5`,
+called in that order through Anthropic's
+[Messages API](https://platform.claude.com/docs/en/api/messages/create) with
+API version `2026-10-21`.
 PR-Agent's review prompt, token budget and output type are reused from commit
 `06a2991c0ce6b055c77fbcbd7f09faf4c5acfcaf` of
 [PR-Agent](https://github.com/The-PR-Agent/pr-agent), the first commit whose
@@ -147,80 +153,78 @@ from that lock, fixed backend wheels and an offline install with no dependency
 resolution or build isolation. The backend packages are then removed and the
 complete runtime lock is checked again before the model key is injected.
 Another missing wheel stops installation. These pinned dependencies remain
-executable third-party code in the later reviewer process. PR-Agent's package metadata
+executable third-party code in the later reviewer process. The runner removes
+the key from its environment before it imports PR-Agent. PR-Agent's package metadata
 at that commit says 0.47.0; the commit is the version boundary.
 The adapter preserves the native review rules and type definitions, and
 replaces its YAML example and user response prefix with JSON instructions
 before tokenisation. A
 changed native prompt layout fails before inference.
-Both requests include the same strict JSON schema in schema mode;
+Both requests include the same strict JSON schema as a structured output;
 an explicit nesting example keeps all four required fields inside `review`.
-The fixed Xiaomi route must pass exact-schema qualification before a caller
-migrates to this source. The previous JSON object request could produce valid
-JSON that failed native validation. There is no schema downgrade or repair.
-Local and native
-validators check every response, including fields, priority tags and source
-locations.
+Anthropic refuses length, numeric and array-limit keywords in that schema, so
+the request omits `minLength`, `maxLength`, `maxItems` and `minimum`.
+There is no schema downgrade or repair. Local and native
+validators check every response, including those limits, fields, priority
+tags and source locations.
 
-| Model | Pinned OpenRouter route | Maximum input / output per million tokens |
-| --- | --- | --- |
-| GLM 5.3 | `novita/fp8` | US$1.40 / US$4.40 |
-| MiMo V2.6 Pro | `xiaomi/fp8` | US$0.435 / US$0.87 |
+Each request uses adaptive thinking at high effort and caps thinking and
+answer together at 16,000 output tokens. It requests global inference, which
+is billed at standard prices and overrides a workspace default of US-only
+inference. API version `2026-10-21` removes temperature, so none is sent.
+Requests use no fallbacks, tools, prompt caching, fast mode or service tier.
+An unexpected returned model fails the review.
 
-These route ceilings were checked on 18 November 2026 against OpenRouter's
-[GLM endpoint metadata](https://openrouter.ai/api/v1/models/z-ai/glm-5.3/endpoints)
-and [MiMo endpoint metadata](https://openrouter.ai/api/v1/models/xiaomi/mimo-v2.6-pro/endpoints).
-Every request explicitly selects FP8 serving, uses PR-Agent's configured
-temperature of zero, disables routing fallbacks, requires parameter support,
-denies provider data collection and caps prices. An unexpected returned model or
-provider fails the review. GLM requests high reasoning effort; MiMo requests
-reasoning enabled, because its advertised controls differ.
+| Model | Input / output per million tokens |
+| --- | --- |
+| Claude Opus 5.5 | US$4 / US$20 |
+| Claude Sonnet 5.5 | US$2 / US$10 |
 
-The trusted policy explicitly selects PAYG spending. The runner authenticates
-the key before inference and accepts an uncapped key only when both `limit`
-and `limit_remaining` are present and null. A key with a limit must report a
-positive finite limit and sufficient finite remaining budget. PAYG does not
-require a particular reset period or BYOK setting, and does not claim that
-those settings bound spending.
+These are the list prices on Anthropic's
+[pricing page](https://platform.claude.com/docs/en/about-claude/pricing),
+checked on 18 November 2026. A price change needs a reviewed policy change.
 
-For a provider-enforced key limit, a reviewed policy can select
-`spending_mode: capped`. That mode requires BYOK charges to count towards the
-limit and permits only a nonrenewing limit up to US$100 or a monthly limit up
-to US$350. Its reset and BYOK guards follow
-[OpenRouter's key contract](https://openrouter.ai/docs/api/api-reference/api-keys/create-keys).
+An ordinary API key cannot read its balance or spending limit, so the runner
+does not check them. It reserves, for every planned call of both models, the
+complete request size in bytes plus 1,000 input tokens and the 16,000-token
+output cap, at the policy's prices. A review may use at most 12 chunks and
+reserve at most US$3; otherwise it stops before any call. One full
+180,000-byte chunk fits. Two chunks fit only when their requests total about
+340,000 bytes or less. Source that exceeds this limit needs human review.
 
-The runner uses a conservative local reservation estimate from the complete
-request payload, including its response schema and a fixed safety margin, plus up to
-32,768 output tokens per chunk for reasoning and the final answer. This
-allowance is a qualification candidate until immutable live canaries complete.
-A review
-may use at most 12 chunks and reserve at most US$3. Source that exceeds this
-limit needs human review. Actual billed usage is recorded after each call;
-an unexpected bill stops another call when its remaining reservation no
-longer fits. Requests have no automatic paid retries.
+Before the first paid call, the runner sends each planned request to
+Anthropic's free
+[token counting endpoint](https://platform.claude.com/docs/en/build-with-claude/token-counting).
+A failed count, or a count above the request's size in bytes, stops the review
+before any paid call. Anthropic describes the count as an estimate; the
+1,000-token margin covers that difference. No Anthropic document guarantees a
+token ceiling for a byte count, so the bound rests on that counter.
 
-The US$3 software reservation limit applies to one review. Bills are checked
-after responses; a provider that exceeds its advertised price or token limit
-can charge more before the review fails. In PAYG mode, concurrent runs and
-other key activity accumulate charges without an account-wide or monthly
-cap. Provider price and token limits constrain each request; the reservation
-is not a shared account ledger. Funding fees and charges on other provider
-accounts are outside the recorded OpenRouter inference bill.
+After each response, the runner requires input tokens within the reservation,
+output tokens within the cap, no cache tokens, and standard speed and service
+tier. It computes the call's cost from those counts at the list prices and
+rounds it up. Any breach fails the review and stops later calls; its recorded
+value is preserved. The computed cost is not Anthropic's bill, which the
+Anthropic Console shows. Requests have no automatic paid retries.
 
-The provisional US$350 monthly forecast is a planning estimate while PAYG is
-enabled. The earlier forecast of about US$0.105 per pair assumed
-40,000 input and 6,000 billed output tokens for each model. Actual cost depends
-on source size, reasoning, revisions and provider billing. Do not replace a
-failed request with another model.
+The US$3 reservation applies to one review. It is not an account-wide cap:
+concurrent runs and other use of the same key accumulate charges outside it,
+as would Anthropic billing that differs from its list prices. Do not replace
+a failed request with another model.
 
-Nous is not enabled for unattended reviews. Its
-[routing contract](https://hermes-agent.nousresearch.com/docs/integrations/nous-portal)
-allows backend changes and says OpenRouter-specific provider preferences may
-be ignored. It needs verified price, parameter and model identity controls
-before activation. Private repositories are blocked before file
-contents are fetched. Private support needs verified zero data retention
-routes for both models and explicit source-sharing authorisation. The current
-policy cannot be changed to enable private reviews by flipping a flag.
+Anthropic's
+[API and data retention](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention)
+page, read on 18 November 2026, says retained data is never used for model
+training without express permission, and that conversation content (prompts
+and Claude's outputs) is not retained by default, except for Covered Models,
+which this workflow does not use. Content flagged by Anthropic's automated
+trust and safety systems may be retained for up to 2 years. Structured output
+schemas are cached for up to 24 hours since last use.
+
+Private repositories are blocked before file contents are fetched. Private
+support needs a verified data retention arrangement and explicit
+source-sharing authorisation. The current policy cannot be changed to enable
+private reviews by flipping a flag.
 
 ## Evidence and failure behaviour
 
@@ -255,11 +259,11 @@ Findings use absolute after-source lines, or before-source lines for removed
 files. They must refer to a file supplied in that same call.
 
 The larger ceiling expands whole-file eligibility. The client constructs and
-transmits every admitted record to each authorised route. Response identity and
+transmits every admitted record to each model. Response identity and
 coverage checks establish structural completion, without provider-internal
 attestation or model accuracy. Universal PR coverage and understanding across
 separate chunks remain unqualified. Fragmentation is not enabled; related
-regions of each accepted file remain together in one request to each route.
+regions of each accepted file remain together in one request to each model.
 
 The Dependabot bridge takes the PR number from the triggering run's REST
 `pull_requests` record. It requires exactly one association, the current head
@@ -269,17 +273,18 @@ another PR. Missing or ambiguous run associations stop the review.
 
 The model step receives frozen data and the model key. It cannot write a
 GitHub status. It runs no PR code, loads no PR settings, follows no PR links
-and has no reviewer, helper or model fallback. Requests to both routes contain
+and has no reviewer, helper or model fallback. Requests to both models contain
 identical prompts without PR author rationale or the other model's verdict.
 The native engine must match the pin and have no changed tracked engine files
 or secret configuration files.
 
-Every completion must end normally, identify the expected model and provider,
-report billed usage and parse as strict JSON against PR-Agent's review type.
-Duplicate keys, missing fields, invalid finding locations, partial chunks,
-empty responses and truncated output fail. An unexpected bill invalidates the
-review and stops later calls; its recorded value is preserved. No automatic
-paid retries run.
+Every completion must end normally (`end_turn`), identify the expected model,
+report token usage at standard rates, contain one text answer and parse as
+strict JSON against PR-Agent's review type. Refusals, output cut at the token
+cap, tool calls, duplicate keys, missing fields, invalid finding locations,
+partial chunks and empty responses fail. Usage beyond the reservation
+invalidates the review and stops later calls; its recorded value is preserved.
+No automatic paid retries run.
 
 The publisher has no model key. It checks the context/policy/engine hashes,
 both distinct models, every chunk and the current head/base before success.
@@ -318,16 +323,16 @@ artefacts expire after 30 days. The runner atomically saves a bounded journal
 before each intended paid request and saves response metadata before parsing
 model content. A content-free `response_observed` transition is saved before
 reading or decoding the response envelope; malformed JSON leaves an observed
-response with unknown ID and bill. The upload step runs even after ordinary validation failures.
-A malformed response therefore retains earlier and current known generation
-ID digests, token counts and bills. A transport failure can leave an intended request
-with an unknown ID and bill; a missing bill is never recorded as zero.
+response with unknown ID and cost. The upload step runs even after ordinary validation failures.
+A malformed response therefore retains earlier and current known message
+ID digests, token counts and computed costs. A transport failure can leave an intended request
+with an unknown ID and cost; a missing cost is never recorded as zero.
 
-Receipt journal version 2 adds `diagnostic_category` to every call. It is null
+Every receipt call records a `diagnostic_category`. It is null
 before validation and for accepted output. Rejected output records exactly one
 fixed category for the first failed stage:
 
-- `completion_contract` covers model/provider, finish, usage and generation checks.
+- `completion_contract` covers model, stop reason, content, usage and message ID checks.
 - `json_syntax` covers JSON decoding failures.
 - `duplicate_keys` covers repeated decoded object members, including nested objects.
 - `root_or_nesting` covers a non-object root or a present `review` container that is not an object.
@@ -339,13 +344,12 @@ must not count as a model format failure. Transport, reservation and billed-cost
 ceilings, receipt writes, capture identity, rendering and status operations
 retain their separate failure paths.
 The categories come from trusted validation stages. Exception messages, field
-paths, arbitrary keys, values and excerpts are never included. Old version-one
-receipts remain unclassified; their original failures cannot be reconstructed.
+paths, arbitrary keys, values and excerpts are never included.
 There is no output repair, coercion, fence removal or paid retry.
 
-Receipts contain the planned model/provider and chunk hash, transport and
-validation states, the fixed diagnostic category, a generation ID digest, identity-match booleans, an allowed
-finish reason and finite usage numbers. They exclude source, prompts, response
+Receipts contain the planned model and chunk hash, transport and
+validation states, the fixed diagnostic category, a message ID digest, a model-match boolean, an allowed
+stop reason, token counts and the computed cost. They exclude source, prompts, response
 content, unexpected identity strings, headers and raw errors. Receipt write
 failures stop subsequent calls. The journal cannot authorise a verdict, release
 a reservation or replay an inference. Forced cancellation or runner loss can
@@ -355,58 +359,25 @@ Both publishers require the model job to succeed, including receipt upload,
 before downloading or assessing a complete report. Receipt failures can veto
 completeness; receipts cannot establish it.
 
-Receipt journal version 3 adds `usage.reasoning_tokens`. The only permitted
-source is `usage.completion_tokens_details.reasoning_tokens`. An exact
-non-negative integer must fit both the valid completion count and the requested
-output allowance. Missing, invalid or excessive values become null. No reasoning
-text or other nested usage fields are retained. The count is diagnostic: it
-cannot change billing, release a reservation, authorise another call, accept
-output or select a status. Old journals do not supply this measurement; an
-absent count is never interpreted as zero. Public report schema 2 is unchanged.
+Production commands write receipt journal version 5. Its `usage` holds
+`input_tokens`, `output_tokens`, `thinking_tokens` and `cost`. The only
+permitted source for `thinking_tokens` is
+`usage.output_tokens_details.thinking_tokens`; an exact non-negative integer
+must fit both the output count and the output cap, or it becomes null. The
+count is diagnostic: it cannot change the cost, release a reservation,
+authorise another call, accept output or select a status. `cost` is computed
+from the 2 counts at the policy's list prices and rounded up. It is null when
+either count is missing or the response reports cache tokens, fast speed or
+another service tier; a missing cost is never zero. No billing lookup is made:
+Anthropic's usage and cost reports need an Admin key, which the workflow does
+not hold.
 
-Production commands write receipt journal version 4. It preserves the version
-3 fields and adds `generation_metadata`. After the original response receipt
-is durable, the runner may make one GET to OpenRouter's
-[generation metadata endpoint](https://openrouter.ai/docs/api/api-reference/generations/get-generation)
-when a valid ID and matching original identity exist. A fixed trusted subprocess
-has a 15-second execution
-deadline, covering connection and complete body consumption, plus a 10-second
-socket timeout and a 65,536-byte response limit. Credentials and the raw ID pass
-only through its private stdin; output contains the sanitised projection.
-The process uses no shell and is killed and waited for on timeout. Process
-creation and operating-system cleanup add scheduling overhead to the deadline.
-There is no redirect or retry. Immediate record availability is
-unqualified; a failed attempt stays unknown because the raw ID is discarded.
-
-The lookup must match the exact generation ID and planned model/provider, plus
-any identity supplied in the original envelope. It retains only its fixed state,
-a decimal USD cost string and provider-reported latency/generation time in
-milliseconds. Both timing keys must be present and may be null under the
-[published API schema](https://openrouter.ai/openapi.json); valid values must be
-finite, non-negative and no greater than 86,400,000 milliseconds. The namespace
-excludes raw IDs, unexpected identity strings, content, headers and error bodies.
-Lookup states distinguish awaiting response, ineligible ID, lookup intent,
-unavailable, rejected and verified. Lookup intent is saved before dispatch;
-an interrupted attempt can retain that state without proving whether transport
-began. Terminal lookup states describe helper results, not proof that a GET
-was sent. Receipt replacement failures stop execution; existing atomic receipts
-remain available.
-
-Lookup success is optional; durable receipts are mandatory for completion.
-A metadata receipt replacement failure vetoes the report and stops later
-inference, even when the original response is valid. The recorded values are
-prospective diagnostics. They cannot repair a completion,
-release a reservation, authorise another paid call, select a route or publish
-a verdict. Standalone adapters without a lookup retain version 3. Existing
-unknown bills cannot be recovered from generation ID hashes.
-
-Public report schema 2 and journals publish `generation_id_sha256`, the full
-lower-case SHA-256 digest of the exact validated ASCII provider ID. Raw IDs
+Public report schema 3 and journals publish `generation_id_sha256`, the full
+lower-case SHA-256 digest of the exact validated ASCII message ID. Raw IDs
 remain transient for response validation and distinct-call checks. Legacy raw
 ID fields are refused. The digest permits equality comparison and owner-side
-matching to a privately known provider record; it cannot be used directly for
-provider lookup. Cross-account lookup scope has not been verified, so raw IDs
-are withheld from new reports and receipts.
+matching to a privately known message record; it cannot be used directly for
+lookup. Raw IDs are withheld from new reports and receipts.
 
 Anyone who knows or can guess an ID can reproduce its digest and correlate
 records. A digest does not prove receipt, account ownership, independent
@@ -415,7 +386,7 @@ already exposed raw IDs for one day; hashing does not revoke that disclosure.
 
 Model output is escaped in the job
 summary. The workflow publishes statuses and a summary; it does not post PR
-comments. Provider prompts, source and error bodies are absent from logs.
+comments. Prompts, source, error bodies and the key are absent from logs.
 
 ## Benchmark before choosing a lead model
 
@@ -438,7 +409,7 @@ python scripts/pr_review_benchmark.py \
 ```
 
 Public GitHub API access needs enough read quota. Once the pinned PR-Agent
-environment and authorised OpenRouter key are provisioned, use its Python and add
+environment and authorised Anthropic key are provisioned, use its Python and add
 `--run` to make paid calls. Use `--offset` and `--limit` to run measured batches;
 use a fresh output directory for repetitions. Preparation refuses unsupported
 comparisons and oversized cases. Record those as coverage failures, never
@@ -454,7 +425,7 @@ outside those bounds is rejected. For a removed file, it uses the original
 file's bounds. The adapter does not silently move a finding to another line.
 An accepted location establishes only valid bounds, not semantic correctness.
 
-After changing a prompt, schema, policy or route candidate, run the local
+After changing a prompt, schema, policy or model candidate, run the local
 contract regressions and prepare the fixed set using a fresh output directory:
 
 ```bash
@@ -469,7 +440,7 @@ Set `POLICY_SHA` to the reviewed full source commit and make the pinned
 `betterleaks` executable and the Gitleaks rules available as described above.
 Preparation makes no model
 calls; synthetic snapshots have no live publication capability. Unit tests use
-fabricated outputs. Passing them cannot qualify provider behaviour, deletion
+fabricated outputs. Passing them cannot qualify model behaviour, deletion
 recall or human accuracy. Paid reruns require the existing spending authority
 and resolved billing holds. Keep the same six case identities when comparing
 candidate runs, alongside their candidate, context, report and receipt hashes.
@@ -495,18 +466,13 @@ python scripts/pr_review_measurements.py \
 Use a stable, unique attempt identity, such as a workflow run ID and its attempt
 number. Supply one final journal per attempt. Identical copies with the same
 identity count once; conflicting copies fail. Separate attempts keep their
-bills even when generation digests repeat. The summary flags those repeated
-digests. It accepts sanitised journal versions 2, 3 and 4 and sums their recorded
-decimal bills. Those numbers can already contain upstream rounding. Missing
-bills on intended calls remain unknown; `accounting_complete` covers only the
-selected recorded attempts. Funding fees, other account activity and lost
+costs even when message digests repeat. The summary flags those repeated
+digests. It accepts only sanitised journal version 5 and sums its computed
+costs, which are not Anthropic's bill. Missing
+costs on intended calls remain unknown; `accounting_complete` covers only the
+selected recorded attempts. Other account activity and lost
 journals are outside that result. The output cannot overwrite an input journal.
-Version 4 resolves a missing response bill from verified lookup evidence for
-measurement only. Equal decimal bills count once; unequal bills stay visible
-in their original receipt fields and count as an unresolved billing conflict.
-The summary reports response-only, lookup-only, corroborated, unknown and
-conflicting observations. Conflicts are excluded from the known subtotal and
-keep accounting incomplete. This completeness field has no spending authority.
+This completeness field has no spending authority.
 
 Per-model counts separate planned, unstarted, received, accepted, rejected and
 indeterminate calls. Rates include their integer numerator and denominator;
@@ -514,17 +480,15 @@ an empty denominator has no rate. Completion of both models is reported
 separately. Early failure makes later model observations a selected subset,
 so these counts cannot establish which model reviews code better. The
 `strict_schema` category still combines native, local and finding-location
-checks. Version 4 summaries provide provider-reported timing medians with sample
-counts and attempted-generation denominators. These exclude missing timing
-values and do not measure complete review time or human accuracy.
+checks. The summary does not measure review time or human accuracy.
 
 Keep reference labels out of prompts. Have a person compare each finding
 with source and a reproduction or existing confirmed human evidence. Record
 precision, must-block defect recall, noise on clean controls, location accuracy,
 cost and latency for each model. Repeat serious defects and controls. Do not
-use Claude, Codex or an LLM judge. GLM is the provisional lead; the benchmark
-must determine whether either model earns that role. No model accuracy result
-has been established. Complete live route and event checks before activation.
+use Claude, Codex or an LLM judge. The benchmark must determine whether either
+model earns a lead role. No model accuracy result
+has been established. Complete live model and event checks before activation.
 Record confirmed true, confirmed false, indeterminate and unassessed findings
 separately, with evidence and immutable case/report identities. Known misses
 are not recall unless a human has established the full relevant defect set.
@@ -538,8 +502,8 @@ were adjudicated. An unstarted, failed or unassessed second review cannot prove
 that the first model found a unique defect. Keep partial coverage visible.
 
 Record each model's confirmed false, indeterminate and unassessed findings,
-known inference subtotal, unknown bill count and assessment minutes. Count
+known computed subtotal, unknown cost count and assessment minutes. Count
 shared time for reading source and reconciling findings once. Cost per confirmed defect
-is unavailable when bills are unknown or the defect count is zero. Assessed
+is unavailable when costs are unknown or the defect count is zero. Assessed
 precision is unavailable when its denominator is zero. These measurements
 support a later human comparison; they do not establish a lead model by themselves.
