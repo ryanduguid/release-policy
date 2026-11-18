@@ -171,7 +171,7 @@ class TerminalMetadataTests(unittest.TestCase):
         for value in (None, "gen-bad?query=x", "gen-line\nbreak", "gen-" + "x" * 130):
             self.assertEqual(self.lookup({"id": value}, send)["state"], "not_eligible")
         send.assert_not_called()
-        for change in ({"id": "gen-other"}, {"model": "other"}, {"provider_name": "parasail"},
+        for change in ({"id": "gen-other"}, {"model": "other"}, {"provider_name": "novita"},
                        {"total_cost": True}, {"total_cost": "0"}, {"total_cost": Decimal("NaN")},
                        {"latency": -1}, {"generation_time": receipts.MAX_TIMING_MS + 1}):
             result = self.lookup(send=mock.Mock(return_value=lookup_response(**change)))
@@ -384,7 +384,7 @@ class TerminalMetadataTests(unittest.TestCase):
                                           POLICY, 1, lookup_enabled=True).data
             call = data["calls"][0]
             call.update(receipts.metadata(completion(review.MODELS[0], usage={"cost": response_cost}),
-                        review.MODELS[0], "Parasail"), transport_state="response_received")
+                        review.MODELS[0], "Novita"), transport_state="response_received")
             call["generation_metadata"] = {**receipts.empty_lookup("verified"), "total_cost_usd": observed} \
                 if observed is not None else receipts.empty_lookup("attempted_unavailable")
             path = self.root / "costs.json"

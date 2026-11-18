@@ -75,7 +75,7 @@ def validate_call(call: Any, schema: str) -> None:
     require(isinstance(call, dict) and set(call) == fields,
             "invalid_measurement_input")
     require(call["model"] in MODELS
-            and call["provider"] == ("Parasail" if call["model"] == MODELS[0] else "Xiaomi")
+            and call["provider"] == ("Novita" if call["model"] == MODELS[0] else "Xiaomi")
             and isinstance(call["chunk_hash"], str) and _HASH.fullmatch(call["chunk_hash"])
             and call["transport_state"] in _TRANSPORT
             and call["output_state"] in ("not_checked", "valid", "invalid", "indeterminate")

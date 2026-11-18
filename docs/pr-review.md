@@ -164,10 +164,10 @@ locations.
 
 | Model | Pinned OpenRouter route | Maximum input / output per million tokens |
 | --- | --- | --- |
-| GLM 5.3 | `parasail/fp8` | US$1.40 / US$4.40 |
+| GLM 5.3 | `novita/fp8` | US$1.40 / US$4.40 |
 | MiMo V2.6 Pro | `xiaomi/fp8` | US$0.435 / US$0.87 |
 
-These route ceilings were checked on 2 October 2026 against OpenRouter's
+These route ceilings were checked on 18 November 2026 against OpenRouter's
 [GLM endpoint metadata](https://openrouter.ai/api/v1/models/z-ai/glm-5.3/endpoints)
 and [MiMo endpoint metadata](https://openrouter.ai/api/v1/models/xiaomi/mimo-v2.6-pro/endpoints).
 Every request explicitly selects FP8 serving, uses PR-Agent's configured

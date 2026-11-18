@@ -139,7 +139,7 @@ def lookup_worker() -> None:
         require(set(data) == {"id", "model", "provider", "key"}
                 and generation_id(data["id"]) is not None
                 and data["model"] in MODELS
-                and data["provider"] == ("Parasail" if data["model"] == MODELS[0] else "Xiaomi")
+                and data["provider"] == ("Novita" if data["model"] == MODELS[0] else "Xiaomi")
                 and isinstance(data["key"], str) and 0 < len(data["key"]) <= 256,
                 "invalid_lookup_input")
         result = lookup_metadata(data["id"], data["model"], data["provider"], data["key"], request_json)
