@@ -196,15 +196,20 @@ Before the first paid call, the runner sends each planned request to
 Anthropic's free
 [token counting endpoint](https://platform.claude.com/docs/en/build-with-claude/token-counting).
 A failed count, or a count above the request's size in bytes, stops the review
-before any paid call. Anthropic describes the count as an estimate; the
-1,000-token margin covers that difference. No Anthropic document guarantees a
-token ceiling for a byte count, so the bound rests on that counter.
+before any paid call. Anthropic caps output at the requested 16,000 tokens,
+but describes the count as an estimate that may differ from billed input by a
+small amount, without a stated maximum. The allowance is the request's size
+in bytes plus 1,000 tokens; Anthropic's models page puts 1 million tokens at
+about 2.5 million characters, so it is usually more than twice the count. No
+Anthropic document guarantees a token ceiling for a byte count, so the input
+side of the US$3 bound rests on that counter and is not a guarantee.
 
 After each response, the runner requires input tokens within the reservation,
 output tokens within the cap, no cache tokens, and standard speed and service
 tier. It computes the call's cost from those counts at the list prices and
 rounds it up. Any breach fails the review and stops later calls; its recorded
-value is preserved. The computed cost is not Anthropic's bill, which the
+value is preserved. A call over its allowance is billed before the runner
+rejects it. The computed cost is not Anthropic's bill, which the
 Anthropic Console shows. Requests have no automatic paid retries.
 
 The US$3 reservation applies to one review. It is not an account-wide cap:
@@ -216,8 +221,8 @@ Anthropic's
 [API and data retention](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention)
 page, read on 18 November 2026, says retained data is never used for model
 training without express permission, and that conversation content (prompts
-and Claude's outputs) is not retained by default, except for Covered Models,
-which this workflow does not use. Content flagged by Anthropic's automated
+and Claude's outputs) is not retained by default, except for Covered Models
+(Claude Fable and Claude Mythos), which this workflow does not use. Content flagged by Anthropic's automated
 trust and safety systems may be retained for up to 2 years. Structured output
 schemas are cached for up to 24 hours since last use.
 
