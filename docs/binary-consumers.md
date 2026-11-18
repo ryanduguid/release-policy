@@ -31,7 +31,8 @@ prints the commit of this repository's latest release:
 
 Release v0.3.0 predates the Linux arm64 and macOS arm64 targets, `data-files`
 and several names in `binary`; use those only with v0.4.0's commit or a later
-one. v0.4.0 predates the macOS x86_64 and Windows arm64 targets. Every target
+one. v0.4.0 predates the macOS x86_64 and Windows arm64 targets, which need
+v0.5.0's commit or a later one. Every target
 is required: no input leaves one out, and a release fails unless your code
 builds and its tests pass on all 6. A component that cannot yet build one
 stays on v0.4.0's commit until it can.

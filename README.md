@@ -58,11 +58,15 @@ To set up a release, run [`release-policy init`](docs/quickstart.md): it writes 
 
 ## Release status
 
-[`v0.4.0`](https://github.com/ryanduguid/release-policy/releases/tag/v0.4.0)
-is the latest release: the `release-policy` executable for Linux (x86_64 and
-arm64), macOS arm64 and Windows x86_64 with SBOMs, provenance attestations and
+[`v0.5.0`](https://github.com/ryanduguid/release-policy/releases/tag/v0.5.0)
+is the latest release: the `release-policy` executable for Linux, macOS and
+Windows, each for x86_64 and arm64, with SBOMs, provenance attestations and
 `SHA256SUMS`, built and published by this repository's own `release-binary.yml`.
 The workflows still run the Python scripts, not that executable. It is the first
+release with the `init` command, the installers and the secrets scan action.
+
+[`v0.4.0`](https://github.com/ryanduguid/release-policy/releases/tag/v0.4.0)
+built 4 targets, without Intel macOS and Windows arm64, and was the first
 release under the Ryan Duguid Public Attribution Licence 1.0; earlier releases
 keep their own licence.
 
