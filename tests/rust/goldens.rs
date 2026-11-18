@@ -46,7 +46,7 @@ fn probe(case: &Value) -> Value {
         "isodate" => outcome(check_reviews::date(s("value"), "x")),
         "started-at" => outcome(
             check_canaries::parse_started_at(s("value"))
-                .map(|t| t.format("%Y-%m-%dT%H:%M:%S+00:00").to_string())
+                .map(|t| t.strftime("%Y-%m-%dT%H:%M:%S+00:00").to_string())
                 .map_err(|f| match f {
                     Failure::Runtime(m) | Failure::Unexpected(m) => m,
                 }),

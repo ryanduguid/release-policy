@@ -105,7 +105,7 @@ jobs:
           persist-credentials: false
 
       - name: Install the pinned cargo-audit
-        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-audit@0.22.2
           fallback: none
@@ -450,7 +450,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install the pinned cargo-llvm-cov
-        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-llvm-cov@0.9.1
           fallback: none
@@ -541,7 +541,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install the pinned cargo-auditable
-        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-auditable@0.7.7
           fallback: none
@@ -731,9 +731,9 @@ jobs:
       # cargo-auditable embeds the target's own dependency list: a direct and
       # a transitive dependency on each, and a platform crate only on its
       # platforms. The list also keeps optional dependencies cargo tree drops,
-      # so rustix's errno and libc appear for Linux too; core-foundation-sys
-      # is the crate only macOS lists (the self-check archives, 10 November
-      # 2026).
+      # so rustix's errno and libc appear for Linux too. No crate is listed by
+      # macOS alone since chrono went: macOS lists rustix, as Linux does, but
+      # not linux-raw-sys (the self-check archives, 18 November 2026).
       - name: Require each SBOM to describe its own target's dependencies
         run: |
           set -euo pipefail
@@ -745,11 +745,11 @@ jobs:
           done
           lists linux linux-raw-sys
           lists linux-arm64 linux-raw-sys
-          lists macos core-foundation-sys
-          lists macos-arm64 core-foundation-sys
+          lists macos rustix
+          lists macos-arm64 rustix
           lists windows windows-sys
           lists windows-arm64 windows-sys
-          if lists linux windows-sys || lists linux-arm64 core-foundation-sys \
+          if lists linux windows-sys || lists linux-arm64 windows-sys \
               || lists macos linux-raw-sys || lists macos-arm64 linux-raw-sys \
               || lists windows rustix || lists windows-arm64 rustix; then
             echo "an SBOM lists another platform's crate" >&2

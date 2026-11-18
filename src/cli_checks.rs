@@ -273,7 +273,7 @@ impl CanariesArgs {
             );
             return 0;
         }
-        let result = match cc::check_live(&canaries, &mut cc::GhCli, true, chrono::Utc::now()) {
+        let result = match cc::check_live(&canaries, &mut cc::GhCli, true, jiff::Timestamp::now()) {
             Ok(result) => result,
             Err(error) => {
                 print(

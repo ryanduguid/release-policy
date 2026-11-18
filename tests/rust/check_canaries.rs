@@ -7,7 +7,7 @@
 //! ci.yml rather than the checker, and stays with the Python tests.
 mod support;
 
-use chrono::{DateTime, TimeZone, Utc};
+use jiff::Timestamp;
 use release_policy::check_canaries::{
     self as cc, Canary, CheckResult, Failure, GitHubError, Live, LiveError,
 };
@@ -20,12 +20,12 @@ const OLDER_SHA: &str = "2222222222222222222222222222222222222222";
 const HEAD: &str = "3333333333333333333333333333333333333333";
 const RECORDED: &str = "2026-08-27T00:00:00Z";
 
-fn before_expiry() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 11, 25, 0, 0, 0).unwrap()
+fn before_expiry() -> Timestamp {
+    "2026-11-25T00:00:00Z".parse().unwrap()
 }
 
-fn after_expiry() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 11, 27, 0, 0, 0).unwrap()
+fn after_expiry() -> Timestamp {
+    "2026-11-27T00:00:00Z".parse().unwrap()
 }
 
 fn policy_workflow(family: &str) -> String {
@@ -144,7 +144,7 @@ fn audit_with(
     json: impl FnMut(&str) -> Reply,
     pin: &str,
     verifier: Option<Verifier>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> CheckResult {
     let canaries = parse(document).unwrap();
     let release_evidence = verifier.is_some();
@@ -359,7 +359,7 @@ fn unreadable_rulesets_fail_and_never_pass() {
 
 /// `check_live` with no verifier, at the default clock of the earlier tests.
 fn live(document: &Value, json: impl FnMut(&str) -> Reply, pin: &str) -> CheckResult {
-    audit_with(document, json, pin, None, Utc::now())
+    audit_with(document, json, pin, None, Timestamp::now())
 }
 
 fn accept() -> Option<Verifier> {
@@ -651,7 +651,7 @@ fn live_check_accepts_current_pin_and_latest_exact_success() {
         verifier: None,
         requests: Vec::new(),
     };
-    let result = cc::check_live(&canaries, &mut fake, false, Utc::now()).unwrap();
+    let result = cc::check_live(&canaries, &mut fake, false, Timestamp::now()).unwrap();
     assert!(result.errors.is_empty() && result.warnings.is_empty());
     assert_eq!(fake.requests.len(), 4);
 }
@@ -922,6 +922,73 @@ fn a_404_before_retention_ends_is_a_missing_run() {
     );
     assert!(has(&result.errors, "missing before its retention"));
     assert!(result.notices.is_empty());
+}
+
+#[test]
+fn a_run_expires_only_once_more_than_91_days_have_passed() {
+    // RECORDED is 2026-08-27T00:00:00Z, so 91 days end at 2026-11-26T00:00:00Z.
+    for (now, expired_run) in [
+        ("2026-11-26T00:00:00Z", false),
+        ("2026-11-26T00:00:00.000000001Z", true),
+    ] {
+        let result = audit_with(
+            &python(),
+            expired(Expired::default()),
+            &pin("python"),
+            accept(),
+            now.parse().unwrap(),
+        );
+        assert_eq!(
+            has(&result.errors, "missing before its retention"),
+            !expired_run,
+            "{now}: {:?}",
+            result.errors
+        );
+    }
+}
+
+#[test]
+fn a_404_for_a_run_started_in_9999_is_a_missing_run() {
+    let mut document = python();
+    document["families"][0]["evidence"]["started_at"] = json!("9999-12-31T23:59:59Z");
+    let result = audit_with(
+        &document,
+        expired(Expired::default()),
+        &pin("python"),
+        accept(),
+        after_expiry(),
+    );
+    assert!(has(&result.errors, "missing before its retention"));
+}
+
+#[test]
+fn start_times_follow_the_gregorian_calendar() {
+    let parsed = |value: &str| {
+        cc::parse_started_at(value)
+            .map(|t| t.to_string())
+            .map_err(|f| match f {
+                Failure::Runtime(m) | Failure::Unexpected(m) => m,
+            })
+    };
+    for (value, expected) in [
+        ("0001-01-01T00:00:00Z", Ok("0001-01-01T00:00:00")),
+        ("2000-02-29T00:00:00Z", Ok("2000-02-29T00:00:00")),
+        ("9999-12-31T23:59:59Z", Ok("9999-12-31T23:59:59")),
+        (
+            "1900-02-29T00:00:00Z",
+            Err("ValueError: day 29 must be in range 1..28 for month 2 in year 1900"),
+        ),
+        (
+            "2026-04-31T00:00:00Z",
+            Err("ValueError: day 31 must be in range 1..30 for month 4 in year 2026"),
+        ),
+    ] {
+        assert_eq!(
+            parsed(value),
+            expected.map(String::from).map_err(String::from),
+            "{value}"
+        );
+    }
 }
 
 #[test]
@@ -1883,7 +1950,8 @@ fn failure_conversions_preserve_live_error_messages() {
 #[test]
 fn unexpected_transport_errors_escape_the_audit() {
     let canaries = parse(&python()).unwrap();
-    let error = cc::check_live(&canaries, &mut UnexpectedLive, false, Utc::now()).unwrap_err();
+    let error =
+        cc::check_live(&canaries, &mut UnexpectedLive, false, Timestamp::now()).unwrap_err();
     assert_eq!(error, "boom: transport");
 }
 
@@ -1957,7 +2025,7 @@ fn unhashable_compare_statuses_raise_type_errors() {
                 requests: Vec::new(),
             },
             false,
-            Utc::now(),
+            Timestamp::now(),
         )
         .unwrap_err();
         assert!(error.contains("TypeError: unhashable type"), "{error}");
