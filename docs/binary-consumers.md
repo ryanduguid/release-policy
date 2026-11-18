@@ -133,11 +133,13 @@ before this change, leave it unset.
    target from the dependency lists embedded in its extracted executables,
    and the job requires each SBOM to list the package. `cargo-audit`, at a version the policy pins,
    then checks the same embedded lists against a freshly fetched RustSec
-   advisory database, from an empty directory outside the consumer tree. Any
-   advisory refuses the release, informational ones such as an unmaintained
-   crate included, as does a failed fetch or an executable whose list it
-   cannot read. There is no ignore list or waiver: update or replace the
-   dependency, then release. The job hands the 8 archives and 7 SBOMs to the
+   advisory database, from an empty directory outside the consumer tree. A
+   vulnerability, an unsound crate or a yanked one refuses the release, as
+   does a failed fetch, a yanked check it could not run or an executable
+   whose list it cannot read. An unmaintained crate does not: release-policy's
+   scheduled CI fails on one in its own lockfiles and binary canaries. There
+   is no ignore list or waiver: update or replace the dependency, then
+   release. The job hands the 8 archives and 7 SBOMs to the
    publisher as one artefact, with each file's SHA-256 as a job output.
 4. `publish` is the only job with write, OIDC and attestation scopes. It
    never runs Cargo, consumer code or the admit job's third-party tools. It
