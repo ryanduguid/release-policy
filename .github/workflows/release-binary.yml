@@ -554,13 +554,15 @@ jobs:
       # cargo-audit reads the same embedded dependency lists. The policy pins
       # the tool and fetches a fresh advisory database, and the script runs it
       # outside the consumer tree, so no consumer file can waive an advisory.
+      # The release lane refuses a vulnerable, unsound or yanked crate, not an
+      # unmaintained one (scripts/rustsec_lanes.sh).
       - name: Install the pinned cargo-audit
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-audit@0.22.2
           fallback: none
 
-      - name: Refuse any RustSec advisory against an admitted executable
+      - name: Refuse a vulnerable, unsound or yanked crate in an admitted executable
         env:
           BINARY: ${{ steps.release.outputs.binary }}
         shell: bash
@@ -574,7 +576,7 @@ jobs:
               executables+=("$RUNNER_TEMP/extracted/$target/$name$suffix")
             done
           done
-          bash "$GITHUB_WORKSPACE/policy/scripts/audit_binaries.sh" "$RUNNER_TEMP/advisory-db" \
+          bash "$GITHUB_WORKSPACE/policy/scripts/audit_binaries.sh" release "$RUNNER_TEMP/advisory-db" \
             "${executables[@]}"
 
       # Each output is one 64-hex SHA-256, refused otherwise, here and again

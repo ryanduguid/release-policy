@@ -48,6 +48,8 @@ TARGETS = (
 )
 AUDIT = ROOT / "scripts" / "audit_binaries.sh"
 CANARY_AUDIT = ROOT / "scripts" / "audit_binary_canaries.sh"
+LOCKFILE_AUDIT = ROOT / "scripts" / "audit_lockfiles.sh"
+LANES = ROOT / "scripts" / "rustsec_lanes.sh"
 CARGO_AUDIT = "0.22.2"
 INPUTS = ("artifact-stem", "binary", "data-files", "source-directory", "tag-prefix",
           "required-checks")
@@ -266,7 +268,7 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
             *(f"Generate the {label} binary's SPDX SBOM" for _, _, label in TARGETS),
             "Require each binary SBOM to list the package",
             "Install the pinned cargo-audit",
-            "Refuse any RustSec advisory against an admitted executable",
+            "Refuse a vulnerable, unsound or yanked crate in an admitted executable",
             "Record the SHA-256 of each file for the publisher",
             "Hand the admitted archives and SBOMs to the publisher",
         )
@@ -305,11 +307,12 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn(f"tool: cargo-audit@{CARGO_AUDIT}\n", install)
         self.assertIn("fallback: none\n", install)
 
-    def test_admit_refuses_any_advisory_against_the_admitted_executables(self) -> None:
+    def test_admit_audits_the_admitted_executables_in_the_release_lane(self) -> None:
         admit = self.job("admit")
         install = self.step(admit, "Install the pinned cargo-audit")
         self.assert_pinned_cargo_audit(install)
-        audit = self.step(admit, "Refuse any RustSec advisory against an admitted executable")
+        audit = self.step(
+            admit, "Refuse a vulnerable, unsound or yanked crate in an admitted executable")
         self.assertIn(
             '          for target in $TARGETS; do\n'
             '            suffix=""\n'
@@ -318,7 +321,8 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
             '              executables+=("$RUNNER_TEMP/extracted/$target/$name$suffix")\n'
             '            done\n'
             '          done\n'
-            '          bash "$GITHUB_WORKSPACE/policy/scripts/audit_binaries.sh" "$RUNNER_TEMP/advisory-db" \\\n'
+            '          bash "$GITHUB_WORKSPACE/policy/scripts/audit_binaries.sh" release'
+            ' "$RUNNER_TEMP/advisory-db" \\\n'
             '            "${executables[@]}"\n',
             audit)
         self.assertNotIn("working-directory:", audit)
@@ -352,12 +356,17 @@ class BinaryReleaseWorkflowTests(YamlContractAssertions, unittest.TestCase):
         script = AUDIT.read_text(encoding="utf-8")
         self.assertIn(
             'work="$(mktemp -d)"\ncd "$work"\n'
-            'cargo-audit audit --db "$db" --no-yanked --deny warnings bin "$@" 2>&1 | tee audit.log\n',
+            'cargo-audit audit --db "$db" "${deny[@]}" bin "$@" 2>&1 | tee audit.log\n'
+            'require_yanked_check audit.log\n',
             script)
         self.assertIn("set -euo pipefail\n", script)
+        lockfiles = LOCKFILE_AUDIT.read_text(encoding="utf-8")
         for text in (script, self.workflow, (WORKFLOWS / "ci.yml").read_text(encoding="utf-8"),
-                     CANARY_AUDIT.read_text(encoding="utf-8")):
-            for waiver in ("--ignore", "--no-fetch", "--stale", "--file", "--url"):
+                     CANARY_AUDIT.read_text(encoding="utf-8"), lockfiles,
+                     LANES.read_text(encoding="utf-8")):
+            # The lockfile audit names each lockfile; nothing else reads one.
+            for waiver in ("--ignore", "--no-fetch", "--stale", "--url", "--no-yanked",
+                           *(("--file",) if text is not lockfiles else ())):
                 with self.subTest(waiver=waiver):
                     self.assertNotIn(waiver, text)
 
@@ -466,7 +475,8 @@ class SbomTargetCheckTests(YamlContractAssertions, unittest.TestCase):
 
 # Stands in for cargo-audit: records where and how it ran, then behaves as the
 # real tool does for the case under test. As in the real tool, an advisory is
-# reported after every binary's data was found.
+# reported after every binary's data was found, and an unreachable crates.io
+# index is only a warning.
 FAKE_CARGO_AUDIT = """#!/usr/bin/env bash
 { printf '%s\\n' "$@"; printf -- '--listing\\n'; ls -A; } > "$FAKE_LOG"
 mkdir -p "$3"
@@ -474,12 +484,16 @@ if [ "$FAKE_CASE" = fetch-fails ]; then
   echo "error: couldn't fetch advisory database" >&2
   exit 1
 fi
-shift 7
+while [ "$1" != bin ]; do shift; done
+shift
 for binary in "$@"; do
   if [ "$FAKE_CASE" != no-data ] || [ "$binary" != "${!#}" ]; then
     echo "       Found 'cargo auditable' data in $binary (2 dependencies)" >&2
   fi
 done
+if [ "$FAKE_CASE" = yanked-unchecked ]; then
+  echo "warning: couldn't update crates.io index: timed out" >&2
+fi
 if [ "$FAKE_CASE" = advisory ]; then
   echo "error: 1 vulnerability found" >&2
   exit 1
@@ -522,33 +536,42 @@ class AuditScriptTests(unittest.TestCase):
         )
 
     def test_clean_audit_of_every_binary_passes_from_an_empty_directory(self) -> None:
-        result = self.audit("clean", self.db, *self.binaries)
-        self.assertEqual(0, result.returncode, result.stderr)
-        arguments, listing = self.log.read_text(encoding="utf-8").split("--listing\n")
-        self.assertEqual(
-            ["audit", "--db", self.db, "--no-yanked", "--deny", "warnings", "bin", *self.binaries],
-            arguments.splitlines())
-        self.assertLessEqual(set(listing.split()), {"audit.log"})
+        # The release lane leaves unmaintained crates to the scheduled lane.
+        for lane, deny in (("release", ["--deny", "unsound", "--deny", "yanked"]),
+                           ("scheduled", ["--deny", "warnings"])):
+            with self.subTest(lane=lane):
+                shutil.rmtree(self.db, ignore_errors=True)
+                result = self.audit("clean", lane, self.db, *self.binaries)
+                self.assertEqual(0, result.returncode, result.stderr)
+                arguments, listing = self.log.read_text(encoding="utf-8").split("--listing\n")
+                self.assertEqual(["audit", "--db", self.db, *deny, "bin", *self.binaries],
+                                 arguments.splitlines())
+                self.assertLessEqual(set(listing.split()), {"audit.log"})
 
     def test_each_failure_fails_closed(self) -> None:
         for case, message in (
             ("advisory", "1 vulnerability found"),
             ("fetch-fails", "couldn't fetch advisory database"),
             ("no-data", f"read no embedded dependency list from {self.binaries[-1]}"),
+            ("yanked-unchecked", "could not check for yanked crates"),
         ):
             with self.subTest(case=case):
                 shutil.rmtree(self.db, ignore_errors=True)
-                result = self.audit(case, self.db, *self.binaries)
+                result = self.audit(case, "release", self.db, *self.binaries)
                 self.assertEqual(1, result.returncode)
                 self.assertIn(message, result.stdout + result.stderr)
 
     def test_refuses_before_auditing(self) -> None:
-        self.assertEqual(64, self.audit("clean", self.db).returncode)
+        self.assertEqual(64, self.audit("clean", "release", self.db).returncode)
+        for lane in ("change", "nightly", ""):
+            with self.subTest(lane=lane):
+                self.assertEqual(64, self.audit("clean", lane, self.db, *self.binaries).returncode)
         Path(self.db).mkdir()
-        self.assertIn("must be fetched fresh", self.audit("clean", self.db, *self.binaries).stderr)
+        self.assertIn("must be fetched fresh",
+                      self.audit("clean", "release", self.db, *self.binaries).stderr)
         Path(self.db).rmdir()
         (self.cargo_home / "audit.toml").write_text("", encoding="utf-8")
-        refused = self.audit("clean", self.db, *self.binaries)
+        refused = self.audit("clean", "release", self.db, *self.binaries)
         self.assertEqual(1, refused.returncode)
         self.assertIn("refusing to audit with", refused.stderr)
         self.assertFalse(self.log.exists())
@@ -663,8 +686,10 @@ class BinaryCanaryAuditTests(unittest.TestCase):
         result = self.audit()
         self.assertEqual(0, result.returncode, result.stderr)
         arguments = (self.root / "audit-calls").read_text(encoding="utf-8").split("--listing\n")[0]
+        # The scheduled lane, so an unmaintained crate fails too.
+        self.assertEqual(["--deny", "warnings", "bin"], arguments.splitlines()[3:6])
         self.assertEqual(
-            sorted(arguments.splitlines()[7:]),
+            sorted(arguments.splitlines()[6:]),
             sorted(str(self.extracted / archive / name) for archive, name in (
                 ("example-1.2.3-x86_64-unknown-linux-musl.tar.gz", "example"),
                 ("example-1.2.3-x86_64-unknown-linux-musl.tar.gz", "example-helper"),

@@ -121,6 +121,45 @@ jobs:
           bash scripts/audit_binary_canaries.sh canaries.json
           "$RUNNER_TEMP/binary-canaries" "$RUNNER_TEMP/advisory-db"
 
+  rustsec:
+    name: audit the Cargo lockfiles against RustSec
+    # A vulnerable, unsound or yanked crate fails pull requests and pushes;
+    # the weekly run also fails on an unmaintained one, which therefore never
+    # blocks a change (scripts/rustsec_lanes.sh).
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+
+      - name: Install the pinned cargo-audit
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
+
+      # Elsewhere these tests skip without cargo-audit, and the yanked-crate
+      # case, which fetches the advisory database and crates.io index, skips
+      # unless RUSTSEC_LANES_LIVE is set; here both must run.
+      - name: Check each lane's verdicts with the pinned cargo-audit
+        env:
+          RUSTSEC_LANES_LIVE: "1"
+        run: python -m unittest tests.test_rustsec_lanes
+
+      - name: Audit each Cargo lockfile
+        env:
+          LANE: ${{ github.event_name == 'schedule' && 'scheduled' || 'change' }}
+        run: >-
+          bash scripts/audit_lockfiles.sh "$LANE" "$RUNNER_TEMP/advisory-db"
+          Cargo.lock fuzz/Cargo.lock canaries/disposable-binary-canary/Cargo.lock
+
   pin-lag:
     name: list the families owing a re-pin
     # A family whose files changed on main since the commit its consumers pin
@@ -832,7 +871,7 @@ jobs:
     # unless every job it needs succeeded, when a job in this file is missing
     # from needs, or when a pull request removes a job without adding a
     # "# removed-jobs: <job>" comment to this file.
-    needs: [checks, windows, rust, binary-self-check, binary-sbom-check, zizmor, secrets-scan]
+    needs: [checks, windows, rust, binary-self-check, binary-sbom-check, zizmor, secrets-scan, rustsec]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -13,7 +13,8 @@
 # file, not from the release's asset listing, so none can be left out. Each
 # archive must be the one line of SHA256SUMS that names it, carry the same
 # provenance and hold at least one executable. audit_binaries.sh audits them
-# all against one freshly fetched advisory database. WORK_DIR must be absolute
+# all in the scheduled lane, which also denies unmaintained crates, against
+# one freshly fetched advisory database. WORK_DIR must be absolute
 # and must not exist.
 set -euo pipefail
 
@@ -106,4 +107,4 @@ while IFS=$'\t' read -r -u 3 repository tag commit policy; do
   cd "$work"
 done 3<<< "$entries"
 
-bash "$here/audit_binaries.sh" "$db" "${executables[@]}"
+bash "$here/audit_binaries.sh" scheduled "$db" "${executables[@]}"
