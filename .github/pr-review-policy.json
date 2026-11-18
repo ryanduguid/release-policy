@@ -4,7 +4,7 @@
   "spending_mode": "payg",
   "models": ["z-ai/glm-5.3", "xiaomi/mimo-v2.6-pro"],
   "routes": {
-    "z-ai/glm-5.3": {"slug": "parasail/fp8", "name": "Parasail", "prompt": 1.4, "completion": 4.4},
+    "z-ai/glm-5.3": {"slug": "novita/fp8", "name": "Novita", "prompt": 1.4, "completion": 4.4},
     "xiaomi/mimo-v2.6-pro": {"slug": "xiaomi/fp8", "name": "Xiaomi", "prompt": 0.435, "completion": 0.87}
   },
   "private_repositories": false,

@@ -268,12 +268,12 @@ class ReceiptTests(unittest.TestCase):
 
     def test_digest_is_exact_ascii_and_raw_response_id_cannot_escape_report(self):
         identifier = "gen-AsCiICanary09"
-        data = receipts.metadata(completion(review.MODELS[0], id=identifier), review.MODELS[0], "Parasail")
+        data = receipts.metadata(completion(review.MODELS[0], id=identifier), review.MODELS[0], "Novita")
         self.assertEqual(data["generation_id_sha256"], review.hashlib.sha256(identifier.encode("ascii")).hexdigest())
         self.assertTrue(data["generation_id_valid"])
         self.assertNotIn(identifier, json.dumps(data))
         self.assertIsNone(receipts.metadata(completion(review.MODELS[0], id=identifier + " "),
-                                           review.MODELS[0], "Parasail")["generation_id_sha256"])
+                                           review.MODELS[0], "Novita")["generation_id_sha256"])
         prompts = {model: [("system", "context")] for model in review.MODELS}
 
         def send(url, key, body=None, **kwargs):

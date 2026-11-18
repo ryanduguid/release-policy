@@ -137,7 +137,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
             "non_integer_size_limit")
     require(isinstance(policy["instructions"], str) and len(policy["instructions"]) <= 8000,
             "invalid_review_instructions")
-    expected = (("parasail/fp8", "Parasail"), ("xiaomi/fp8", "Xiaomi"))
+    expected = (("novita/fp8", "Novita"), ("xiaomi/fp8", "Xiaomi"))
     for model, (slug, name) in zip(MODELS, expected, strict=True):
         route = policy["routes"][model]
         require(route["slug"] == slug and route["name"] == name, "unqualified_provider")
