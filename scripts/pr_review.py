@@ -30,7 +30,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from required_checks import _FULL_SHA, _REPOSITORY
 
 MODELS = ("z-ai/glm-5.3", "xiaomi/mimo-v2.6-pro")
-PR_AGENT_SHA = "3be92e293fc55b24a54aa303595e9eaa32519954"
+PR_AGENT_SHA = "06a2991c0ce6b055c77fbcbd7f09faf4c5acfcaf"
 CONTEXT = "Independent PR review (advisory)"
 SCANNER_VERSION = "betterleaks/1.10.1"
 # config/gitleaks.toml of Gitleaks 8.30.1: the rules this scan ran before Betterleaks.

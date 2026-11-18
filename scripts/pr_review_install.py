@@ -1,7 +1,7 @@
 # Copyright 2026 Ryan Duguid
 # SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
 
-"""Prepare only the pinned engine's two hash-verified source build exceptions."""
+"""Prepare only the pinned engine's hash-verified source build exception."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from packaging.utils import canonicalize_name
 
 from pr_review import PR_AGENT_SHA, NoRedirect, ReviewError, require
 
-EXCEPTIONS = {"giteapy": "1.0.8", "html2text": "2024.2.26"}
+EXCEPTIONS = {"html2text": "2024.2.26"}
 
 
 def prepare_sources(engine: Path) -> None:
@@ -30,9 +30,13 @@ def prepare_sources(engine: Path) -> None:
                             "--untracked-files=no", "--", "pr_agent", "uv.lock"],
                            capture_output=True, text=True, check=True).stdout
     require(revision == PR_AGENT_SHA and not dirty, "engine_pin_mismatch")
+    runtime = locked_runtime(engine)
     lock = tomllib.loads((engine / "uv.lock").read_text(encoding="utf-8"))
-    packages = [p for p in lock["package"] if p["source"].get("registry") and not p.get("wheels")]
-    require(len(packages) == 2 and {p["name"]: p["version"] for p in packages} == EXCEPTIONS,
+    # Optional extras in the lock are not installed; only runtime packages need a wheel.
+    packages = [p for p in lock["package"] if p["source"].get("registry") and not p.get("wheels")
+                and canonicalize_name(p["name"]) in runtime]
+    require(len(packages) == len(EXCEPTIONS)
+            and {p["name"]: p["version"] for p in packages} == EXCEPTIONS,
             "unexpected_source_dependency")
     requirements = []
     for package in packages:
@@ -55,8 +59,8 @@ def prepare_sources(engine: Path) -> None:
         "\n".join(requirements) + "\n", encoding="utf-8")
 
 
-def verify_packages(engine: Path) -> None:
-    expected = {}
+def locked_runtime(engine: Path) -> dict[str, str]:
+    expected: dict[str, str] = {}
     for line in (engine / "pr-review-runtime-requirements.txt").read_text(encoding="utf-8").splitlines():
         requirement = Requirement(line)
         if requirement.marker is not None and not requirement.marker.evaluate():
@@ -67,6 +71,11 @@ def verify_packages(engine: Path) -> None:
         canonical_name = canonicalize_name(requirement.name)
         require(canonical_name not in expected, "duplicate_runtime_requirement")
         expected[canonical_name] = pins[0].version
+    return expected
+
+
+def verify_packages(engine: Path) -> None:
+    expected = locked_runtime(engine)
     distributions = list(importlib.metadata.distributions())
     actual = {canonicalize_name(item.metadata["Name"]): item.version for item in distributions}
     require(len(actual) == len(distributions) and actual == expected, "runtime_lock_metadata_mismatch")
