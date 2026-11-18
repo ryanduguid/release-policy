@@ -791,16 +791,17 @@ class ReviewAgentTests(unittest.TestCase):
         original = copy.deepcopy(review.REVIEW_SCHEMA)
         for model in review.MODELS:
             body = agent.request_body(model, POLICY, "system", "user")
-            # No temperature (version 2026-10-21 refuses it), fallbacks, tools,
-            # caching, fast mode or service tier, and global standard-price inference.
+            # No temperature (version 2026-10-21 refuses it), fallbacks, tools, caching
+            # or fast mode, and global inference on standard capacity at standard prices.
             self.assertEqual(set(body), {"model", "max_tokens", "system", "messages", "thinking",
-                                         "output_config", "inference_geo"})
+                                         "output_config", "inference_geo", "service_tier"})
             self.assertEqual(body["model"], model)
             self.assertEqual(body["max_tokens"], 16000)
             self.assertEqual(body["system"], "system")
             self.assertEqual(body["messages"], [{"role": "user", "content": "user"}])
             self.assertEqual(body["thinking"], {"type": "adaptive"})
             self.assertEqual(body["inference_geo"], "global")
+            self.assertEqual(body["service_tier"], "standard_only")
             self.assertEqual(body["output_config"]["effort"], "high")
             self.assertEqual(body["output_config"]["format"]["type"], "json_schema")
         schema = agent.request_body(review.MODELS[0], POLICY, "", "")["output_config"]["format"]["schema"]
@@ -859,9 +860,9 @@ class ReviewAgentTests(unittest.TestCase):
             self.assertTrue(report["complete"])
             self.assertEqual([url for url, _ in calls],
                              [review.ANTHROPIC_API + "messages/count_tokens"] * 2 + [review.ANTHROPIC_API + "messages"] * 2)
-            # The count endpoint takes neither the output cap nor the region.
+            # The count endpoint takes neither the output cap, the region nor the capacity tier.
             self.assertEqual(calls[0][1], {key: value for key, value in body.items()
-                                           if key not in ("max_tokens", "inference_geo")})
+                                           if key not in ("max_tokens", "inference_geo", "service_tier")})
         for answer in ({"input_tokens": size + 1}, {"input_tokens": 0}, {"input_tokens": True},
                        {"input_tokens": 1.0}, {}, [], review.ReviewError("http_500")):
             paid = []

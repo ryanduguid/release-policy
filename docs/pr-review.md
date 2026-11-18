@@ -172,7 +172,8 @@ Each request uses adaptive thinking at high effort and caps thinking and
 answer together at 16,000 output tokens. It requests global inference, which
 is billed at standard prices and overrides a workspace default of US-only
 inference. API version `2026-10-21` removes temperature, so none is sent.
-Requests use no fallbacks, tools, prompt caching, fast mode or service tier.
+It requests standard capacity only, so the call does not use priority capacity.
+Requests use no fallbacks, tools, prompt caching or fast mode.
 An unexpected returned model fails the review.
 
 | Model | Input / output per million tokens |

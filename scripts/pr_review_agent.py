@@ -60,12 +60,13 @@ def wire_schema(value: Any) -> Any:
 
 def request_body(model: str, policy: dict[str, Any], system: str, user: str) -> dict[str, Any]:
     require(model in MODELS, "forbidden_model_or_fallback")
-    # "global" overrides any workspace default of US-only inference, billed at 1.1 times.
+    # "global" overrides any workspace default of US-only inference, billed at 1.1 times,
+    # and "standard_only" keeps the call off priority capacity, which bills at other rates.
     return {"model": model, "max_tokens": policy["output_tokens"], "system": system,
             "messages": [{"role": "user", "content": user}], "thinking": {"type": "adaptive"},
             "output_config": {"effort": "high",
                               "format": {"type": "json_schema", "schema": wire_schema(REVIEW_SCHEMA)}},
-            "inference_geo": "global"}
+            "inference_geo": "global", "service_tier": "standard_only"}
 
 
 def prepare_prompts(snapshot: dict[str, Any], groups: list[list[dict[str, Any]]],
@@ -238,7 +239,8 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
     for model in MODELS:
         for body in bodies[model]:
             counted = send(ANTHROPIC_API + "messages/count_tokens", key,
-                           {field: body[field] for field in body if field not in ("max_tokens", "inference_geo")})
+                           {field: body[field] for field in body
+                            if field not in ("max_tokens", "inference_geo", "service_tier")})
             require(isinstance(counted, dict) and type(counted.get("input_tokens")) is int  # pylint: disable=unidiomatic-typecheck
                     and 0 < counted["input_tokens"] <= len(canonical(body)), "unbounded_input_tokens")
     from pr_review_receipts import ReceiptJournal, metadata
