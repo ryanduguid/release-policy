@@ -3,11 +3,11 @@
     {
       "current_policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
       "evidence": {
-        "head_sha": "89309b040cf259487313b599957d38ab517054bd",
+        "head_sha": "e23bf8a9cd1aa3c35a39dbcdf63e5f9144011d2a",
         "policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
-        "ref": "v0.5.0",
-        "run_id": 43499356384,
-        "started_at": "2026-11-13T20:12:17Z"
+        "ref": "v0.6.0",
+        "run_id": 43872068536,
+        "started_at": "2026-11-16T13:02:51Z"
       },
       "family": "archive",
       "policy_workflow": ".github/workflows/release-archive.yml",
@@ -31,11 +31,11 @@
     {
       "current_policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
       "evidence": {
-        "head_sha": "cbc751ccdf5c1d63000031bef564194cfe0ff533",
+        "head_sha": "a7cfedc0707c2249c911e7518531a805a286ac1b",
         "policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
-        "ref": "v0.6.0",
-        "run_id": 43503193737,
-        "started_at": "2026-11-13T20:36:59Z"
+        "ref": "v0.7.0",
+        "run_id": 43869393564,
+        "started_at": "2026-11-16T12:45:04Z"
       },
       "family": "python",
       "policy_workflow": ".github/workflows/release-python.yml",
