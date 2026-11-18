@@ -6,8 +6,10 @@
 A vulnerable, unsound or yanked crate fails pull requests and pushes (the
 change lane), a binary release (the release lane) and the weekly run (the
 scheduled lane). An unmaintained crate fails only the weekly run (Ryan, 18
-November 2026). The verdicts come from the pinned cargo-audit itself, against
-a fixture advisory database; CI's rustsec job runs them and requires the tool.
+November 2026). The verdicts come from the pinned cargo-audit itself: against
+a fixture advisory database for advisories, and against crates.io for a
+yanked crate. CI's rustsec job sets RUSTSEC_LANES_LIVE, which requires the
+tool and runs the yanked case, which needs the network.
 """
 
 from __future__ import annotations
@@ -44,6 +46,7 @@ name = "itoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 """
+YANKED_LOCKFILE = LOCKFILE.replace('"itoa"', '"memchr"').replace('"1.0.11"', '"2.3.1"')
 
 
 def advisory(package: str, informational: str | None) -> str:
@@ -73,7 +76,7 @@ class LaneVerdictTests(unittest.TestCase):
     def setUp(self) -> None:
         self.cargo_audit = shutil.which("cargo-audit")
         if self.cargo_audit is None:
-            if os.environ.get("RUSTSEC_LANES_REQUIRE_CARGO_AUDIT") == "1":
+            if os.environ.get("RUSTSEC_LANES_LIVE") == "1":
                 self.fail("cargo-audit is required here but is not on PATH")
             self.skipTest("cargo-audit not installed")
         temporary = tempfile.TemporaryDirectory()
@@ -121,6 +124,31 @@ class LaneVerdictTests(unittest.TestCase):
                     result = self.verdict(db, lane)
                     self.assertEqual(status, result.returncode, result.stdout + result.stderr)
                     self.assertIn("RUSTSEC-2099-0001", result.stdout + result.stderr)
+
+    @unittest.skipUnless(os.environ.get("RUSTSEC_LANES_LIVE") == "1",
+                         "fetches the advisory database and crates.io index")
+    def test_a_yanked_crate_fails_every_lane(self) -> None:
+        # memchr 2.3.1 is yanked on crates.io and has no advisory. The change and
+        # scheduled lanes run the lockfile audit itself; the release lane's
+        # arguments run with the same fresh fetch.
+        self.lockfile.write_text(YANKED_LOCKFILE, encoding="utf-8", newline="\n")
+        for lane in LANE_NAMES:
+            with self.subTest(lane=lane):
+                db = (self.root / f"live-{lane}").as_posix()
+                if lane == "release":
+                    assert self.cargo_audit is not None
+                    command = [self.cargo_audit, "audit", "--db", db, *deny_arguments(lane),
+                               "--file", str(self.lockfile)]
+                else:
+                    command = ["bash", str(LOCKFILE_AUDIT), lane, db, self.lockfile.as_posix()]
+                result = subprocess.run(  # nosec B603 B607  # nosemgrep
+                    command, cwd=Path(tempfile.mkdtemp(dir=self.root)), env=self.env,
+                    check=False, capture_output=True, text=True,
+                )
+                output = result.stdout + result.stderr
+                self.assertEqual(1, result.returncode, output)
+                self.assertIn("yanked", output)
+                self.assertNotIn("couldn't", output)
 
 
 class LaneArgumentTests(unittest.TestCase):
@@ -259,7 +287,7 @@ class CiLaneTests(YamlContractAssertions, unittest.TestCase):
         self.assertIn("tool: cargo-audit@0.22.2\n", install)
         self.assertIn("fallback: none\n", install)
         verdicts = self.step_block(job, "Check each lane's verdicts with the pinned cargo-audit")
-        self.assertIn('RUSTSEC_LANES_REQUIRE_CARGO_AUDIT: "1"\n', verdicts)
+        self.assertIn('RUSTSEC_LANES_LIVE: "1"\n', verdicts)
         self.assertIn("run: python -m unittest tests.test_rustsec_lanes\n", verdicts)
         audit = self.step_block(job, "Audit each Cargo lockfile")
         self.assertIn(

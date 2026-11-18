@@ -145,10 +145,12 @@ jobs:
           tool: cargo-audit@0.22.2
           fallback: none
 
-      # Elsewhere these tests skip without cargo-audit; here they must run.
+      # Elsewhere these tests skip without cargo-audit, and the yanked-crate
+      # case, which fetches the advisory database and crates.io index, skips
+      # unless RUSTSEC_LANES_LIVE is set; here both must run.
       - name: Check each lane's verdicts with the pinned cargo-audit
         env:
-          RUSTSEC_LANES_REQUIRE_CARGO_AUDIT: "1"
+          RUSTSEC_LANES_LIVE: "1"
         run: python -m unittest tests.test_rustsec_lanes
 
       - name: Audit each Cargo lockfile
