@@ -92,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         require(not any(os.environ.get(name) for name in
-                        ("OPENROUTER_API_KEY", "NOUS_API_KEY", "GH_TOKEN", "GITHUB_TOKEN")),
+                        ("ANTHROPIC_API_KEY", "NOUS_API_KEY", "GH_TOKEN", "GITHUB_TOKEN")),
                 "installer_credentials_refused")
         if args.command == "prepare":
             prepare_sources(args.engine)

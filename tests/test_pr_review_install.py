@@ -45,7 +45,7 @@ class InstallerTests(unittest.TestCase):
         self.opener = self.enterContext(mock.patch.object(installer, "build_opener"))
         self.opener.return_value.open.side_effect = lambda *args, **kwargs: io.BytesIO(RAW)
         self.enterContext(mock.patch.dict(os.environ, {
-            "OPENROUTER_API_KEY": "", "NOUS_API_KEY": "", "GH_TOKEN": "", "GITHUB_TOKEN": ""}))
+            "ANTHROPIC_API_KEY": "", "NOUS_API_KEY": "", "GH_TOKEN": "", "GITHUB_TOKEN": ""}))
 
     def test_prepare_uses_pinned_local_archives_without_credentials(self):
         self.assertEqual(installer.main(["prepare", str(self.engine)]), 0)
@@ -138,7 +138,7 @@ class InstallerTests(unittest.TestCase):
 
     def test_credential_guard_and_safe_cli_errors(self):
         with redirect_stderr(io.StringIO()) as errors:
-            for name in ("OPENROUTER_API_KEY", "NOUS_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"):
+            for name in ("ANTHROPIC_API_KEY", "NOUS_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"):
                 with mock.patch.dict(os.environ, {name: "fixture"}):
                     self.assertEqual(installer.main(["prepare", str(self.engine)]), 1)
             self.opener.assert_not_called()

@@ -15,7 +15,7 @@
 
 </div>
 
-release-policy is a set of reusable GitHub Actions workflows for repository maintainers: they release Python packages, source archives, Rust binaries and skill packs with checksums and SLSA provenance, and run VirusTotal release scans, attribution checks and independent PR reviews.
+release-policy is a set of reusable GitHub Actions workflows for repository maintainers: they release Python packages, source archives, Rust binaries and skill packs with checksums and SLSA provenance, and run VirusTotal release scans, attribution checks and Claude PR reviews.
 
 A consumer calls one with `uses:`, pinned to a full commit SHA of this repository. Before adopting, check 3 limits:
 
@@ -31,7 +31,7 @@ A consumer calls one with `uses:`, pinned to a full commit SHA of this repositor
 | `release-skills.yml`, `verify-skills.yml` | Verify and release an agent skill pack | [Skill verification and releases](docs/skill-consumers.md) |
 | `virustotal-release.yml` | Scan a release's assets with VirusTotal | [VirusTotal release scans](docs/virustotal-consumers.md) |
 | `attribution-policy.yml` | Fail PR text and commits that carry AI attribution credits | [Attribution checks](docs/attribution-consumers.md) |
-| `pr-review.yml` | Run an independent PR review with your own API key | [PR reviews](docs/pr-review.md) |
+| `pr-review.yml` | Run Claude PR reviews with your own API key | [PR reviews](docs/pr-review.md) |
 
 `scripts/install.sh` and `scripts/install.ps1` install a Rust binary release in one command, and only after its checksum and build provenance verify: see [Installing a release](docs/binary-consumers.md#installing-a-release).
 
@@ -95,7 +95,7 @@ How-to:
 - [Source archives](docs/archive-consumers.md)
 - [Rust binaries](docs/binary-consumers.md)
 - [Skill verification and releases](docs/skill-consumers.md)
-- [Independent PR reviews with your own API key](docs/pr-review.md)
+- [Claude PR reviews with your own API key](docs/pr-review.md)
 - [VirusTotal release scans](docs/virustotal-consumers.md)
 - [Re-pinning consumers](docs/re-pinning.md)
 - [Verify a downloaded release](docs/verify-a-release.md)

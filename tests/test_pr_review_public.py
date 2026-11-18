@@ -29,6 +29,7 @@ from test_pr_review import (
     agent,
     clean_result,
     completion,
+    counted,
     fake_fetch,
     finding,
     metadata,
@@ -39,6 +40,9 @@ from test_pr_review import (
 
 public = importlib.import_module("pr_review_public")
 receipts = importlib.import_module("pr_review_receipts")
+PRICES = POLICY["prices"]
+COST = {model: review.guard_amount(review.call_cost({"input_tokens": 100, "output_tokens": 100}, PRICES[model]))
+        for model in review.MODELS}
 URL = f"https://github.com/{REPO}/pull/{PR}"
 CALLER = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
           "GITHUB_REPOSITORY": public.POLICY_REPOSITORY,
@@ -155,14 +159,14 @@ class PublicReviewTests(unittest.TestCase):
                     self.assertRaisesRegex(review.ReviewError, "identity_changed"):
                 public.capture(URL, POLICY, POLICY_SHA, "scanner", Path("rules"), public_fetch())
             with mock.patch.object(public, "verify_live", side_effect=review.ReviewError("stale")) as live, \
-                    mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
-                send = mock.Mock(return_value={"data": {"limit": None, "limit_remaining": None}})
+                    mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic"}):
+                send = mock.Mock(return_value={"input_tokens": 1})
                 with self.assertRaisesRegex(review.ReviewError, "stale"):
                     agent.review_snapshot(snap, POLICY, send,
                                           lambda *args: {model: [("system", "context")] for model in review.MODELS})
                 live.assert_called_once()
-                self.assertEqual(send.call_count, 1)
-                self.assertTrue(send.call_args.args[0].endswith("/key"))
+                # Not even the free token count may carry source before the live identity check.
+                send.assert_not_called()
 
     def test_central_and_historical_evidence_cannot_publish_status(self):
         snap = central_snapshot()
@@ -241,17 +245,23 @@ class ReceiptTests(unittest.TestCase):
             report = model_report()
             review.write_report(path, report)
             prior = path.read_bytes()
-            cases = [{**report, "schema": 1}, {**report, "generation_id": "gen-private-canary"}]
+            cases = [{**report, "schema": 1}, {**report, "generation_id": "msg_private-canary"}]
             candidate = copy.deepcopy(report)
-            candidate["reviews"][0]["generation_id"] = "gen-private-canary"
+            candidate["reviews"][0]["generation_id"] = "msg_private-canary"
             cases.append(candidate)
-            for field, value in (("id", "gen-private-canary"), ("generation_id_sha256", None),
-                                 ("generation_id_sha256", "gen-private-canary")):
+            for field, value in (("id", "msg_private-canary"), ("generation_id_sha256", None),
+                                 ("generation_id_sha256", "msg_private-canary"), ("stop_reason", "max_tokens")):
                 candidate = copy.deepcopy(report)
                 candidate["reviews"][0]["generations"][0][field] = value
                 cases.append(candidate)
-            for changes in ({"raw_id": "gen-private-canary"}, {"prompt_tokens": True},
-                            {"completion_tokens": 0}, {"cost": "0"}, {"cost": float("inf")}, {"cost": -1}):
+            for field, value in (("provider", "Novita"), ("spending_mode", "payg")):
+                candidate = copy.deepcopy(report)
+                candidate["reviews"][0][field] = value
+                cases.append(candidate)
+                cases.append({**report, field: value})
+            for changes in ({"raw_id": "msg_private-canary"}, {"input_tokens": True},
+                            {"output_tokens": 0}, {"cost": "0"}, {"cost": float("inf")}, {"cost": -1},
+                            {"prompt_tokens": 100}):
                 candidate = copy.deepcopy(report)
                 candidate["reviews"][0]["generations"][0]["usage"].update(changes)
                 cases.append(candidate)
@@ -261,30 +271,30 @@ class ReceiptTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), prior)
             journal_path = Path(directory) / "receipts.json"
             snap = snapshot()
-            journal = receipts.ReceiptJournal(journal_path, snap, review.chunks(snap, POLICY), POLICY, 1)
+            journal = receipts.ReceiptJournal(journal_path, snap, review.chunks(snap, POLICY), 1)
             with self.assertRaisesRegex(review.ReviewError, "invalid_receipt_fields"):
-                journal.update(0, generation_id="gen-private-canary")
-            self.assertNotIn("gen-private-canary", journal_path.read_text())
+                journal.update(0, generation_id="msg_private-canary")
+            self.assertNotIn("msg_private-canary", journal_path.read_text())
 
     def test_digest_is_exact_ascii_and_raw_response_id_cannot_escape_report(self):
-        identifier = "gen-AsCiICanary09"
-        data = receipts.metadata(completion(review.MODELS[0], id=identifier), review.MODELS[0], "Novita")
+        identifier = "msg_AsCiICanary09"
+        data = receipts.metadata(completion(review.MODELS[0], id=identifier), review.MODELS[0], PRICES[review.MODELS[0]])
         self.assertEqual(data["generation_id_sha256"], review.hashlib.sha256(identifier.encode("ascii")).hexdigest())
         self.assertTrue(data["generation_id_valid"])
         self.assertNotIn(identifier, json.dumps(data))
         self.assertIsNone(receipts.metadata(completion(review.MODELS[0], id=identifier + " "),
-                                           review.MODELS[0], "Novita")["generation_id_sha256"])
+                                           review.MODELS[0], PRICES[review.MODELS[0]])["generation_id_sha256"])
         prompts = {model: [("system", "context")] for model in review.MODELS}
 
-        def send(url, key, body=None, **kwargs):
-            if body is None:
-                return {"data": {"limit": None, "limit_remaining": None}}
+        def paid(url, key, body=None, **kwargs):
             result = clean_result()
             result["key_issues_to_review"] = [{**finding(), "issue_content": identifier}]
-            return completion(body["model"], id=identifier if body["model"] == review.MODELS[0] else "gen-other",
-                              choices=[{"finish_reason": "stop", "message": {"content": json.dumps({"review": result})}}])
+            return completion(body["model"], id=identifier if body["model"] == review.MODELS[0] else "msg_other",
+                              content=[{"type": "text", "text": json.dumps({"review": result})}])
 
-        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+        send = counted(paid)
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic"}):
             path = Path(directory) / "receipts.json"
             with self.assertRaisesRegex(review.ReviewError, "raw_generation_id_in_report"):
                 agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
@@ -299,14 +309,15 @@ class ReceiptTests(unittest.TestCase):
         for envelope in (b"malformed private body", b'{"cost":0,"cost":1}',
                          b'{"cost":NaN}', b"x" * (review.MAX_RESPONSE_BYTES + 1),
                          HTTPError("url", 500, "private error", {}, None)):
-            key_response = mock.MagicMock()
-            key_response.__enter__.return_value.read.return_value = b'{"data":{"limit":null,"limit_remaining":null}}'
+            count_response = mock.MagicMock()
+            count_response.__enter__.return_value.read.return_value = b'{"input_tokens":1}'
             paid_response = mock.MagicMock()
             paid_response.__enter__.return_value.read.return_value = envelope
             opener = mock.Mock()
-            opener.open.side_effect = [key_response, envelope if isinstance(envelope, HTTPError) else paid_response]
+            opener.open.side_effect = [count_response, count_response,
+                                       envelope if isinstance(envelope, HTTPError) else paid_response]
             with tempfile.TemporaryDirectory() as directory, \
-                    mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}), \
+                    mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic"}), \
                     mock.patch.object(review, "build_opener", return_value=opener):
                 path = Path(directory) / "receipts.json"
                 with self.assertRaises(review.ReviewError):
@@ -318,7 +329,7 @@ class ReceiptTests(unittest.TestCase):
                 self.assertEqual(data["calls"][1]["transport_state"], "not_started")
                 self.assertFalse(data["finished"])
                 self.assertNotIn("private", path.read_text())
-                self.assertEqual(opener.open.call_count, 2)
+                self.assertEqual(opener.open.call_count, 3)
 
     def test_final_journal_write_failure_vetoes_cli_report(self):
         prompts = {model: [("system", "context")] for model in review.MODELS}
@@ -330,15 +341,14 @@ class ReceiptTests(unittest.TestCase):
                 raise OSError("private disk error")
             original_save(journal)
 
-        def send(url, key, body=None, **kwargs):
-            return {"data": {"limit": None, "limit_remaining": None}} if body is None else completion(body["model"])
+        send = counted()
 
-        def run(snap, policy, *, receipt_path=None, metadata_lookup=None):
+        def run(snap, policy, *, receipt_path=None):
             return original_review(snap, policy, send, lambda *args: prompts,
                                    lambda text: clean_result(), receipt_path=receipt_path)
 
         with tempfile.TemporaryDirectory() as directory, \
-                mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic", "GITHUB_RUN_ATTEMPT": "1"}), \
+                mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic", "GITHUB_RUN_ATTEMPT": "1"}), \
                 mock.patch.object(receipts.ReceiptJournal, "save", failing_save), \
                 mock.patch.object(agent, "review_snapshot", side_effect=run), redirect_stderr(io.StringIO()) as errors:
             root = Path(directory)
@@ -355,118 +365,128 @@ class ReceiptTests(unittest.TestCase):
 
     def test_metadata_whitelists_bounded_numbers_ids_and_enum_values(self):
         model = review.MODELS[0]
-        provider = POLICY["routes"][model]["name"]
-        self.assertEqual(receipts.metadata(completion(model), model, provider)["usage"]["cost"], 0.0001)
-        for value in (None, [], {"choices": []}, {"choices": [None]}, {"choices": [{"finish_reason": []}]}):
-            self.assertIsNone(receipts.metadata(value, model, provider)["finish_reason"])
-        for cost in (True, "0.1", -1, float("nan"), float("inf"), 10**24):
-            response = completion(model, usage={"cost": cost, "prompt_tokens": True, "total_tokens": 1_000_000_001})
-            self.assertIsNone(receipts.metadata(response, model, provider)["usage"]["cost"])
-        for cost in (0, 99, 1e100, 0.0):
-            self.assertEqual(receipts.metadata(completion(model, usage={"cost": cost}), model, provider)["usage"]["cost"], cost)
-        self.assertIsNone(receipts.metadata(completion(model, usage=[]), model, provider)["usage"]["cost"])
-        for identifier in (None, "raw body", "gen-" + "a" * 129, "gen-sk-secret", "gen-ü", "gen-line\nbreak"):
+        prices = PRICES[model]
+        data = receipts.metadata(completion(model), model, prices)
+        self.assertEqual(data["usage"], {"input_tokens": 100, "output_tokens": 100, "thinking_tokens": None,
+                                         "cost": COST[model]})
+        self.assertEqual((data["stop_reason"], data["model_matches"]), ("end_turn", True))
+        for value in (None, [], {"stop_reason": []}, {"stop_reason": "private-canary"}):
+            self.assertIsNone(receipts.metadata(value, model, prices)["stop_reason"])
+        self.assertIsNone(receipts.metadata(None, model, prices)["model_matches"])
+        for usage in ({"input_tokens": True, "output_tokens": 100}, {"input_tokens": 100, "output_tokens": -1},
+                      {"input_tokens": 100, "output_tokens": 1_000_000_001}, {"input_tokens": "100", "output_tokens": 100},
+                      {"input_tokens": 100}, {"output_tokens": 100}, [],
+                      # A cost priced at standard rates would understate these bills.
+                      {"input_tokens": 100, "output_tokens": 100, "cache_read_input_tokens": 50},
+                      {"input_tokens": 100, "output_tokens": 100, "cache_creation_input_tokens": 50},
+                      {"input_tokens": 100, "output_tokens": 100, "speed": "fast"},
+                      {"input_tokens": 100, "output_tokens": 100, "service_tier": "priority"}):
+            with self.subTest(usage=usage):
+                self.assertIsNone(receipts.metadata(completion(model, usage=usage), model, prices)["usage"]["cost"])
+        self.assertEqual(receipts.metadata(completion(model, usage={"input_tokens": 0, "output_tokens": 0}),
+                                           model, prices)["usage"]["cost"], 0)
+        for identifier in (None, "raw body", "msg_" + "a" * 125, "msg_sk-secret", "msg_ü", "msg_line\nbreak",
+                           "gen-123", "msg_"):
             self.assertIsNone(receipts.generation_id(identifier))
-        self.assertIsNone(receipts.generation_id("generation-123"))
-        data = receipts.metadata(completion(model, model="hostile-model", provider="hostile-provider",
-                                            error="private-body", id="generation-123"), model, provider)
+        self.assertEqual(receipts.generation_id("msg_" + "a" * 124), "msg_" + "a" * 124)
+        data = receipts.metadata(completion(model, model="hostile-model", error="private-body", id="generation-123"),
+                                 model, prices)
         self.assertFalse(data["generation_id_valid"])
         self.assertIsNone(data["generation_id_sha256"])
         self.assertFalse(data["model_matches"])
-        self.assertFalse(data["provider_matches"])
         self.assertNotIn("hostile", json.dumps(data))
         self.assertNotIn("private-body", json.dumps(data))
 
-    def test_reasoning_usage_is_bounded_numeric_metadata_from_one_path(self):
+    def test_thinking_usage_is_bounded_numeric_metadata_from_one_path(self):
         model = review.MODELS[0]
-        provider = POLICY["routes"][model]["name"]
+        prices = PRICES[model]
         for value in (0, 37, 100):
-            response = completion(model, usage={"completion_tokens": 100,
-                                               "completion_tokens_details": {"reasoning_tokens": value,
-                                                                             "text": "private-canary"}})
-            data = receipts.metadata(response, model, provider, output_tokens=100)
-            self.assertEqual(data["usage"]["reasoning_tokens"], value)
+            response = completion(model, usage={"input_tokens": 100, "output_tokens": 100,
+                                               "output_tokens_details": {"thinking_tokens": value,
+                                                                         "text": "private-canary"}})
+            data = receipts.metadata(response, model, prices, output_tokens=100)
+            self.assertEqual(data["usage"]["thinking_tokens"], value)
             self.assertNotIn("private-canary", json.dumps(data))
-        for details in (None, [], "private-canary", {}, {"reasoning_tokens": None},
-                        *({"reasoning_tokens": value} for value in
+        for details in (None, [], "private-canary", {}, {"thinking_tokens": None},
+                        *({"thinking_tokens": value} for value in
                           (True, False, -1, 0.5, "37", 101, 10**100, float("nan"), float("inf")))):
-            response = completion(model, usage={"completion_tokens": 100,
-                                               "completion_tokens_details": details,
-                                               "reasoning_tokens": 37})
+            response = completion(model, usage={"input_tokens": 100, "output_tokens": 100,
+                                               "output_tokens_details": details, "thinking_tokens": 37})
             with self.subTest(details=details):
-                self.assertIsNone(receipts.metadata(response, model, provider,
-                                                   output_tokens=100)["usage"]["reasoning_tokens"])
-        response = completion(model, usage={"completion_tokens": 100,
-                                           "completion_tokens_details": {"reasoning_tokens": 38}})
-        self.assertIsNone(receipts.metadata(response, model, provider,
-                                           output_tokens=37)["usage"]["reasoning_tokens"])
-        self.assertIsNone(receipts.metadata(response, model, provider)["usage"]["reasoning_tokens"])
-        response["usage"]["completion_tokens"] = None
-        self.assertIsNone(receipts.metadata(response, model, provider,
-                                           output_tokens=100)["usage"]["reasoning_tokens"])
+                self.assertIsNone(receipts.metadata(response, model, prices,
+                                                   output_tokens=100)["usage"]["thinking_tokens"])
+        response = completion(model, usage={"input_tokens": 100, "output_tokens": 100,
+                                           "output_tokens_details": {"thinking_tokens": 38}})
+        self.assertIsNone(receipts.metadata(response, model, prices,
+                                           output_tokens=37)["usage"]["thinking_tokens"])
+        self.assertIsNone(receipts.metadata(response, model, prices)["usage"]["thinking_tokens"])
+        response["usage"]["output_tokens"] = None
+        self.assertIsNone(receipts.metadata(response, model, prices,
+                                           output_tokens=100)["usage"]["thinking_tokens"])
 
-    def test_reasoning_metadata_never_changes_reservation_acceptance_or_report(self):
+    def test_thinking_metadata_never_changes_reservation_acceptance_or_report(self):
         prompts = {model: [("system", "context")] for model in review.MODELS}
         reports = []
         for value in (None, 0, 100, "private-canary"):
             with tempfile.TemporaryDirectory() as directory, \
-                    mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+                    mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic"}):
                 path = Path(directory) / "receipts.json"
 
-                def send(url, key, body=None, **kwargs):
-                    if body is None:
-                        return {"data": {"limit": None, "limit_remaining": None}}
+                def paid(url, key, body=None, **kwargs):
                     response = completion(body["model"])
-                    response["usage"]["completion_tokens_details"] = {"reasoning_tokens": value}
+                    response["usage"]["output_tokens_details"] = {"thinking_tokens": value}
                     return response
+
+                send = counted(paid)
 
                 reports.append(agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
                                                       lambda text: clean_result(), receipt_path=path))
                 data = review.read_json(path)
-                self.assertEqual(data["schema"], "receipt_journal_v3")
+                self.assertEqual(data["schema"], "receipt_journal_v5")
                 self.assertTrue(data["finished"])
                 self.assertNotIn("private-canary", path.read_text())
-                self.assertEqual([call["usage"]["reasoning_tokens"] for call in data["calls"]],
+                self.assertEqual([call["usage"]["thinking_tokens"] for call in data["calls"]],
                                  [value, value] if isinstance(value, int) else [None, None])
         self.assertTrue(all(report == reports[0] for report in reports))
 
-    def test_length_failure_retains_reasoning_count_and_stops_later_calls(self):
+    def test_max_tokens_failure_retains_thinking_count_and_stops_later_calls(self):
         model = review.MODELS[0]
-        response = completion(model, choices=[{"finish_reason": "length",
-                                              "message": {"content": "private-canary"}}],
-                              usage={"prompt_tokens": 100, "completion_tokens": POLICY["output_tokens"],
-                                     "completion_tokens_details": {"reasoning_tokens": POLICY["output_tokens"]},
-                                     "cost": 0.01})
-        send = mock.Mock(side_effect=[{"data": {"limit": None, "limit_remaining": None}}, response])
+        usage = {"input_tokens": 100, "output_tokens": POLICY["output_tokens"],
+                 "output_tokens_details": {"thinking_tokens": POLICY["output_tokens"]}}
+        response = completion(model, stop_reason="max_tokens",
+                              content=[{"type": "text", "text": "private-canary"}], usage=usage)
+        send = mock.Mock(side_effect=[{"input_tokens": 1}, {"input_tokens": 1}, response])
         prompts = {selected: [("system", "context")] for selected in review.MODELS}
         with tempfile.TemporaryDirectory() as directory, \
-                mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+                mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic"}):
             path = Path(directory) / "receipts.json"
             with self.assertRaisesRegex(review.ReviewError, "incomplete_completion"):
                 agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
                                       lambda text: clean_result(), receipt_path=path)
             data = review.read_json(path)
             self.assertFalse(data["finished"])
-            self.assertEqual(data["calls"][0]["usage"]["reasoning_tokens"], POLICY["output_tokens"])
-            self.assertEqual(data["calls"][0]["usage"]["cost"], 0.01)
+            self.assertEqual(data["calls"][0]["usage"]["thinking_tokens"], POLICY["output_tokens"])
+            self.assertEqual(data["calls"][0]["stop_reason"], "max_tokens")
+            # 100 input tokens at US$4 and 16,000 output tokens at US$20 per million.
+            self.assertEqual(data["calls"][0]["usage"]["cost"], review.guard_amount(review.Decimal("0.3204")))
             self.assertEqual(data["calls"][1]["transport_state"], "not_started")
             self.assertNotIn("private-canary", path.read_text())
-            self.assertEqual(send.call_count, 2)
+            self.assertEqual(send.call_count, 3)
 
     def test_partial_failure_retains_each_known_bill_without_complete_report(self):
-        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic"}):
             path = Path(directory) / "receipts.json"
             prompts = {model: [("system", "identical private context")] for model in review.MODELS}
             paid = []
 
-            def send(url, key, body=None, **kwargs):
-                if url.endswith("/key"):
-                    return {"data": {"limit": None, "limit_remaining": None}}
+            def charge(url, key, body=None, **kwargs):
                 paid.append(body["model"])
                 response = completion(body["model"])
                 if len(paid) == 2:
-                    response["choices"][0]["message"]["content"] = "private malformed response"
+                    response["content"][-1]["text"] = "private malformed response"
                 return response
+
+            send = counted(charge)
 
             native = SimpleNamespace(PRReview=SimpleNamespace(model_validate=mock.Mock()))
             with mock.patch.dict(sys.modules, {"pr_agent.algo.output_models": native,
@@ -475,17 +495,16 @@ class ReceiptTests(unittest.TestCase):
                 agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
                                       receipt_path=path)
             data = review.read_json(path)
-            self.assertEqual(data["schema"], "receipt_journal_v3")
+            self.assertEqual(data["schema"], "receipt_journal_v5")
             self.assertFalse(data["finished"])
             self.assertEqual([call["output_state"] for call in data["calls"]], ["valid", "invalid"])
             self.assertEqual([call["diagnostic_category"] for call in data["calls"]], [None, "json_syntax"])
-            self.assertEqual([call["usage"]["cost"] for call in data["calls"]], [0.0001, 0.0001])
+            self.assertEqual([call["usage"]["cost"] for call in data["calls"]], [COST[model] for model in review.MODELS])
             self.assertEqual(len(paid), 2)
             self.assertNotIn("private", path.read_text())
             self.assertEqual(list(Path(directory).iterdir()), [path])
-            report = agent.review_snapshot(snapshot(), POLICY,
-                                           lambda url, key, body=None, **kwargs: {"data": {"limit": None, "limit_remaining": None}}
-                                           if body is None else completion(body["model"]),
+            os.environ["ANTHROPIC_API_KEY"] = "synthetic"
+            report = agent.review_snapshot(snapshot(), POLICY, counted(),
                                            lambda *args: prompts, lambda text: clean_result(), receipt_path=path)
             self.assertTrue(report["complete"])
             self.assertTrue(review.read_json(path)["finished"])
@@ -494,11 +513,11 @@ class ReceiptTests(unittest.TestCase):
         snap = snapshot()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "receipts.json"
-            journal = receipts.ReceiptJournal(path, snap, review.chunks(snap, POLICY), POLICY, 1)
+            journal = receipts.ReceiptJournal(path, snap, review.chunks(snap, POLICY), 1)
             initial = copy.deepcopy(journal.data)
-            allowed = {"model", "provider", "chunk_hash", "transport_state", "output_state",
+            allowed = {"model", "chunk_hash", "transport_state", "output_state",
                        "diagnostic_category", "generation_id_sha256", "generation_id_valid",
-                       "model_matches", "provider_matches", "finish_reason", "usage"}
+                       "model_matches", "stop_reason", "usage"}
             self.assertEqual(set(initial["calls"][0]), allowed)
             for category in ("completion_contract", "json_syntax", "duplicate_keys", "root_or_nesting", "strict_schema"):
                 journal.update(0, transport_state="response_received", output_state="invalid",
@@ -528,9 +547,9 @@ class ReceiptTests(unittest.TestCase):
 
     def test_runtime_failure_is_indeterminate_and_never_exposes_exception_data(self):
         prompts = {model: [("system", "context")] for model in review.MODELS}
-        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic"}):
             path = Path(directory) / "receipts.json"
-            send = mock.Mock(side_effect=[{"data": {"limit": None, "limit_remaining": None}}, completion(review.MODELS[0])])
+            send = mock.Mock(side_effect=[{"input_tokens": 1}, {"input_tokens": 1}, completion(review.MODELS[0])])
 
             def parser(content):
                 call = review.read_json(path)["calls"][0]
@@ -544,8 +563,8 @@ class ReceiptTests(unittest.TestCase):
             call = review.read_json(path)["calls"][0]
             self.assertEqual(call["output_state"], "indeterminate")
             self.assertEqual(call["diagnostic_category"], "unexpected_runtime")
-            self.assertEqual(call["usage"]["cost"], 0.0001)
-            self.assertEqual(send.call_count, 2)
+            self.assertEqual(call["usage"]["cost"], COST[review.MODELS[0]])
+            self.assertEqual(send.call_count, 3)
             self.assertNotIn("private", path.read_text())
 
     def test_native_value_error_is_runtime_and_typed_rejection_is_invalid(self):
@@ -553,15 +572,15 @@ class ReceiptTests(unittest.TestCase):
         for rejected_model in review.MODELS:
             for error, state, category in ((ValueError("private-value"), "indeterminate", "unexpected_runtime"),
                                            (SchemaRejection("private-field-path"), "invalid", "strict_schema")):
-                with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+                with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic"}):
                     path = Path(directory) / "receipts.json"
                     paid = []
 
-                    def send(url, key, body=None, **kwargs):
-                        if body is None:
-                            return {"data": {"limit": None, "limit_remaining": None}}
+                    def charge(url, key, body=None, **kwargs):
                         paid.append(body["model"])
                         return completion(body["model"])
+
+                    send = counted(charge)
 
                     def validate(data, strict):
                         self.assertTrue(strict)
@@ -581,7 +600,7 @@ class ReceiptTests(unittest.TestCase):
                     call = journal["calls"][len(paid) - 1]
                     self.assertEqual(call["output_state"], state)
                     self.assertEqual(call["diagnostic_category"], category)
-                    self.assertEqual(call["usage"]["cost"], 0.0001)
+                    self.assertEqual(call["usage"]["cost"], COST[rejected_model])
                     self.assertEqual(paid, list(review.MODELS[:review.MODELS.index(rejected_model) + 1]))
                     self.assertNotIn("private", path.read_text())
 
@@ -601,27 +620,33 @@ class ReceiptTests(unittest.TestCase):
 
     def test_unknown_transport_duplicate_ids_and_disk_failure_stop_later_calls(self):
         prompts = {model: [("system", "context")] for model in review.MODELS}
-        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "synthetic"}):
+        count = {"input_tokens": 1}
+        with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "receipts.json"
-            send = mock.Mock(side_effect=[{"data": {"limit": None, "limit_remaining": None}}, OSError("private")])
-            with self.assertRaises(OSError):
+            send = mock.Mock(side_effect=[count, count, OSError("private")])
+            with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic"}), self.assertRaises(OSError):
                 agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts, receipt_path=path)
             data = review.read_json(path)
             self.assertEqual(data["calls"][0]["transport_state"], "request_intended")
             self.assertIsNone(data["calls"][0]["generation_id_sha256"])
             self.assertIsNone(data["calls"][0]["usage"]["cost"])
-            self.assertEqual(send.call_count, 2)
-            for identifier in ("generation-123", "gen-duplicate"):
-                send = mock.Mock(side_effect=[{"data": {"limit": None, "limit_remaining": None}},
+            self.assertEqual(send.call_count, 3)
+            for identifier in ("generation-123", "msg_duplicate"):
+                send = mock.Mock(side_effect=[count, count,
                                               completion(review.MODELS[0], id=identifier),
                                               completion(review.MODELS[1], id=identifier)])
-                with self.assertRaisesRegex(review.ReviewError, "unusable_or_duplicate_generation_id"):
+                with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic"}), \
+                        self.assertRaisesRegex(review.ReviewError, "unusable_or_duplicate_generation_id"):
                     agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
                                           lambda text: clean_result(), receipt_path=path)
-            send = mock.Mock(return_value={"data": {"limit": None, "limit_remaining": None}})
-            with mock.patch.object(receipts.os, "replace", side_effect=OSError("disk failure")), self.assertRaises(OSError):
+            send = mock.Mock(return_value=count)
+            with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic"}), \
+                    mock.patch.object(receipts.os, "replace", side_effect=OSError("disk failure")), \
+                    self.assertRaises(OSError):
                 agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts, receipt_path=path)
-            self.assertEqual(send.call_count, 1)
+            # Only the free counts ran before the journal failed; no paid call followed.
+            self.assertEqual([call.args[0] for call in send.call_args_list],
+                             [review.ANTHROPIC_API + "messages/count_tokens"] * 2)
             self.assertFalse(any(item.name.startswith(".receipt-") for item in Path(directory).iterdir()))
 
     def test_journal_atomic_replacement_size_bounds_and_linux_directory_sync(self):
@@ -629,7 +654,7 @@ class ReceiptTests(unittest.TestCase):
         groups = review.chunks(snap, POLICY)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "receipts.json"
-            journal = receipts.ReceiptJournal(path, snap, groups, POLICY, 1)
+            journal = receipts.ReceiptJournal(path, snap, groups, 1)
             journal.update(0, transport_state="request_intended")
             windows_os = SimpleNamespace(fdopen=os.fdopen, fsync=os.fsync, replace=os.replace)
             with mock.patch.object(receipts, "os", windows_os):
@@ -640,7 +665,7 @@ class ReceiptTests(unittest.TestCase):
                 journal.update(0, transport_state="response_received")
             self.assertEqual(path.read_bytes(), prior)
             with mock.patch.object(receipts, "MAX_JOURNAL_BYTES", 1), self.assertRaisesRegex(review.ReviewError, "plan_too_large"):
-                receipts.ReceiptJournal(path, snap, groups, POLICY, 1)
+                receipts.ReceiptJournal(path, snap, groups, 1)
             with mock.patch.object(receipts, "MAX_JOURNAL_BYTES", 1), self.assertRaisesRegex(review.ReviewError, "journal_too_large"):
                 journal.save()
             descriptor, name = tempfile.mkstemp(dir=directory)

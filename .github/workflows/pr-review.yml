@@ -10,7 +10,7 @@ on:
         type: string
         default: ""
     secrets:
-      OPENROUTER_API_KEY:
+      ANTHROPIC_API_KEY:
         required: false
 
 permissions:
@@ -155,7 +155,7 @@ jobs:
           if-no-files-found: error
 
   review:
-    name: GLM and MiMo independent review
+    name: Claude Opus and Sonnet review
     if: >-
       !cancelled() && github.run_attempt == 1 &&
       ((needs.capture.result == 'success' && needs.capture.outputs.disposition == 'captured') ||
@@ -212,7 +212,7 @@ jobs:
           uv pip check --python .venv/bin/python
       - name: Review both models against identical frozen context
         env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PYTHONPATH: ${{ github.workspace }}/engine
           POLICY_SHA: ${{ job.workflow_sha }}
         run: >-

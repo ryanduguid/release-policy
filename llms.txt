@@ -1,7 +1,7 @@
 # release-policy
 
 > Reusable GitHub Actions workflows for releases, provenance attestations, VirusTotal
-> scans, attribution checks and independent PR reviews, shared by Ryan Duguid's
+> scans, attribution checks and Claude PR reviews, shared by Ryan Duguid's
 > repositories. Consumers pin a full policy commit. Policy checks establish release
 > evidence, not accounting correctness.
 
@@ -29,7 +29,7 @@ distributable releases.
 - [Skill verification and releases](https://github.com/ryanduguid/release-policy/blob/main/docs/skill-consumers.md)
 - [Attribution checks](https://github.com/ryanduguid/release-policy/blob/main/docs/attribution-consumers.md)
 - [The egress check](https://github.com/ryanduguid/release-policy/blob/main/docs/egress-check.md)
-- [Independent PR reviews with your own API key](https://github.com/ryanduguid/release-policy/blob/main/docs/pr-review.md)
+- [Claude PR reviews with your own API key](https://github.com/ryanduguid/release-policy/blob/main/docs/pr-review.md)
 - [Prerequisites](https://github.com/ryanduguid/release-policy/blob/main/docs/consumer-prerequisites.md)
 - [Re-pinning consumers](https://github.com/ryanduguid/release-policy/blob/main/docs/re-pinning.md)
 - [Shared-policy decision](https://github.com/ryanduguid/release-policy/blob/main/docs/adr/0001-shared-release-policy.md)

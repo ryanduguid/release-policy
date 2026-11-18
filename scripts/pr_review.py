@@ -17,20 +17,24 @@ import json
 import math
 import os
 import re
+import socket
 import subprocess
 import sys
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Context, Decimal, localcontext
+from http.client import HTTPSConnection
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from required_checks import _FULL_SHA, _REPOSITORY
 
-MODELS = ("z-ai/glm-5.3", "xiaomi/mimo-v2.6-pro")
+MODELS = ("claude-opus-5-5", "claude-sonnet-5-5")
 PR_AGENT_SHA = "06a2991c0ce6b055c77fbcbd7f09faf4c5acfcaf"
+ANTHROPIC_API = "https://api.anthropic.com/v1/"
+ANTHROPIC_VERSION = "2026-10-21"
 CONTEXT = "Independent PR review (advisory)"
 SCANNER_VERSION = "betterleaks/1.10.1"
 # config/gitleaks.toml of Gitleaks 8.30.1: the rules this scan ran before Betterleaks.
@@ -44,6 +48,7 @@ HEX_BEFORE_BASE64 = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{32,}+(?=[G-Zg-z_/+-
 BLANK_LINES = re.compile(r"\n[ \t\r]*+(?=\n)")
 COPY_STRETCH_BYTES = 16_000
 MAX_RESPONSE_BYTES = 12_000_000
+_MONEY = Context(prec=700)
 Fetch = Callable[[str], Any]
 
 
@@ -79,29 +84,46 @@ class NoRedirect(HTTPRedirectHandler):
         raise ReviewError("http_redirect_refused")
 
 
+class KeepAliveConnection(HTTPSConnection):
+    def connect(self) -> None:
+        super().connect()
+        # Anthropic's long-request guidance: TCP keep-alive stops networks
+        # dropping a connection that waits minutes for a non-streaming reply.
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+        self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 60)
+
+
+class KeepAliveHTTPSHandler(HTTPSHandler):
+    def https_open(self, req: Any) -> Any:
+        # Without a context argument the connection builds Python's default verified context.
+        return self.do_open(KeepAliveConnection, req)
+
+
 def request_json(url: str, key: str, payload: Any = None, *,
                  response_observer: Callable[[], None] | None = None,
-                 timeout: int = 240, response_limit: int = MAX_RESPONSE_BYTES,
-                 decimal_numbers: bool = False) -> Any:
+                 timeout: int = 240) -> Any:
     """Send only to fixed API origins; never forward a credential through a redirect."""
-    require(url.startswith(("https://api.github.com/", "https://openrouter.ai/api/v1/")),
-            "untrusted_api_origin")
+    anthropic = url.startswith(ANTHROPIC_API)
+    require(anthropic or url.startswith("https://api.github.com/"), "untrusted_api_origin")
     # A dot segment could reach another endpoint of the fixed origin with the same key.
     require(not {".", ".."} & {unquote(part) for part in urlsplit(url).path.split("/")},
             "dot_segment_api_path")
     headers = {"Accept": "application/json", "User-Agent": "independent-pr-review/1"}
-    if key:
+    if anthropic:
+        headers.update({"x-api-key": key, "anthropic-version": ANTHROPIC_VERSION})
+    elif key:
         headers["Authorization"] = f"Bearer {key}"
     if payload is not None:
         headers["Content-Type"] = "application/json"
     # The origin is fixed, and literal or percent-encoded dot segments are refused above.
     req = Request(url, data=None if payload is None else canonical(payload), headers=headers)  # NOSONAR
     try:
-        with build_opener(NoRedirect()).open(req, timeout=timeout) as response:
+        with build_opener(NoRedirect(), KeepAliveHTTPSHandler()).open(req, timeout=timeout) as response:
             if response_observer is not None:
                 response_observer()
-            body = response.read(response_limit + 1)
-        require(len(body) <= response_limit, "oversized_api_response")
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+        require(len(body) <= MAX_RESPONSE_BYTES, "oversized_api_response")
         def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
             require(len(items) == len(dict(items)), "duplicate_api_json_key")
             return dict(items)
@@ -109,8 +131,7 @@ def request_json(url: str, key: str, payload: Any = None, *,
         def constant(value: str) -> None:
             raise ReviewError("non_finite_api_json_number")
 
-        return json.loads(body, object_pairs_hook=pairs, parse_constant=constant,
-                          parse_float=Decimal if decimal_numbers else float)
+        return json.loads(body, object_pairs_hook=pairs, parse_constant=constant)
     except HTTPError as error:
         if response_observer is not None:
             response_observer()
@@ -125,11 +146,10 @@ def github(path: str, payload: Any = None) -> Any:
 
 def validate_policy(policy: dict[str, Any]) -> None:
     require(policy["schema"] == 1 and policy["mode"] == "advisory", "unsupported_policy")
-    require(policy.get("spending_mode") in ("capped", "payg"), "unsupported_spending_mode")
     require(tuple(policy["models"]) == MODELS, "forbidden_model_or_fallback")
     require(policy["private_repositories"] is False, "private_routes_not_qualified")
-    for field, ceiling in (("max_pilot_limit_usd", 100), ("max_key_limit_usd", 350), ("max_review_usd", 3),
-                           ("max_chunks", 12), ("chunk_bytes", 180000), ("output_tokens", 32768)):
+    for field, ceiling in (("max_review_usd", 3), ("max_chunks", 12), ("chunk_bytes", 180000),
+                           ("output_tokens", 16000)):
         value = policy[field]
         require(type(value) in (int, float) and math.isfinite(value) and 0 < value <= ceiling,
                 "invalid_budget_or_size_limit")
@@ -137,13 +157,12 @@ def validate_policy(policy: dict[str, Any]) -> None:
             "non_integer_size_limit")
     require(isinstance(policy["instructions"], str) and len(policy["instructions"]) <= 8000,
             "invalid_review_instructions")
-    expected = (("novita/fp8", "Novita"), ("xiaomi/fp8", "Xiaomi"))
-    for model, (slug, name) in zip(MODELS, expected, strict=True):
-        route = policy["routes"][model]
-        require(route["slug"] == slug and route["name"] == name, "unqualified_provider")
-        for field in ("prompt", "completion"):
-            require(type(route[field]) in (int, float) and math.isfinite(route[field])
-                    and 0 < route[field] <= 5, "invalid_price_ceiling")
+    require(set(policy["prices"]) == set(MODELS), "invalid_price_ceiling")
+    for model in MODELS:
+        prices = policy["prices"][model]
+        require(set(prices) == {"input", "output"}
+                and all(type(prices[field]) in (int, float) and math.isfinite(prices[field])
+                        and 0 < prices[field] <= 25 for field in prices), "invalid_price_ceiling")
 
 
 def pr_metadata(fetch: Fetch, repo: str, number: int, *, allow_closed: bool = False) -> dict[str, Any]:
@@ -426,67 +445,63 @@ def clear_review(review: dict[str, Any]) -> bool:
             and review["merge_recommendation"] == "safe_to_merge" and review["risk_level"] == "low")
 
 
-def validate_completion(response: dict[str, Any], model: str, route: dict[str, Any]) -> str:
-    require(response.get("model") == model and response.get("provider") == route["name"],
-            "unexpected_model_or_provider")
-    choices: Any = response.get("choices")
-    require(isinstance(choices, list) and len(choices) == 1, "invalid_completion_choices")
-    require(choices[0].get("finish_reason") == "stop", "incomplete_completion")
-    content = choices[0]["message"].get("content")
-    require(isinstance(content, str) and content.strip(), "empty_completion")
+def validate_completion(response: dict[str, Any], model: str) -> str:
+    require(response.get("type") == "message" and response.get("role") == "assistant"
+            and response.get("model") == model, "unexpected_model")
+    require(response.get("stop_reason") == "end_turn", "incomplete_completion")
+    blocks: Any = response.get("content")
+    require(isinstance(blocks, list) and all(isinstance(block, dict) and block.get("type") in
+                                             ("thinking", "redacted_thinking", "text") for block in blocks),
+            "unexpected_completion_content")
+    texts = [block.get("text") for block in blocks if block["type"] == "text"]
+    require(len(texts) == 1 and isinstance(texts[0], str) and texts[0].strip(), "empty_completion")
     require(isinstance(response.get("id"), str) and response["id"], "missing_generation_id")
-    usage = response.get("usage", {})
-    require(all(type(usage.get(field)) is int and usage[field] > 0
-                for field in ("prompt_tokens", "completion_tokens")), "missing_usage")
-    require(type(usage.get("cost")) in (int, float) and math.isfinite(usage["cost"])
-            and usage["cost"] >= 0, "missing_billed_cost")
-    return content
+    usage: Any = response.get("usage")
+    require(isinstance(usage, dict) and all(type(usage.get(field)) is int and usage[field] > 0  # pylint: disable=unidiomatic-typecheck
+                                            for field in ("input_tokens", "output_tokens")), "missing_usage")
+    require(standard_rate(usage), "unexpected_billing_rate")
+    return texts[0]
 
 
-def reserve_budget(key_data: dict[str, Any], policy: dict[str, Any], reservation: float) -> None:
-    require(type(reservation) in (int, float) and math.isfinite(reservation)
-            and 0 < reservation <= policy["max_review_usd"], "review_budget_exceeded")
-    require(policy.get("spending_mode") in ("capped", "payg"), "unsupported_spending_mode")
-    data = key_data["data"]
-    if policy["spending_mode"] == "payg":
-        require("limit" in data and "limit_remaining" in data, "missing_key_budget_metadata")
-        limit, remaining = data["limit"], data["limit_remaining"]
-        if limit is None:
-            require(remaining is None, "inconsistent_key_budget_metadata")
-        else:
-            require(type(limit) in (int, float) and math.isfinite(limit) and limit > 0,
-                    "invalid_key_limit")
-            require(type(remaining) in (int, float) and math.isfinite(remaining)
-                    and remaining >= reservation, "key_budget_exhausted")
-        return
-    require("limit_reset" in data and data["limit_reset"] in (None, "monthly"), "unsupported_key_limit_reset")
-    require(data.get("include_byok_in_limit") is True, "byok_must_count_towards_key_limit")
-    ceiling = policy["max_pilot_limit_usd"] if data["limit_reset"] is None else policy["max_key_limit_usd"]
-    require(type(data.get("limit")) in (int, float) and math.isfinite(data["limit"])
-            and 0 < data["limit"] <= ceiling, "dedicated_capped_key_required")
-    require(type(data.get("limit_remaining")) in (int, float) and math.isfinite(data["limit_remaining"])
-            and data["limit_remaining"] >= reservation, "key_budget_exhausted")
+def standard_rate(usage: dict[str, Any]) -> bool:
+    """The computed cost prices standard-rate input and output tokens only."""
+    return (all(usage.get(field) is None or (type(usage[field]) is int and usage[field] == 0)  # pylint: disable=unidiomatic-typecheck
+                for field in ("cache_creation_input_tokens", "cache_read_input_tokens"))
+            and usage.get("speed") in (None, "standard") and usage.get("service_tier") in (None, "standard"))
 
 
 def validate_generation_receipts(report: dict[str, Any]) -> None:
-    require(report["schema"] == 2, "unsupported_public_report_schema")
+    require(report["schema"] == 3, "unsupported_public_report_schema")
     require(set(report) <= {"schema", "context_hash", "engine_sha", "complete", "remaining_files",
-                            "failed_chunks", "spending_mode", "reservation_usd", "spent_usd", "reviews"},
+                            "failed_chunks", "reservation_usd", "spent_usd", "reviews"},
             "unexpected_public_report_fields")
     for entry in report["reviews"]:
-        require(set(entry) == {"model", "provider", "chunk_hashes", "results", "generations"},
+        require(set(entry) == {"model", "chunk_hashes", "results", "generations"},
                 "unexpected_public_review_fields")
         for generation in entry["generations"]:
-            require(set(generation) == {"generation_id_sha256", "finish_reason", "usage"}
+            require(set(generation) == {"generation_id_sha256", "stop_reason", "usage"}
                     and isinstance(generation["generation_id_sha256"], str)
                     and re.fullmatch(r"[a-f0-9]{64}", generation["generation_id_sha256"])
-                    and generation["finish_reason"] == "stop", "incomplete_generation_receipt")
+                    and generation["stop_reason"] == "end_turn", "incomplete_generation_receipt")
             usage = generation["usage"]
-            require(set(usage) == {"prompt_tokens", "completion_tokens", "cost"}
+            require(set(usage) == {"input_tokens", "output_tokens", "cost"}
                     and all(type(usage[field]) is int and usage[field] > 0  # pylint: disable=unidiomatic-typecheck
-                            for field in ("prompt_tokens", "completion_tokens"))
+                            for field in ("input_tokens", "output_tokens"))
                     and type(usage["cost"]) in (int, float) and math.isfinite(usage["cost"])
                     and usage["cost"] >= 0, "invalid_generation_usage")
+
+
+def call_cost(usage: dict[str, Any], prices: dict[str, Any]) -> Decimal:
+    """Anthropic reports tokens, not money: price them at the policy's list prices."""
+    with localcontext(_MONEY):
+        return (Decimal(usage["input_tokens"]) * Decimal(str(prices["input"]))
+                + Decimal(usage["output_tokens"]) * Decimal(str(prices["output"]))) / Decimal(1_000_000)
+
+
+def guard_amount(value: Decimal) -> float:
+    """Report a one-sided bound: the float never rounds below the decimal amount."""
+    amount = float(value)
+    return math.nextafter(amount, math.inf) if Decimal.from_float(amount) < value else amount
 
 
 def write_report(path: Path, report: dict[str, Any]) -> None:
@@ -499,7 +514,7 @@ def assess_report(snapshot: dict[str, Any], report: dict[str, Any] | None, polic
     verify_snapshot(snapshot, policy, policy_sha)
     state = "failure"
     if jobs_ok and report is not None:
-        require(report["context_hash"] == snapshot["context_hash"] and report["schema"] == 2
+        require(report["context_hash"] == snapshot["context_hash"] and report["schema"] == 3
                 and report["engine_sha"] == PR_AGENT_SHA
                 and report["complete"] is True and report["remaining_files"] == []
                 and report["failed_chunks"] == 0, "incomplete_review_report")
@@ -509,8 +524,7 @@ def assess_report(snapshot: dict[str, Any], report: dict[str, Any] | None, polic
         validate_generation_receipts(report)
         generation_ids: list[str] = []
         for entry, model in zip(reviews, MODELS, strict=True):
-            require(entry["model"] == model and entry["provider"] == policy["routes"][model]["name"]
-                    and entry["chunk_hashes"] == [digest(group) for group in groups]
+            require(entry["model"] == model and entry["chunk_hashes"] == [digest(group) for group in groups]
                     and len(entry["results"]) == len(groups) and len(entry["generations"]) == len(groups),
                     "review_coverage_mismatch")
             generation_ids.extend(g["generation_id_sha256"] for g in entry["generations"])
@@ -669,10 +683,8 @@ def main(argv: list[str] | None = None) -> int:
             snapshot = read_json(args.snapshot)
             verify_snapshot(snapshot, policy, args.policy_sha)
             from pr_review_agent import review_snapshot
-            from pr_review_receipts import generation_metadata
             write_report(args.report, review_snapshot(snapshot, policy,
-                                                    receipt_path=args.report.with_suffix(".receipts.json"),
-                                                    metadata_lookup=generation_metadata))
+                                                    receipt_path=args.report.with_suffix(".receipts.json")))
         else:
             snapshot = read_json(args.snapshot)
             report = read_json(args.report) if args.report.exists() else None

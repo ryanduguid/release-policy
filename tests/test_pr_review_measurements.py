@@ -25,21 +25,17 @@ POLICY = json.loads((ROOT / ".github/pr-review-policy.json").read_bytes())
 
 
 def journal():
-    data = receipts.ReceiptJournal(None, {"context_hash": "a" * 64}, [[{"path": "file.py"}]],
-                                   POLICY, 1).data
-    data["schema"] = "receipt_journal_v2"
-    for call in data["calls"]:
-        call["usage"].pop("reasoning_tokens", None)
-    return data
+    return receipts.ReceiptJournal(None, {"context_hash": "a" * 64}, [[{"path": "file.py"}]], 1).data
 
 
 def received(data, index, *, valid=True, bill=0.1):
+    """Record a response; bill replaces the computed cost to exercise the summed decimals."""
     model = review.MODELS[index]
-    response = {"id": f"gen-control-{index}", "model": model,
-                "provider": POLICY["routes"][model]["name"], "choices": [{"finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30, "cost": bill}}
-    metadata = receipts.metadata(response, model, POLICY["routes"][model]["name"])
-    metadata["usage"].pop("reasoning_tokens", None)
+    response = {"id": f"msg_control-{index}", "type": "message", "role": "assistant", "model": model,
+                "stop_reason": "end_turn", "usage": {"input_tokens": 10, "output_tokens": 20}}
+    metadata = receipts.metadata(response, model, POLICY["prices"][model], output_tokens=POLICY["output_tokens"])
+    if bill != "computed":
+        metadata["usage"]["cost"] = bill
     data["calls"][index].update(metadata,
                                 transport_state="response_received", output_state="valid" if valid else "invalid",
                                 diagnostic_category=None if valid else "strict_schema")
@@ -74,6 +70,16 @@ class MeasurementsTests(unittest.TestCase):
         self.assertEqual(result["human_accuracy"], "not_measured")
         self.assertEqual(result["models"][review.MODELS[0]]["accepted_per_received_call"]["numerator"], 1)
 
+    def test_recorded_cost_is_the_computed_upper_bound(self):
+        data = journal()
+        received(data, 0, bill="computed")
+        received(data, 1, bill="computed")
+        data["finished"] = True
+        total = Decimal(metrics.summarise([("attempt1", self.save(data))])["known_billed_subtotal_usd"])
+        # 10 input and 20 output tokens: US$0.00044 at Opus prices and US$0.00022 at Sonnet prices.
+        self.assertGreaterEqual(total, Decimal("0.00066"))
+        self.assertLess(total, Decimal("0.00066") + Decimal("1e-18"))
+
     def test_pending_transport_and_rejection_keep_unknown_bills_unknown(self):
         for state in ("request_intended", "response_observed", "response_received"):
             data = journal()
@@ -105,20 +111,17 @@ class MeasurementsTests(unittest.TestCase):
         with self.assertRaisesRegex(review.ReviewError, "empty_measurement_input"):
             metrics.summarise([])
 
-    def test_numeric_only_v3_usage_and_extreme_precision(self):
+    def test_numeric_only_usage_and_extreme_precision(self):
         data = journal()
-        data["schema"] = "receipt_journal_v3"
         data["updated_at"] = "2026-10-03T01:00:00Z"
-        for call in data["calls"]:
-            call["usage"]["reasoning_tokens"] = None
         received(data, 0)
-        data["calls"][0]["usage"]["reasoning_tokens"] = 15
+        data["calls"][0]["usage"]["thinking_tokens"] = 15
         path = self.save(data)
         raw = path.read_text().replace('"cost":0.1', '"cost":5e-324')
         path.write_text(raw)
         total = metrics.summarise([("first", path), ("second", path)])["known_billed_subtotal_usd"]
         self.assertEqual(Decimal(total), Decimal("1e-323"))
-        data["calls"][0]["usage"]["reasoning_tokens"] = 21
+        data["calls"][0]["usage"]["thinking_tokens"] = 21
         with self.assertRaises(review.ReviewError):
             metrics.read_receipt(self.save(data))
         for value in (True, -1, float("nan"), float("inf"), "0.1", Decimal("1e-325"), Decimal("1e309"), 10**24):
@@ -133,13 +136,16 @@ class MeasurementsTests(unittest.TestCase):
         mutations = [lambda data: data.update(source="private source"),
                      lambda data: data.update(finished=True),
                      lambda data: data.update(calls=data["calls"][:1]),
+                     lambda data: data.update(schema="receipt_journal_v4"),
                      lambda data: data["calls"][0].update(provider="other"),
-                     lambda data: data["calls"][0].update(finish_reason="private-value"),
+                     lambda data: data["calls"][0].update(stop_reason="private-value"),
+                     lambda data: data["calls"][0].update(model_matches="yes"),
+                     lambda data: data["calls"][0]["usage"].update(reasoning_tokens=None),
                      lambda data: data["calls"][0]["usage"].update(cost=0),
                      lambda data: data["calls"][0].update(output_state="valid"),
                      lambda data: data["calls"][1].update(chunk_hash="b" * 64),
-                     lambda data: data["calls"][0].update(generation_id_sha256="gen-raw"),
-                     lambda data: data["calls"][0]["usage"].update(completion_tokens=True)]
+                     lambda data: data["calls"][0].update(generation_id_sha256="msg_raw"),
+                     lambda data: data["calls"][0]["usage"].update(output_tokens=True)]
         for mutate in mutations:
             data = journal()
             mutate(data)
