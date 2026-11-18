@@ -23,7 +23,7 @@ jobs:
       # Actual central jobs explicitly reduce it to read permissions.
       pull-requests: read
       statuses: write
-    uses: ryanduguid/release-policy/.github/workflows/pr-review.yml@d1fc3891321fb4fd79190b8dc4b688d4959d0ee9
+    uses: ryanduguid/release-policy/.github/workflows/pr-review.yml@fe900ee6f8248c35e603ff435fb36bbdd5706c1f
     with:
       mode: central_public_report_v1
       pr-url: ${{ inputs.pr-url }}
