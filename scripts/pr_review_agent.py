@@ -223,8 +223,9 @@ def review_snapshot(snapshot: dict[str, Any], policy: dict[str, Any],
     bodies = {model: [request_body(model, policy, system, user) for system, user in prompts[model]]
               for model in MODELS}
     bounds = {model: [input_token_bound(body) for body in bodies[model]] for model in MODELS}
-    # Each call may bill at most its input bound and output cap at list prices,
-    # and usage beyond either fails the review, so no call can spend past this.
+    # Each call is reserved at its input bound and output cap at list prices.
+    # Usage beyond either fails the review, but only after Anthropic has billed
+    # it: the input bound rests on Anthropic's token estimate, not a guarantee.
     with localcontext(_MONEY):
         reservation = sum((call_cost({"input_tokens": bound, "output_tokens": policy["output_tokens"]},
                                      policy["prices"][model]) for model in MODELS for bound in bounds[model]),
