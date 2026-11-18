@@ -202,8 +202,8 @@ but describes the count as an estimate that may differ from billed input by a
 small amount, without a stated maximum. The allowance is the request's size
 in bytes plus 1,000 tokens; Anthropic's models page puts 1 million tokens at
 about 2.5 million characters, so it is usually more than twice the count. No
-Anthropic document guarantees a token ceiling for a byte count, so the input
-side of the US$3 bound rests on that counter and is not a guarantee.
+Anthropic document guarantees a token ceiling for a byte count, so the US$3
+reservation rests on that counter and is not a guaranteed spending bound.
 
 After each response, the runner requires input tokens within the reservation,
 output tokens within the cap, no cache tokens, and standard speed and service
@@ -260,7 +260,7 @@ the same ordered chunk hashes from the frozen snapshot and requires an accepted
 result for every chunk from both models. The snapshot's policy hash binds the
 size limit; changing the limit requires a fresh snapshot. Missing, reordered or substituted
 chunks fail coverage validation. Source exceeding the file, chunk, complete
-request or spending ceiling stops the entire review before inference.
+request or spending reservation stops the entire review before inference.
 Findings use absolute after-source lines, or before-source lines for removed
 files. They must refer to a file supplied in that same call.
 
