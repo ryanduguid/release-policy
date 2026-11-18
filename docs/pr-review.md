@@ -259,8 +259,9 @@ planner includes every changed file before inference. The publisher recomputes
 the same ordered chunk hashes from the frozen snapshot and requires an accepted
 result for every chunk from both models. The snapshot's policy hash binds the
 size limit; changing the limit requires a fresh snapshot. Missing, reordered or substituted
-chunks fail coverage validation. Source exceeding the file, chunk, complete
-request or spending reservation stops the entire review before inference.
+chunks fail coverage validation. Source exceeding the file, chunk or complete
+request limit, or a reservation over US$3, stops the entire review before
+inference.
 Findings use absolute after-source lines, or before-source lines for removed
 files. They must refer to a file supplied in that same call.
 

@@ -28,7 +28,7 @@ CANONICAL_SHA256 = {
     "docs/attribution-policy-stage2.yml": "e8e9921e796bb308117778d8444b21e01f8d6b04a45bc37ad49a3a8f18b2fde2",
     ".github/workflows/pr-review-central.yml": "748b46bf531bd82549a84a9fa54ec247940046e17c7cc2000aa21d654c0c5be2",
     ".github/pr-review-build-wheels.txt": "567614fc86335120c54ed44c43f431dc5b618ff95e1ed4a19b423e32227e94dd",
-    "docs/pr-review.md": "8f2c47310e1eed342d2636f64d6555b8647478ed64e2372e767a6aa7f8778d4e",
+    "docs/pr-review.md": "14c3d28caa9a4c3db884655b900c9d1734a7270103ee88e26a756adfc362cb86",
     ".github/pr-review-policy.json": "71e5b111327cec51395e23dc8502e3eca61f5bb1a499b53c336384875d5b7afc",
     ".github/pr-review-betterleaks.toml": "6273b02cb49dd03d476ca4357ebff018f07ad0c5f7674180f862de67442de37c",
     ".github/workflows/pr-review.yml": "dcd540ac574da482ba778a7e083c0ac167f09e2f4a55ff7eb78285c4e03dcdd0",
