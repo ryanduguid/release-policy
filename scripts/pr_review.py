@@ -457,7 +457,7 @@ def validate_completion(response: dict[str, Any], model: str) -> str:
     require(len(texts) == 1 and isinstance(texts[0], str) and texts[0].strip(), "empty_completion")
     require(isinstance(response.get("id"), str) and response["id"], "missing_generation_id")
     usage: Any = response.get("usage")
-    require(isinstance(usage, dict) and all(type(usage.get(field)) is int and usage[field] > 0
+    require(isinstance(usage, dict) and all(type(usage.get(field)) is int and usage[field] > 0  # pylint: disable=unidiomatic-typecheck
                                             for field in ("input_tokens", "output_tokens")), "missing_usage")
     require(standard_rate(usage), "unexpected_billing_rate")
     return texts[0]

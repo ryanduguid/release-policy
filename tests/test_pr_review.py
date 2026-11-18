@@ -867,7 +867,7 @@ class ReviewAgentTests(unittest.TestCase):
                        {"input_tokens": 1.0}, {}, [], review.ReviewError("http_500")):
             paid = []
 
-            def send(url, key, payload=None, **kwargs):
+            def refuse(url, key, payload=None, **kwargs):
                 if url.endswith("/count_tokens"):
                     if isinstance(answer, Exception):
                         raise answer
@@ -878,7 +878,7 @@ class ReviewAgentTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory, self.subTest(answer=answer), \
                     mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "synthetic"}), \
                     self.assertRaisesRegex(review.ReviewError, "unbounded_input_tokens|http_500"):
-                agent.review_snapshot(snapshot(), POLICY, send, lambda *args: prompts,
+                agent.review_snapshot(snapshot(), POLICY, refuse, lambda *args: prompts,
                                       lambda content: clean_result(), receipt_path=Path(directory) / "receipts.json")
             self.assertEqual(paid, [])
 
