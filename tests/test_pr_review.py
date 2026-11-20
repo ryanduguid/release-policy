@@ -718,9 +718,48 @@ class ReviewBoundaryTests(unittest.TestCase):
             for error in (HTTPError("url", 429, "secret-body", {}, None), URLError("secret-body"),
                           TimeoutError("secret-body"), ValueError("secret-body")):
                 opener.open.side_effect = error
-                with self.assertRaises(review.ReviewError) as caught:
+                captured = io.StringIO()
+                with redirect_stderr(captured), self.assertRaises(review.ReviewError) as caught:
                     review.request_json("https://api.github.com/test", "fixture-key")
                 self.assertNotIn("secret-body", str(caught.exception))
+                self.assertNotIn("secret-body", captured.getvalue())
+            payload = (
+                b'{"type":"error","error":{"type":"invalid_request_error",'
+                b'"message":"unsupported regex in pattern"},"request_id":"req_1",'
+                b'"echo":"fixture-key sk-ant-api03-secretvalue"}'
+            )
+            opener.open.side_effect = HTTPError("url", 400, "Bad Request", {}, io.BytesIO(payload))
+            captured = io.StringIO()
+            with redirect_stderr(captured), self.assertRaises(review.ReviewError) as caught:
+                review.request_json(review.ANTHROPIC_API + "messages/count_tokens", "fixture-key", {"x": 1})
+            self.assertEqual(str(caught.exception), "http_400")
+            self.assertNotIn("fixture-key", str(caught.exception))
+            logged = captured.getvalue()
+            self.assertIn("unsupported regex in pattern", logged)
+            self.assertIn("API error body:", logged)
+            self.assertNotIn("fixture-key", logged)
+            self.assertNotIn("sk-ant-api03-secretvalue", logged)
+            opener.open.side_effect = HTTPError(
+                "url", 400, "Bad Request", {},
+                io.BytesIO(b'{"error":{"message":"still visible sk-ant-api03-other"}}'))
+            captured = io.StringIO()
+            with redirect_stderr(captured), self.assertRaisesRegex(review.ReviewError, "http_400"):
+                review.request_json(review.ANTHROPIC_API + "messages/count_tokens", "")
+            self.assertIn("still visible", captured.getvalue())
+            self.assertNotIn("sk-ant-api03-other", captured.getvalue())
+
+            class Unreadable(io.RawIOBase):
+                def readable(self) -> bool:
+                    return True
+
+                def read(self, size: int = -1) -> bytes:
+                    raise OSError("unread-secret")
+
+            opener.open.side_effect = HTTPError("url", 500, "Error", {}, Unreadable())
+            captured = io.StringIO()
+            with redirect_stderr(captured), self.assertRaisesRegex(review.ReviewError, "http_500"):
+                review.request_json("https://api.github.com/test", "fixture-key")
+            self.assertNotIn("unread-secret", captured.getvalue())
             opener.open.side_effect = None
             observer = mock.Mock()
             review.request_json("https://api.github.com/test", "", response_observer=observer)
