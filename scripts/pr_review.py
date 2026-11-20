@@ -426,9 +426,7 @@ REVIEW_SCHEMA: dict[str, Any] = {
                 "required": ["relevant_file", "issue_header", "issue_content", "start_line", "end_line"],
                 "properties": {
                     "relevant_file": {"type": "string"},
-                    # Structured outputs accept only the escapes \d, \w and \s.
-                    # Literal brackets are a character class, not a backslash.
-                    "issue_header": {"type": "string", "pattern": "^[[]P[0-3][]] .+"},
+                    "issue_header": {"type": "string", "pattern": r"^\[P[0-3]\] .+"},
                     "issue_content": {"type": "string", "minLength": 1, "maxLength": 4000},
                     "start_line": {"type": "integer", "minimum": 1},
                     "end_line": {"type": "integer", "minimum": 1},

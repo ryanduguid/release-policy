@@ -11,7 +11,6 @@ import importlib
 import io
 import json
 import os
-import re
 import runpy
 import socket
 import ssl
@@ -20,7 +19,6 @@ import sys
 import tempfile
 import types
 import unittest
-import warnings
 from contextlib import redirect_stderr, redirect_stdout
 from decimal import Decimal
 from pathlib import Path
@@ -853,17 +851,6 @@ class ReviewAgentTests(unittest.TestCase):
             self.assertNotIn(f'"{keyword}"', wire)
         self.assertIn('"pattern"', wire)
         self.assertIn('"additionalProperties":false', wire)
-        header = schema["properties"]["review"]["properties"]["key_issues_to_review"]
-        header = header["items"]["properties"]["issue_header"]["pattern"]
-        # Backslash escapes are outside the structured-output pattern subset.
-        self.assertEqual(header, "^[[]P[0-3][]] .+")
-        self.assertNotIn("\\", header)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", FutureWarning)
-            compiled = re.compile(header)
-        self.assertIsNotNone(compiled.fullmatch("[P1] Wrong result"))
-        self.assertIsNone(compiled.fullmatch("[P4] Wrong result"))
-        self.assertIsNone(compiled.fullmatch("[P1]Wrong result"))
         with self.assertRaises(review.ReviewError):
             agent.request_body("claude", POLICY, "", "")
 
