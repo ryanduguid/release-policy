@@ -11,6 +11,7 @@ import importlib
 import io
 import json
 import os
+import re
 import runpy
 import socket
 import ssl
@@ -19,6 +20,7 @@ import sys
 import tempfile
 import types
 import unittest
+import warnings
 from contextlib import redirect_stderr, redirect_stdout
 from decimal import Decimal
 from pathlib import Path
@@ -718,9 +720,48 @@ class ReviewBoundaryTests(unittest.TestCase):
             for error in (HTTPError("url", 429, "secret-body", {}, None), URLError("secret-body"),
                           TimeoutError("secret-body"), ValueError("secret-body")):
                 opener.open.side_effect = error
-                with self.assertRaises(review.ReviewError) as caught:
+                captured = io.StringIO()
+                with redirect_stderr(captured), self.assertRaises(review.ReviewError) as caught:
                     review.request_json("https://api.github.com/test", "fixture-key")
                 self.assertNotIn("secret-body", str(caught.exception))
+                self.assertNotIn("secret-body", captured.getvalue())
+            payload = (
+                b'{"type":"error","error":{"type":"invalid_request_error",'
+                b'"message":"unsupported regex in pattern"},"request_id":"req_1",'
+                b'"echo":"fixture-key sk-ant-api03-secretvalue"}'
+            )
+            opener.open.side_effect = HTTPError("url", 400, "Bad Request", {}, io.BytesIO(payload))
+            captured = io.StringIO()
+            with redirect_stderr(captured), self.assertRaises(review.ReviewError) as caught:
+                review.request_json(review.ANTHROPIC_API + "messages/count_tokens", "fixture-key", {"x": 1})
+            self.assertEqual(str(caught.exception), "http_400")
+            self.assertNotIn("fixture-key", str(caught.exception))
+            logged = captured.getvalue()
+            self.assertIn("unsupported regex in pattern", logged)
+            self.assertIn("API error body:", logged)
+            self.assertNotIn("fixture-key", logged)
+            self.assertNotIn("sk-ant-api03-secretvalue", logged)
+            opener.open.side_effect = HTTPError(
+                "url", 400, "Bad Request", {},
+                io.BytesIO(b'{"error":{"message":"still visible sk-ant-api03-other"}}'))
+            captured = io.StringIO()
+            with redirect_stderr(captured), self.assertRaisesRegex(review.ReviewError, "http_400"):
+                review.request_json(review.ANTHROPIC_API + "messages/count_tokens", "")
+            self.assertIn("still visible", captured.getvalue())
+            self.assertNotIn("sk-ant-api03-other", captured.getvalue())
+
+            class Unreadable(io.RawIOBase):
+                def readable(self) -> bool:
+                    return True
+
+                def read(self, size: int = -1) -> bytes:
+                    raise OSError("unread-secret")
+
+            opener.open.side_effect = HTTPError("url", 500, "Error", {}, Unreadable())
+            captured = io.StringIO()
+            with redirect_stderr(captured), self.assertRaisesRegex(review.ReviewError, "http_500"):
+                review.request_json("https://api.github.com/test", "fixture-key")
+            self.assertNotIn("unread-secret", captured.getvalue())
             opener.open.side_effect = None
             observer = mock.Mock()
             review.request_json("https://api.github.com/test", "", response_observer=observer)
@@ -812,6 +853,17 @@ class ReviewAgentTests(unittest.TestCase):
             self.assertNotIn(f'"{keyword}"', wire)
         self.assertIn('"pattern"', wire)
         self.assertIn('"additionalProperties":false', wire)
+        header = schema["properties"]["review"]["properties"]["key_issues_to_review"]
+        header = header["items"]["properties"]["issue_header"]["pattern"]
+        # Backslash escapes are outside the structured-output pattern subset.
+        self.assertEqual(header, "^[[]P[0-3][]] .+")
+        self.assertNotIn("\\", header)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            compiled = re.compile(header)
+        self.assertIsNotNone(compiled.fullmatch("[P1] Wrong result"))
+        self.assertIsNone(compiled.fullmatch("[P4] Wrong result"))
+        self.assertIsNone(compiled.fullmatch("[P1]Wrong result"))
         with self.assertRaises(review.ReviewError):
             agent.request_body("claude", POLICY, "", "")
 

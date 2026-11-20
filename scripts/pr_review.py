@@ -48,6 +48,7 @@ HEX_BEFORE_BASE64 = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{32,}+(?=[G-Zg-z_/+-
 BLANK_LINES = re.compile(r"\n[ \t\r]*+(?=\n)")
 COPY_STRETCH_BYTES = 16_000
 MAX_RESPONSE_BYTES = 12_000_000
+_ANTHROPIC_KEY = re.compile(r"sk-ant-[A-Za-z0-9_-]+")
 _MONEY = Context(prec=700)
 Fetch = Callable[[str], Any]
 
@@ -100,6 +101,18 @@ class KeepAliveHTTPSHandler(HTTPSHandler):
         return self.do_open(KeepAliveConnection, req)
 
 
+def _sanitised_api_error(error: HTTPError, key: str) -> str:
+    """Bounded API error text for the log, without the credential."""
+    try:
+        raw = error.read(4096)
+    except OSError:
+        raw = b""
+    text = raw.decode("utf-8", "replace")
+    if key:
+        text = text.replace(key, "[redacted]")
+    return _ANTHROPIC_KEY.sub("[redacted]", text)
+
+
 def request_json(url: str, key: str, payload: Any = None, *,
                  response_observer: Callable[[], None] | None = None,
                  timeout: int = 240) -> Any:
@@ -135,6 +148,11 @@ def request_json(url: str, key: str, payload: Any = None, *,
     except HTTPError as error:
         if response_observer is not None:
             response_observer()
+        # The failure code stays sanitised. The body is the only way to see a
+        # 400, and it must not include the key that was sent.
+        detail = _sanitised_api_error(error, key)
+        if detail:
+            print(f"API error body: {detail}", file=sys.stderr)
         raise ReviewError(f"http_{error.code}") from None
     except (URLError, TimeoutError, OSError, ValueError):
         raise ReviewError("api_transport_or_json_error") from None
@@ -408,7 +426,9 @@ REVIEW_SCHEMA: dict[str, Any] = {
                 "required": ["relevant_file", "issue_header", "issue_content", "start_line", "end_line"],
                 "properties": {
                     "relevant_file": {"type": "string"},
-                    "issue_header": {"type": "string", "pattern": r"^\[P[0-3]\] .+"},
+                    # Structured outputs accept only the escapes \d, \w and \s.
+                    # Literal brackets are a character class, not a backslash.
+                    "issue_header": {"type": "string", "pattern": "^[[]P[0-3][]] .+"},
                     "issue_content": {"type": "string", "minLength": 1, "maxLength": 4000},
                     "start_line": {"type": "integer", "minimum": 1},
                     "end_line": {"type": "integer", "minimum": 1},
