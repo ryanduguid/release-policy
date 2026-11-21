@@ -93,9 +93,10 @@ jobs:
               # Keep the single-use URL out of arguments and logs. The documented HTTP example
               # uses the same host, which we contact only over HTTPS. Never follow redirects.
               jq -er '.data | strings
-                | select(startswith("https://www.virustotal.com/") or startswith("http://www.virustotal.com/"))
+                | sub("^http:"; "https:")
+                | select(startswith("https://www.virustotal.com/"))
                 | select(test("[[:space:][:cntrl:]]") | not)
-                | sub("^http:"; "https:") | "url = " + @json' "$response" > "$upload_config" \
+                | "url = " + @json' "$response" > "$upload_config" \
                 || { echo "Invalid VirusTotal upload URL" >&2; exit 1; }
               request --config "$upload_config" -F "file=@$f"
             else
