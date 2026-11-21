@@ -1,3 +1,7 @@
+# Unreleased
+
+- Relicensed Ryan Duguid's original work under Apache-2.0. Earlier releases keep their original terms.
+
 # v0.5.0
 
 `release-binary.yml` builds 2 more targets natively: Intel macOS

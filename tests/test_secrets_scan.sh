@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright 2026 Ryan Duguid
-# SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+# SPDX-License-Identifier: Apache-2.0
 
 # Runs .github/actions/secrets-scan/scan.sh over a scratch repository of pull
 # requests, pushes and scheduled runs, and fails unless every case ends as

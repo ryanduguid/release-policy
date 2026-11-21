@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright 2026 Ryan Duguid
-# SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+# SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
 
@@ -30,7 +30,7 @@ CANONICAL_SHA256 = {
     ".github/pr-review-build-wheels.txt": "567614fc86335120c54ed44c43f431dc5b618ff95e1ed4a19b423e32227e94dd",
     "docs/pr-review.md": "14c3d28caa9a4c3db884655b900c9d1734a7270103ee88e26a756adfc362cb86",
     ".github/pr-review-policy.json": "71e5b111327cec51395e23dc8502e3eca61f5bb1a499b53c336384875d5b7afc",
-    ".github/pr-review-betterleaks.toml": "6273b02cb49dd03d476ca4357ebff018f07ad0c5f7674180f862de67442de37c",
+    ".github/pr-review-betterleaks.toml": "1eed180d7357bcb40496cb176f6eefa0e5d085d55ef7dc88d80672121466b415",
     ".github/workflows/pr-review.yml": "dcd540ac574da482ba778a7e083c0ac167f09e2f4a55ff7eb78285c4e03dcdd0",
     "docs/attribution-consumers.md": "86bfa9f5a779e102c3eb4c0a7c0f97bb23f326b938efc29ef8092840b9833deb",
     ".github/ci/check_gates.py": "f10beb3a9a7c61412dd444ced5664662f9444764591d01a670319c51bc5d9323",
@@ -52,7 +52,7 @@ CANONICAL_SHA256 = {
     ".github/workflows/release-skills.yml": "08294e3b687f3549dc5d6fdb3f686f34ae94d7ca44983e2701afe0a086a1434e",
     ".github/workflows/verify-skills.yml": "45c46dbf4b06a17c13d4a2dbadd5bb8f790f28560ea43e78ac83bf9dea9683cc",
     ".github/workflows/virustotal-release.yml": "4315925294223bc52e8febe8d4aede00996790e63d7a778b6dde59def3abd165",
-    "README.md": "01c7379798b489a087a60113ec96ca73cc69d29263f2dfc9e9c605f5adc98ae3",
+    "README.md": "adf0d896332cb9cd18c57b7c155f671c9e8640433769b526072062a0025f38c1",
     "docs/python-consumers.md": "31b9b83f80ca4eb1d60f316c702d8f1cada79092b309d1bbe8632c7b14c28814",
     "docs/pypi-publishing.md": "ec02dc2cbbc13cad0bfa541739c850fd1a3e9e3d15ac5b56968420f50ac23290",
     "docs/archive-consumers.md": "1d28e68a6e4faa23b3cfe0be711cb3123dfa9f16583a9f568bdaf9f6f2a18df6",
@@ -66,8 +66,8 @@ CANONICAL_SHA256 = {
     "SECURITY.md": "9f9cea868cdb60a00c98ebaa892125d83a94fba1589d55227cd239c6af7804f9",
     "docs/secrets-scan-consumers.md": "6fdf273e6b16291a621a00742bf1d4766e63efd52cb34c124571fe832d22afc5",
     ".github/actions/secrets-scan/rules.toml": "0f9c6175f79012af334a0c0ffdcb5860ecbf6d7e432361577354ee0fd1606017",
-    ".github/actions/secrets-scan/scan.sh": "70a4df01f0ef3562dbc1cb3f26b035d64cb1fa935d09974206420c772da66b70",
-    ".github/actions/secrets-scan/install.sh": "dc5b8b422a3c880dc096c1dbbb3a9d5c208aef9d3ff37942735b188c77eff2ea",
+    ".github/actions/secrets-scan/scan.sh": "f0b80ad83c0071eccfad5c511aa75b166dc4fa9c1da93f3705368ad8abfb2a78",
+    ".github/actions/secrets-scan/install.sh": "d57f582e0d41e389f2435936627466c1f5db25a54bfd67006815be62a71a3ff4",
     ".github/actions/secrets-scan/action.yml": "203e6ea46dcdfb1057e3802fa53bc0424913ff276b56d1c4b294430c0a957227",
     ".github/workflows/betterleaks-release.yml": "4cfc2ace35d233dc0ef77e835af99ad4b828fd0f37da980e1f14b477f119d6b9",
 }

@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! Attribution statuses bound to one PR snapshot and completed scan.
 //! Ported from tests/test_attribution_status.py.
