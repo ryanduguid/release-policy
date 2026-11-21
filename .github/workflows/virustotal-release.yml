@@ -21,20 +21,30 @@ jobs:
     # Pinned whilst ubuntu-latest moves to 26.04 (actions/runner-images#14748), as the
     # release families are, so a scan never changes image between releases.
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: read # Download the published release assets.
+    outputs:
+      manifest: ${{ steps.assets.outputs.manifest }}
     steps:
       - name: Download the release assets and check their digests
+        id: assets
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
+          visibility=$(gh api "repos/$GITHUB_REPOSITORY" --jq .visibility)
+          if [[ $visibility != public ]]; then
+            echo "VirusTotal submissions require a public repository" >&2
+            exit 1
+          fi
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > release.json
           jq -e '.draft == false and (.assets | length) > 0' release.json >/dev/null \
             || { echo "$TAG is not a published release with assets" >&2; exit 1; }
+          jq -e 'all(.assets[]; .size | type == "number" and . >= 0 and . <= 650000000)' \
+            release.json >/dev/null || { echo "Invalid asset size or over 650 MB" >&2; exit 1; }
           jq -r '.assets[] | "\(.digest // "" | ltrimstr("sha256:"))  assets/\(.name)"' \
             release.json > digests.txt
           # Asset names reach curl -F and Markdown links, so admit only plain file names.
@@ -47,11 +57,8 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
           sha256sum --check --strict digests.txt
           test "$(find assets -type f | wc -l)" -eq "$(wc -l < digests.txt)"
-          # shortcut: /files takes uploads up to 32 MB; larger assets would need /files/upload_url.
-          if [ -n "$(find assets -type f -size +32M)" ]; then
-            echo "A release asset is over 32 MB" >&2
-            exit 1
-          fi
+          manifest=$(jq -c '[.id, .draft, ([.assets[] | [.name, .digest]] | sort)]' release.json | sha256sum)
+          echo "manifest=${manifest%% *}" >> "$GITHUB_OUTPUT"
 
       - name: Upload each asset to VirusTotal
         env:
@@ -67,19 +74,34 @@ jobs:
           fi
           # Keep the key off curl's command line.
           printf 'header = "x-apikey: %s"\n' "$VT_API_KEY" > "$RUNNER_TEMP/vt.curl"
-          trap 'rm -f "$RUNNER_TEMP/vt.curl"' EXIT
+          response="$RUNNER_TEMP/vt.json"
+          upload_config="$RUNNER_TEMP/vt-upload.curl"
+          trap 'rm -f "$RUNNER_TEMP/vt.curl" "$response" "$upload_config"' EXIT
           first=1
-          for f in assets/*; do
-            # The public API allows four requests a minute.
+          request() {
+            # Count URL lookups and file submissions against the same four requests a minute.
             [ "$first" = 1 ] || sleep 16
             first=0
-            if ! curl --proto '=https' --fail-with-body -sS --config "$RUNNER_TEMP/vt.curl" \
-              -F "file=@$f" -o "$RUNNER_TEMP/vt.json" https://www.virustotal.com/api/v3/files; then
-              echo "VirusTotal refused $f:" >&2
-              head -c 500 "$RUNNER_TEMP/vt.json" >&2
-              exit 1
+            curl --disable --globoff --proto '=https' --fail --silent --config "$RUNNER_TEMP/vt.curl" \
+              --output "$response" "$@" || { echo "VirusTotal request failed for $f" >&2; return 1; }
+          }
+          api=https://www.virustotal.com/api/v3/files
+          for f in assets/*; do
+            size=$(stat -c %s -- "$f")
+            if (( size > 32 * 1024 * 1024 )); then
+              request "$api/upload_url"
+              # Keep the single-use URL out of arguments and logs. The documented HTTP example
+              # uses the same host, which we contact only over HTTPS. Never follow redirects.
+              jq -er '.data | strings
+                | select(startswith("https://www.virustotal.com/") or startswith("http://www.virustotal.com/"))
+                | select(test("[[:space:][:cntrl:]]") | not)
+                | sub("^http:"; "https:") | "url = " + @json' "$response" > "$upload_config" \
+                || { echo "Invalid VirusTotal upload URL" >&2; exit 1; }
+              request --config "$upload_config" -F "file=@$f"
+            else
+              request "$api" -F "file=@$f"
             fi
-            jq -e '.data.id' "$RUNNER_TEMP/vt.json" >/dev/null
+            jq -e '.data | .type == "analysis" and (.id | type == "string" and length > 0)' "$response" >/dev/null
           done
 
   annotate:
@@ -95,12 +117,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
+          SCANNED_MANIFEST: ${{ needs.scan.outputs.manifest }}
         shell: bash
         run: |
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > release.json
+          manifest=$(jq -c '[.id, .draft, ([.assets[] | [.name, .digest]] | sort)]' release.json | sha256sum)
+          if [[ ${manifest%% *} != "$SCANNED_MANIFEST" ]]; then
+            echo "The release assets changed during the scan; rerun for the current release" >&2
+            exit 1
+          fi
           {
-            jq -r '.body // "" | sub("\\s*<!-- virustotal:start -->[\\s\\S]*<!-- virustotal:end -->"; "") | sub("\\s+$"; "")' release.json
+            jq -r '.body // "" | sub("[[:space:]]*<!-- virustotal:start -->.*<!-- virustotal:end -->"; ""; "m")
+              | sub("[[:space:]]+$"; "")' release.json
             printf '\n<!-- virustotal:start -->\n## VirusTotal\n\n'
             jq -r '.assets[] | "- [\(.name)](https://www.virustotal.com/gui/file/\(.digest | ltrimstr("sha256:")))"' release.json
             printf '<!-- virustotal:end -->\n'
