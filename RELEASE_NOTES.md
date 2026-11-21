@@ -94,8 +94,7 @@ whole before refusing it; the Python family refuses all 3.
 
 # v0.4.0
 
-Versions made available from 4 November 2026 are licensed under the Ryan
-Duguid Public Attribution Licence, Version 1.0
+v0.4.0 is licensed under the [Ryan Duguid Public Attribution Licence, Version 1.0](https://github.com/ryanduguid/release-policy/blob/v0.4.0/LICENSE)
 (LicenseRef-Duguid-Public-Attribution-1.0): the FSL-1.1-ALv2 text with a
 public attribution condition. A copy, port or derivative made available
 outside your organisation must credit Ryan Duguid publicly; internal use is
