@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! `release-policy init`: each supported repository shape in tests/data/init
 //! gets exactly its golden caller workflow and report, and init refuses what

@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! Closed metadata parsing and exact candidate inventory for Python releases.
 //! Ported from tests/test_python_release.py and tests/test_python_release_refusals.py.

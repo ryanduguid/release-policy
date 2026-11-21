@@ -8,7 +8,7 @@ authors:
     website: "https://duguid.com.au/"
 abstract: "Reusable GitHub Actions workflows for releases, provenance attestations, VirusTotal scans, attribution checks and Claude PR reviews."
 repository-code: "https://github.com/ryanduguid/release-policy"
-license-url: "https://github.com/ryanduguid/release-policy/blob/main/LICENSE"
+license: Apache-2.0
 keywords:
   - github-actions
   - packaging

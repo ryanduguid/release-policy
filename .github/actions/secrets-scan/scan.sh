@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright 2026 Ryan Duguid
-# SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+# SPDX-License-Identifier: Apache-2.0
 
 # The secrets scan behind action.yml. A push scans the commits it adds, a pull
 # request the commits between its base and its head, and a scheduled or manual

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright 2026 Ryan Duguid
-# SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+# SPDX-License-Identifier: Apache-2.0
 
 # Installs the pinned betterleaks release for the secrets scan and puts it on
 # the job's PATH. The release publishes no GitHub Action, so nothing proposes

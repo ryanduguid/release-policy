@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! A standard stream that cannot be written fails as it did for the scripts,
 //! measured against them on a closed pipe: stdout still pending at exit is

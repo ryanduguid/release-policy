@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright 2026 Ryan Duguid
-# SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+# SPDX-License-Identifier: Apache-2.0
 
 # The release build installs nothing: once the locked dev extra is synced as
 # wheels, with the project itself left uninstalled and every build refused, a

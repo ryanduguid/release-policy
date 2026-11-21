@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.99"
 publish = false
 description = "Release and review policy command line tooling"
-license = "LicenseRef-Duguid-Public-Attribution-1.0"
+license = "Apache-2.0"
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }

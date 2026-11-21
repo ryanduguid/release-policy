@@ -1,5 +1,5 @@
 // Copyright 2026 Ryan Duguid
-// SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+// SPDX-License-Identifier: Apache-2.0
 
 //! A release candidate for nothing: `release-binary.yml` tags, builds, attests
 //! and publishes this executable so the real signing and publication path can

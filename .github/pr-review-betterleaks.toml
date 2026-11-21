@@ -1,5 +1,5 @@
 # Copyright 2026 Ryan Duguid
-# SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+# SPDX-License-Identifier: Apache-2.0
 
 # Betterleaks' own rules for the scan that precedes a model request
 # (scripts/pr_review.py), which also scans with the rules of Gitleaks 8.30.1.

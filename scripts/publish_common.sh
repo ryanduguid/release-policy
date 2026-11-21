@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright 2026 Ryan Duguid
-# SPDX-License-Identifier: LicenseRef-Duguid-Public-Attribution-1.0
+# SPDX-License-Identifier: Apache-2.0
 
 # Shared publication core for publish_python.sh and publish_archives.sh.
 # Sourced, never executed on its own.
