@@ -90,11 +90,13 @@ jobs:
             size=$(stat -c %s -- "$f")
             if (( size > 32 * 1024 * 1024 )); then
               request "$api/upload_url"
-              # Keep the single-use URL out of arguments and logs. The documented HTTP example
-              # uses the same host, which we contact only over HTTPS. Never follow redirects.
+              # Keep the single-use URL out of arguments and logs. The API returns an address on
+              # bigfiles.virustotal.com; its documented example is on www.virustotal.com over
+              # HTTP. Contact either host only over HTTPS. Never follow redirects.
               jq -er '.data | strings
                 | sub("^http:"; "https:")
-                | select(startswith("https://www.virustotal.com/"))
+                | select(startswith("https://www.virustotal.com/")
+                    or startswith("https://bigfiles.virustotal.com/"))
                 | select(test("[[:space:][:cntrl:]]") | not)
                 | "url = " + @json' "$response" > "$upload_config" \
                 || { echo "Invalid VirusTotal upload URL" >&2; exit 1; }

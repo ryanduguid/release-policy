@@ -17,6 +17,7 @@ from pathlib import Path
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/virustotal-release.yml"
 DIRECT = "https://www.virustotal.com/api/v3/files"
 LARGE = "https://www.virustotal.com/_ah/upload/fixture"
+BIGFILES = "https://bigfiles.virustotal.com/upload/fixture"
 MIB = 1024 * 1024
 
 
@@ -101,12 +102,24 @@ class VirusTotalWorkflowTests(unittest.TestCase):
         self.assertFalse(list(self.root.glob("vt.*")))
         self.assertFalse((self.root / "vt-upload.curl").exists())
 
+    def test_large_file_host_returned_by_the_api_is_accepted(self) -> None:
+        self.asset("a", 32 * MIB + 1)
+        result = self.run_step("Upload each asset to VirusTotal", LOOKUP=json.dumps({"data": BIGFILES}))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls(), [DIRECT + "/upload_url", "sleep 16", BIGFILES])
+
     def test_unexpected_upload_destination_stops_before_submission(self) -> None:
         self.asset("a", 650_000_000)
-        result = self.run_step("Upload each asset to VirusTotal",
-                               LOOKUP=json.dumps({"data": "https://example.invalid/upload"}))
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(self.calls(), [DIRECT + "/upload_url"])
+        for destination in ("https://example.invalid/upload",
+                            "https://bigfiles.virustotal.com.example.invalid/upload",
+                            "https://other.virustotal.com/upload",
+                            "https://bigfiles.virustotal.com@example.invalid/upload"):
+            with self.subTest(destination=destination):
+                (self.root / "calls").write_text("", encoding="utf-8")
+                result = self.run_step("Upload each asset to VirusTotal",
+                                       LOOKUP=json.dumps({"data": destination}))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.calls(), [DIRECT + "/upload_url"])
 
     def test_refused_upload_or_missing_analysis_id_fails(self) -> None:
         self.asset("a", 2)
