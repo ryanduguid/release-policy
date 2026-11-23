@@ -55,15 +55,21 @@ import sys, tomllib
 from pathlib import Path
 
 root = Path(sys.argv[1]).resolve()
-cur = Path.cwd().resolve()
+cwd = Path.cwd().resolve()
+cur = cwd
 while True:
     manifest = cur / "Cargo.toml"
     if manifest.is_file():
         with manifest.open("rb") as handle:
-            profile = tomllib.load(handle).get("profile")
-        release = profile.get("release") if isinstance(profile, dict) else None
-        if isinstance(release, dict) and "strip" in release:
-            sys.exit(0 if release["strip"] in (True, "symbols", "debuginfo") else 1)
+            doc = tomllib.load(handle)
+        is_workspace = isinstance(doc.get("workspace"), dict)
+        if cur == cwd or is_workspace:
+            profile = doc.get("profile")
+            release = profile.get("release") if isinstance(profile, dict) else None
+            if isinstance(release, dict) and "strip" in release:
+                sys.exit(0 if release["strip"] in (True, "symbols", "debuginfo") else 1)
+            if is_workspace:
+                break
     if cur == root or cur.parent == cur:
         break
     cur = cur.parent
