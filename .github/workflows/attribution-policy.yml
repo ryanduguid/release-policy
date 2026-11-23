@@ -33,7 +33,7 @@ jobs:
             -f description='Checking commit identities and authorship credits' \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --silent
 
-      - uses: ryanduguid/release-policy/.github/actions/no-ai-attribution@115ee74dcaabc2d09388987cdbb567fde98b3e75
+      - uses: ryanduguid/release-policy/.github/actions/no-ai-attribution@c35725073e82d8afc6ee2a0b0e0fd5d9a3efad38
 
       # always(), not always() && !cancelled(). The pending status above is posted
       # before the audit runs, so skipping the terminal update on cancellation left
