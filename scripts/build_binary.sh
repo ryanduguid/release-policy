@@ -76,7 +76,7 @@ while True:
 sys.exit(1)
 PY
 then
-  echo '::warning title=Unstripped release binary::Cargo.toml [profile.release] does not set strip (recommend strip = "symbols")'
+  echo '::warning title=Unstripped release binary::Cargo.toml [profile.release] does not enable stripping (recommend strip = "symbols")'
 fi
 cargo auditable build --locked --release --target "$target" "${bins[@]}"
 target_directory="$(cargo metadata --locked --format-version 1 --no-deps \
