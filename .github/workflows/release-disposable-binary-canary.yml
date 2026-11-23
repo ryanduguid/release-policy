@@ -27,7 +27,7 @@ jobs:
       attestations: write # Record provenance and SBOM attestations for release assets.
       contents: write # Create the draft release, upload assets and publish it.
       id-token: write # Obtain the OIDC identity required to sign attestations.
-    uses: ryanduguid/release-policy/.github/workflows/release-binary.yml@ffbeffd5ff595b9b2fcaa885395ffb21108aaa2b # 6-target binary release family (#295), main at #310
+    uses: ryanduguid/release-policy/.github/workflows/release-binary.yml@c35725073e82d8afc6ee2a0b0e0fd5d9a3efad38 # 6-target binary release family (#295), main at c357250
     with:
       artifact-stem: disposable-binary-canary
       source-directory: canaries/disposable-binary-canary

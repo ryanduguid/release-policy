@@ -50,6 +50,34 @@ rustup target add "$target"
 rustup component add llvm-tools
 
 cargo test --locked --target "$target"
+if ! "$PYTHON" - "$root" <<'PY'
+import sys, tomllib
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+cwd = Path.cwd().resolve()
+cur = cwd
+while True:
+    manifest = cur / "Cargo.toml"
+    if manifest.is_file():
+        with manifest.open("rb") as handle:
+            doc = tomllib.load(handle)
+        is_workspace = isinstance(doc.get("workspace"), dict)
+        if cur == cwd or is_workspace:
+            profile = doc.get("profile")
+            release = profile.get("release") if isinstance(profile, dict) else None
+            if isinstance(release, dict) and "strip" in release:
+                sys.exit(0 if release["strip"] in (True, "symbols", "debuginfo") else 1)
+            if is_workspace:
+                break
+    if cur == root or cur.parent == cur:
+        break
+    cur = cur.parent
+sys.exit(1)
+PY
+then
+  echo '::warning title=Unstripped release binary::Cargo.toml [profile.release] does not enable stripping (recommend strip = "symbols")'
+fi
 cargo auditable build --locked --release --target "$target" "${bins[@]}"
 target_directory="$(cargo metadata --locked --format-version 1 --no-deps \
   | "$PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"
