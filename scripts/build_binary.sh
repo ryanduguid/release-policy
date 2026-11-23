@@ -50,15 +50,27 @@ rustup target add "$target"
 rustup component add llvm-tools
 
 cargo test --locked --target "$target"
-if ! "$PYTHON" -c '
+if ! "$PYTHON" - "$root" <<'PY'
 import sys, tomllib
-with open("Cargo.toml", "rb") as handle:
-    profile = tomllib.load(handle).get("profile")
-release = profile.get("release") if isinstance(profile, dict) else None
-strip = release.get("strip") if isinstance(release, dict) else None
-sys.exit(0 if strip in (True, "symbols", "debuginfo") else 1)
-'; then
-  echo '::warning title=Unstripped release binary::Cargo.toml [profile.release] does not set strip (recommend strip = "symbols")' >&2
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+cur = Path.cwd().resolve()
+while True:
+    manifest = cur / "Cargo.toml"
+    if manifest.is_file():
+        with manifest.open("rb") as handle:
+            profile = tomllib.load(handle).get("profile")
+        release = profile.get("release") if isinstance(profile, dict) else None
+        if isinstance(release, dict) and "strip" in release:
+            sys.exit(0 if release["strip"] in (True, "symbols", "debuginfo") else 1)
+    if cur == root or cur.parent == cur:
+        break
+    cur = cur.parent
+sys.exit(1)
+PY
+then
+  echo '::warning title=Unstripped release binary::Cargo.toml [profile.release] does not set strip (recommend strip = "symbols")'
 fi
 cargo auditable build --locked --release --target "$target" "${bins[@]}"
 target_directory="$(cargo metadata --locked --format-version 1 --no-deps \
