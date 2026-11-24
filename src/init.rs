@@ -10,8 +10,8 @@ use std::path::Path;
 
 /// The release whose workflows a new caller runs, and the commit its tag
 /// marks. Move both, with the goldens in tests/data/init, after a release.
-pub const POLICY_RELEASE: &str = "v0.4.0";
-pub const POLICY_COMMIT: &str = "ddb7c18953f5abef38ba164a0ae48dc7c6a0e1f3";
+pub const POLICY_RELEASE: &str = "v0.5.0";
+pub const POLICY_COMMIT: &str = "d7039efe6d8c441f1f213c674902909e80535599";
 const CALLER: &str = ".github/workflows/release.yml";
 const STEM: &str = "[a-z0-9]+(?:-[a-z0-9]+)*";
 const BINARY: &str = "[a-z0-9]+(?:[-_][a-z0-9]+)*";

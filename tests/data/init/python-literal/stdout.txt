@@ -1,11 +1,11 @@
-Wrote .github/workflows/release.yml: a Python package release through release-python.yml at release-policy v0.4.0 (ddb7c18953f5abef38ba164a0ae48dc7c6a0e1f3).
+Wrote .github/workflows/release.yml: a Python package release through release-python.yml at release-policy v0.5.0 (d7039efe6d8c441f1f213c674902909e80535599).
 
 Left for you:
 - Commit the workflow to main: each release reads it from main's head.
 - Protect release tags with an active tag ruleset on refs/tags/v*: update and deletion rules, no bypass actors.
 - Commit uv.lock, with a dev extra providing pytest, build and each build requirement.
-- PyPI is optional: register this repository as a Trusted Publisher on PyPI and add the publish job from https://github.com/ryanduguid/release-policy/blob/v0.4.0/docs/pypi-publishing.md
+- PyPI is optional: register this repository as a Trusted Publisher on PyPI and add the publish job from https://github.com/ryanduguid/release-policy/blob/v0.5.0/docs/pypi-publishing.md
 - To release: RELEASE_NOTES.md starting '# vX.Y.Z', the required checks green on main's head, then an annotated tag vX.Y.Z pushed there.
 No secret is needed: the release runs on the workflow's own token.
-Guide: https://github.com/ryanduguid/release-policy/blob/v0.4.0/docs/python-consumers.md
-Prerequisites: https://github.com/ryanduguid/release-policy/blob/v0.4.0/docs/consumer-prerequisites.md
+Guide: https://github.com/ryanduguid/release-policy/blob/v0.5.0/docs/python-consumers.md
+Prerequisites: https://github.com/ryanduguid/release-policy/blob/v0.5.0/docs/consumer-prerequisites.md

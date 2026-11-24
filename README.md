@@ -20,7 +20,7 @@ release-policy is a set of reusable GitHub Actions workflows for repository main
 A consumer calls one with `uses:`, pinned to a full commit SHA of this repository. Before adopting, check 3 limits:
 
 - **PyPI:** PyPI cannot name a reusable workflow as a Trusted Publisher ([pypi/warehouse#11096](https://github.com/pypi/warehouse/issues/11096)), so the [publish step](docs/pypi-publishing.md) runs in the consumer, not here.
-- **Targets:** `release-binary.yml` builds Linux (static musl), macOS and Windows, each for x86_64 and arm64 only; no other operating system or architecture is built, and a release needs all 6 to build and pass their tests. v0.4.0, which `init` pins, predates the macOS x86_64 and Windows arm64 targets, so it builds 4. [Alternatives](#alternatives) says when another tool fits better.
+- **Targets:** `release-binary.yml` builds Linux (static musl), macOS and Windows, each for x86_64 and arm64 only; no other operating system or architecture is built, and a release needs all 6 to build and pass their tests. v0.5.0, which `init` pins, includes all 6 targets (v0.4.0 predates macOS x86_64 and Windows arm64, building 4). [Alternatives](#alternatives) says when another tool fits better.
 - **SLSA:** The release workflows are designed to support SLSA Build Level 3, but no audit has shown that a release reaches it. [SLSA Build Level](docs/guarantees-and-evidence.md#slsa-build-level) says what is unverified and why verification needs `--signer-workflow`.
 
 | Workflow | Use it to | Guide |
@@ -37,7 +37,7 @@ A consumer calls one with `uses:`, pinned to a full commit SHA of this repositor
 
 Policy checks establish release evidence, not accounting correctness. The example below is a recorded canary.
 
-**Input:** the recorded `v0.4.0` Python canary from AU FP&A Pack.
+**Input:** the recorded `aus-accounting-mcp/v0.12.0` Python canary from Australian Accounting.
 
 The consumer's release caller at that tag is:
 
@@ -45,7 +45,7 @@ The consumer's release caller at that tag is:
 uses: ryanduguid/release-policy/.github/workflows/release-python.yml@0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c
 ```
 
-**Recorded output:** run 40612457692 on 28 October 2026 supplies the release evidence for [au-fpa-pack v0.4.0](https://github.com/ryanduguid/au-fpa-pack/releases/tag/v0.4.0): the wheel, source archive, SBOM, provenance, release manifest and `SHA256SUMS`, with policy SHA `0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c`.
+**Recorded output:** run 45065509057 on 22 November 2026 supplies the release evidence for [aus-accounting-mcp/v0.12.0](https://github.com/ryanduguid/australian-accounting/releases/tag/aus-accounting-mcp/v0.12.0): the wheel, source archive, SBOM, provenance, release manifest and `SHA256SUMS`, with policy SHA `ca5492bd09693be9e1fd47d980e2740ef8daf023`.
 
 **Human decision:** Check the release artefacts and their attestations against that recorded policy revision. This evidence applies to the recorded policy revision. Later policy changes need their own verification.
 
@@ -121,10 +121,10 @@ To run that audit on demand, dispatch CI with `live-canary-audit` selected. The 
 
 release-policy fits maintainers who want reusable workflows pinned to a commit SHA, with the weight on release gates, attestations and recorded canaries. Use another tool if you want Homebrew or other package manager publishing, an npm or MSI installer, or binaries for another operating system or architecture, such as FreeBSD or 32-bit Windows. As read on 13 November 2026:
 
-- [dist](https://github.com/axodotdev/cargo-dist) (formerly cargo-dist) builds binaries, makes tarballs and installers, and can publish Homebrew formulae to your own tap. Its [v0.34.0](https://github.com/axodotdev/cargo-dist/releases/tag/v0.34.0) shell installer skips its checksum check when `sha256sum` is missing, its PowerShell installer has no checksum check, and neither verifies build provenance (read 15 November 2026).
-- [GoReleaser](https://goreleaser.com/) builds and releases Go, Rust, TypeScript, Python and Zig projects for multiple platforms and architectures, and can publish to package managers including Homebrew, Scoop and Winget.
-- Setup, read on 15 November 2026: `dist init` ([v0.34.0](https://github.com/axodotdev/cargo-dist/releases/tag/v0.34.0)) asks which platforms to build for, or takes its defaults with `--yes`, adds a build profile to `Cargo.toml`, writes `dist-workspace.toml` and generates `.github/workflows/release.yml`, which names actions by version tag, such as `actions/checkout@v6`, unless configured with commits. `goreleaser init` ([v2.20.2](https://github.com/goreleaser/goreleaser/releases/tag/v2.20.2)) picks one of 8 languages from the manifests it finds and writes an example `.goreleaser.yaml`, but no CI workflow: its [GitHub Actions page](https://goreleaser.com/customization/ci/actions/) gives one to copy. `release-policy init` writes the release workflow, pinned to a full commit SHA and without network access, for 3 families. It is on `main`, not in a release yet, and writes no caller for a monorepo component or skill pack and no PyPI publish job ([Quickstart](docs/quickstart.md)).
-- [slsa-github-generator](https://github.com/slsa-framework/slsa-github-generator) generates SLSA provenance for GitHub projects. Its README says it is no longer actively maintained.
+- General binary packagers build executables, archives and installers for a wider platform matrix and can publish Homebrew formulae to a tap (this repository's own binary consumers ship Homebrew formulae via `ryanduguid/homebrew-tap`), though comparable shell or PowerShell installers may omit checksum checks when local tools are absent and omit build provenance.
+- Multi-language release tools support Go, Rust, TypeScript, Python and Zig targets across package managers including Homebrew, Scoop and Winget, typically configured through a standalone YAML manifest alongside a custom CI workflow referencing version tags unless pinned explicitly by commit.
+- `release-policy init` writes the release workflow, pinned to a full commit SHA and without network access, for 3 families; it writes no caller for a monorepo component or skill pack and no PyPI publish job ([Quickstart](docs/quickstart.md)).
+- Legacy third-party SLSA provenance generators exist, though major standalone generators are archived or unmaintained in favour of platform-native attestations.
 
 ## Development
 
