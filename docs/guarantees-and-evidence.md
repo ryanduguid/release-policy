@@ -192,8 +192,8 @@ Recorded evidence and latest-success selection must both match exactly
 prefix. A sibling component's successful release never satisfies the canary.
 
 The maintained canaries, selected in `canaries.json`, use the Australian Tax
-Legislation Corpus archive release, Accounting Review Pipeline's Review Ready
-Python release, and Australian Accounting Skills' release and read-only shared
+Legislation Corpus archive release, `release-policy`'s own Rust binary release,
+Australian Accounting's Aus Accounting MCP Python release, and Australian Accounting Skills' release and read-only shared
 verification workflow. Existing published releases supply the
 release evidence; migrating these references does not require new releases.
 

@@ -3,11 +3,11 @@
     {
       "current_policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
       "evidence": {
-        "head_sha": "1b6146ac09bfe472c331628e1bf70b6c501498d9",
+        "head_sha": "134c96cc523328a8c786d87e76121ee7d4146a75",
         "policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
-        "ref": "v0.7.0",
-        "run_id": 44224457076,
-        "started_at": "2026-11-18T02:36:04Z"
+        "ref": "v0.8.0",
+        "run_id": 45401616926,
+        "started_at": "2026-11-24T13:15:50Z"
       },
       "family": "archive",
       "policy_workflow": ".github/workflows/release-archive.yml",
@@ -31,25 +31,26 @@
     {
       "current_policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
       "evidence": {
-        "head_sha": "a7cfedc0707c2249c911e7518531a805a286ac1b",
+        "head_sha": "bf2619c95e211685ca4c996cc7c04f9e400a616e",
         "policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
-        "ref": "v0.7.0",
-        "run_id": 43869393564,
-        "started_at": "2026-11-16T12:45:04Z"
+        "ref": "aus-accounting-mcp/v0.12.0",
+        "run_id": 45065509057,
+        "started_at": "2026-11-22T20:16:35Z"
       },
       "family": "python",
       "policy_workflow": ".github/workflows/release-python.yml",
-      "repository": "ryanduguid/au-fpa-pack",
-      "workflow_path": ".github/workflows/release.yml"
+      "repository": "ryanduguid/australian-accounting",
+      "tag_prefix": "aus-accounting-mcp",
+      "workflow_path": ".github/workflows/release-aus-accounting-mcp.yml"
     },
     {
-      "current_policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
+      "current_policy_sha": "d7039efe6d8c441f1f213c674902909e80535599",
       "evidence": {
-        "head_sha": "252816621a74b7a885c29f451c2a3ab1fabd9925",
-        "policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
-        "ref": "v0.7.0",
-        "run_id": 43530289196,
-        "started_at": "2026-11-13T23:52:27Z"
+        "head_sha": "46d76b2b3b6c80b298dcdfc4da9aa245437f695f",
+        "policy_sha": "d7039efe6d8c441f1f213c674902909e80535599",
+        "ref": "v0.8.0",
+        "run_id": 45467176579,
+        "started_at": "2026-11-24T19:09:16Z"
       },
       "family": "skills",
       "policy_workflow": ".github/workflows/release-skills.yml",
@@ -57,13 +58,13 @@
       "workflow_path": ".github/workflows/release.yml"
     },
     {
-      "current_policy_sha": "ca5492bd09693be9e1fd47d980e2740ef8daf023",
+      "current_policy_sha": "d7039efe6d8c441f1f213c674902909e80535599",
       "evidence": {
-        "head_sha": "87813095c184be57bedaeaf7d9d82a8518fa60f8",
-        "policy_sha": "171aa487dbc0a8f437ed84407f0d506f814548c1",
+        "head_sha": "51ac3469669ef4908a663c2dd3cbbe5cfac72c8a",
+        "policy_sha": "d7039efe6d8c441f1f213c674902909e80535599",
         "ref": "main",
-        "run_id": 35024835110,
-        "started_at": "2026-09-15T21:18:20Z"
+        "run_id": 45494937055,
+        "started_at": "2026-11-24T21:49:28Z"
       },
       "family": "verify",
       "policy_workflow": ".github/workflows/verify-skills.yml",
