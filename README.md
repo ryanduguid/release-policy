@@ -42,14 +42,14 @@ Policy checks establish release evidence, not accounting correctness. The exampl
 The consumer's release caller at that tag is:
 
 ```yaml
-uses: ryanduguid/release-policy/.github/workflows/release-python.yml@0f7ca4ce0ba2e7ea52fc611149a42cd5d0a26f6c
+uses: ryanduguid/release-policy/.github/workflows/release-python.yml@ca5492bd09693be9e1fd47d980e2740ef8daf023
 ```
 
 **Recorded output:** run 45065509057 on 22 November 2026 supplies the release evidence for [aus-accounting-mcp/v0.12.0](https://github.com/ryanduguid/australian-accounting/releases/tag/aus-accounting-mcp/v0.12.0): the wheel, source archive, SBOM, provenance, release manifest and `SHA256SUMS`, with policy SHA `ca5492bd09693be9e1fd47d980e2740ef8daf023`.
 
 **Human decision:** Check the release artefacts and their attestations against that recorded policy revision. This evidence applies to the recorded policy revision. Later policy changes need their own verification.
 
-This snapshot was checked against [canaries.json](canaries.json) on 2 November 2026. The manifest retains the source commit, policy SHA and run identity; consult it for later updates.
+This snapshot was checked against [canaries.json](canaries.json) on 25 November 2026. The manifest retains the source commit, policy SHA and run identity; consult it for later updates.
 
 To set up a release, run [`release-policy init`](docs/quickstart.md): it writes the release workflow for a Python package, Rust binary or source archive and lists what is left for the owner. Check the [consumer prerequisites](docs/consumer-prerequisites.md) before choosing a release workflow.
 
@@ -119,9 +119,9 @@ To run that audit on demand, dispatch CI with `live-canary-audit` selected. The 
 
 ## Alternatives
 
-release-policy fits maintainers who want reusable workflows pinned to a commit SHA, with the weight on release gates, attestations and recorded canaries. Use another tool if you want Homebrew or other package manager publishing, an npm or MSI installer, or binaries for another operating system or architecture, such as FreeBSD or 32-bit Windows. As read on 13 November 2026:
+release-policy fits maintainers who want reusable workflows pinned to a commit SHA, with the weight on release gates, attestations and recorded canaries. Use another tool if you want Homebrew or other package manager publishing, an npm or MSI installer, or binaries for another operating system or architecture, such as FreeBSD or 32-bit Windows.
 
-- General binary packagers build executables, archives and installers for a wider platform matrix and can publish Homebrew formulae to a tap (this repository's own binary consumers ship Homebrew formulae via `ryanduguid/homebrew-tap`), though comparable shell or PowerShell installers may omit checksum checks when local tools are absent and omit build provenance.
+- General binary packagers build executables, archives and installers for a wider platform matrix and can maintain package-manager taps (this repository's binary consumers separately ship Homebrew formulae in `ryanduguid/homebrew-tap` outside `release-policy`'s own reusable workflow guarantees), though in some configurations a rival shell or PowerShell installer may omit checksum checks when local tools are absent and does not verify build provenance.
 - Multi-language release tools support Go, Rust, TypeScript, Python and Zig targets across package managers including Homebrew, Scoop and Winget, typically configured through a standalone YAML manifest alongside a custom CI workflow referencing version tags unless pinned explicitly by commit.
 - `release-policy init` writes the release workflow, pinned to a full commit SHA and without network access, for 3 families; it writes no caller for a monorepo component or skill pack and no PyPI publish job ([Quickstart](docs/quickstart.md)).
 - Legacy third-party SLSA provenance generators exist, though major standalone generators are archived or unmaintained in favour of platform-native attestations.
