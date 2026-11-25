@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::{Args, Parser, Subcommand};
-use release_policy::{Result, common::*, pin_families, release::*, verify_skills};
+use release_policy::{Result, common::*, pin_families, release::*, repin_issue, verify_skills};
 use std::path::PathBuf;
 mod cli_checks;
 
@@ -81,6 +81,32 @@ enum Command {
         /// Replace an existing release.yml
         #[arg(long)]
         force: bool,
+    },
+    /// File or update an issue to repin the attribution action when main moves on (scripts/repin_issue.py)
+    #[command(name = "repin-issue", alias = "repin_issue")]
+    RepinIssue {
+        #[command(subcommand)]
+        command: RepinIssueCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum RepinIssueCommand {
+    Prepare {
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        patch: PathBuf,
+    },
+    Publish {
+        #[arg(long)]
+        repository: String,
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        patch: PathBuf,
+        #[arg(long)]
+        current: String,
     },
 }
 
@@ -316,6 +342,44 @@ fn execute(cli: Cli) -> Result<i32> {
                 }
             }
         }
+        Command::RepinIssue { command } => match command {
+            RepinIssueCommand::Prepare { target, patch } => {
+                match repin_issue::prepare(&cwd, &target, &patch)? {
+                    None => print("attribution pin is current\n", false),
+                    Some(stale) => print(
+                        &format!("attribution pin {stale} is stale; wrote {}\n", patch.display()),
+                        false,
+                    ),
+                }
+            }
+            RepinIssueCommand::Publish {
+                repository,
+                target,
+                patch,
+                current,
+            } => {
+                if !repin_issue::unchanged_since(&cwd, &target, &current)? {
+                    print(
+                        &format!(
+                            "main no longer descends from {target} with the same action and workflow; rerun this workflow to repin to main\n"
+                        ),
+                        true,
+                    );
+                    return Ok(1);
+                }
+                let patch_bytes = read_bytes(&patch)?;
+                let patch_text = release_policy::py::universal_newlines(
+                    &release_policy::py::decode_utf8(&patch_bytes).map_err(|e| e.to_string())?,
+                );
+                let summary = repin_issue::publish(
+                    &repository,
+                    &target,
+                    &patch_text,
+                    &mut repin_issue::system_gh,
+                )?;
+                print(&format!("{summary}\n"), false);
+            }
+        },
     }
     Ok(0)
 }

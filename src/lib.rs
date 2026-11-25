@@ -16,6 +16,7 @@ pub mod py;
 pub mod pyjson;
 mod pyunicode;
 pub mod release;
+pub mod repin_issue;
 pub mod required_checks;
 pub mod verify_skills;
 

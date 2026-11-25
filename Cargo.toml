@@ -96,6 +96,10 @@ path = "tests/rust/verify_skills.rs"
 name = "init"
 path = "tests/rust/init.rs"
 
+[[test]]
+name = "repin_issue"
+path = "tests/rust/repin_issue.rs"
+
 [profile.release]
 codegen-units = 1
 lto = true
