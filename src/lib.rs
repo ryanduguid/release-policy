@@ -4,6 +4,7 @@
 //! Release policy contracts, ported from the pinned Python tooling.
 pub mod archives;
 pub mod attribution;
+pub mod binary_release;
 pub mod check_canaries;
 pub mod check_reviews;
 pub mod common;

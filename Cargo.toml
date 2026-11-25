@@ -9,7 +9,9 @@ license = "Apache-2.0"
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
+crc32fast = "1"
 fancy-regex = "0.20.0"
+flate2 = "1"
 jiff = { version = "1.0.0", default-features = false, features = ["std"] }
 num-bigint = "0.5.1"
 num-traits = "0.2.19"
@@ -99,6 +101,10 @@ path = "tests/rust/init.rs"
 [[test]]
 name = "repin_issue"
 path = "tests/rust/repin_issue.rs"
+
+[[test]]
+name = "binary_release"
+path = "tests/rust/binary_release.rs"
 
 [profile.release]
 codegen-units = 1

@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::{Args, Parser, Subcommand};
-use release_policy::{Result, common::*, pin_families, release::*, repin_issue, verify_skills};
+use release_policy::{
+    Result, binary_release, common::*, pin_families, release::*, repin_issue, verify_skills,
+};
 use std::path::PathBuf;
 mod cli_checks;
 
@@ -87,6 +89,136 @@ enum Command {
     RepinIssue {
         #[command(subcommand)]
         command: RepinIssueCommand,
+    },
+    /// Package, check and validate the per-target archives of a Rust binary release (scripts/binary_release.py)
+    #[command(name = "binary-release", alias = "binary_release")]
+    BinaryRelease {
+        #[command(subcommand)]
+        command: BinaryReleaseCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum BinaryReleaseCommand {
+    CargoPackage {
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        binary: String,
+        #[arg(long)]
+        manifest: String,
+    },
+    Toolchain {
+        #[arg(long)]
+        source: String,
+        #[arg(long)]
+        root: String,
+    },
+    Package {
+        #[arg(long)]
+        binary: String,
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        stem: String,
+        #[arg(long)]
+        version: String,
+        #[arg(long, allow_hyphen_values = true)]
+        epoch: String,
+        #[arg(long)]
+        executables: String,
+        #[arg(long)]
+        source: String,
+        #[arg(long)]
+        root: String,
+        #[arg(long)]
+        output_dir: String,
+        #[arg(long, default_value = "")]
+        data_files: String,
+    },
+    Verify {
+        #[arg(long)]
+        binary: String,
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        archive: String,
+        #[arg(long)]
+        extract_dir: Option<String>,
+        #[arg(long, default_value = "")]
+        data_files: String,
+    },
+    Receive {
+        #[arg(long)]
+        stem: String,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        binary: String,
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        incoming: String,
+        #[arg(long)]
+        dist: String,
+        #[arg(long)]
+        extract_dir: String,
+        #[arg(long)]
+        source: String,
+        #[arg(long)]
+        root: String,
+        #[arg(long, default_value = "")]
+        data_files: String,
+    },
+    Smoke {
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        executable: String,
+    },
+    Linkage {
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        readobj_output: String,
+    },
+    MachoLinkage {
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        executable: String,
+    },
+    SbomLists {
+        #[arg(long)]
+        package: String,
+        #[arg(long)]
+        sbom: String,
+    },
+    Digests {
+        #[arg(long)]
+        stem: String,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        dist: String,
+    },
+    Assets {
+        #[arg(long)]
+        stem: String,
+        #[arg(long)]
+        version: String,
+    },
+    Accept {
+        #[arg(long)]
+        stem: String,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        incoming: String,
+        #[arg(long)]
+        dist: String,
+        #[arg(long = "digest", action = clap::ArgAction::Append, required = true)]
+        digest: Vec<String>,
     },
 }
 
@@ -380,8 +512,176 @@ fn execute(cli: Cli) -> Result<i32> {
                 print(&format!("{summary}\n"), false);
             }
         },
+        Command::BinaryRelease { command } => match run_binary_release(command) {
+            Ok(out) => print(&format!("{out}\n"), false),
+            Err(e) => {
+                print(&format!("binary_release: {e}\n"), true);
+                return Ok(1);
+            }
+        },
     }
     Ok(0)
+}
+
+fn run_binary_release(command: BinaryReleaseCommand) -> Result<String> {
+    match command {
+        BinaryReleaseCommand::CargoPackage {
+            version,
+            binary,
+            manifest,
+        } => binary_release::cargo_package(
+            &binary_release::confined_path(&manifest)?,
+            &version,
+            &binary,
+        ),
+        BinaryReleaseCommand::Toolchain { source, root } => binary_release::toolchain(
+            &binary_release::confined_path(&source)?,
+            &binary_release::confined_path(&root)?,
+        ),
+        BinaryReleaseCommand::Package {
+            binary,
+            target,
+            stem,
+            version,
+            epoch,
+            executables,
+            source,
+            root,
+            output_dir,
+            data_files,
+        } => {
+            if epoch.is_empty() || !epoch.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(format!(
+                    "epoch is not a Unix time: {}",
+                    release_policy::py::repr_str(&epoch)
+                ));
+            }
+            let epoch: u64 = epoch.parse().map_err(|_| {
+                format!(
+                    "epoch is not a Unix time: {}",
+                    release_policy::py::repr_str(&epoch)
+                )
+            })?;
+            let path = binary_release::package(
+                &binary_release::confined_path(&executables)?,
+                &binary,
+                &target,
+                &stem,
+                &version,
+                &binary_release::confined_path(&source)?,
+                &binary_release::confined_path(&root)?,
+                epoch,
+                &binary_release::confined_path(&output_dir)?,
+                &data_files,
+            )?;
+            Ok(path.to_string_lossy().into_owned())
+        }
+        BinaryReleaseCommand::Verify {
+            binary,
+            target,
+            archive,
+            extract_dir,
+            data_files,
+        } => {
+            let extract = match extract_dir {
+                Some(raw) => Some(binary_release::confined_path(&raw)?),
+                None => None,
+            };
+            Ok(binary_release::verify(
+                &binary_release::confined_path(&archive)?,
+                &binary,
+                &target,
+                extract.as_deref(),
+                &data_files,
+            )?
+            .join("\n"))
+        }
+        BinaryReleaseCommand::Receive {
+            stem,
+            version,
+            binary,
+            target,
+            incoming,
+            dist,
+            extract_dir,
+            source,
+            root,
+            data_files,
+        } => {
+            let path = binary_release::receive(
+                &binary_release::confined_path(&incoming)?,
+                &stem,
+                &version,
+                &binary,
+                &target,
+                &binary_release::confined_path(&dist)?,
+                &binary_release::confined_path(&extract_dir)?,
+                &binary_release::confined_path(&source)?,
+                &binary_release::confined_path(&root)?,
+                &data_files,
+            )?;
+            Ok(path.to_string_lossy().into_owned())
+        }
+        BinaryReleaseCommand::Smoke { version, executable } => {
+            binary_release::smoke(&binary_release::confined_path(&executable)?, &version)
+        }
+        BinaryReleaseCommand::Linkage {
+            target,
+            readobj_output,
+        } => {
+            let raw = read_bytes(&binary_release::confined_path(&readobj_output)?)?;
+            let text = release_policy::py::decode_utf8(&raw).map_err(|e| e.to_string())?;
+            Ok(binary_release::linkage(&text, &target)?.join("\n"))
+        }
+        BinaryReleaseCommand::MachoLinkage { target, executable } => {
+            let raw = read_bytes(&binary_release::confined_path(&executable)?)?;
+            Ok(binary_release::macho_linkage(&raw, &target)?.join("\n"))
+        }
+        BinaryReleaseCommand::SbomLists { package, sbom } => {
+            let py_sbom = release_policy::py::PyPath::new(&sbom);
+            if !binary_release::sbom_lists(&binary_release::confined_path(&sbom)?, &package)? {
+                return Err(format!("{py_sbom} does not list the package {package}"));
+            }
+            Ok(format!("{} lists {package}", py_sbom.name()))
+        }
+        BinaryReleaseCommand::Digests {
+            stem,
+            version,
+            dist,
+        } => Ok(binary_release::digests(
+            &binary_release::confined_path(&dist)?,
+            &stem,
+            &version,
+        )?
+        .join("\n")),
+        BinaryReleaseCommand::Assets { stem, version } => Ok(
+            binary_release::handoff_names(&stem, &version)?
+                .into_iter()
+                .map(|(_, name)| name)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        BinaryReleaseCommand::Accept {
+            stem,
+            version,
+            incoming,
+            dist,
+            digest,
+        } => {
+            let kept = binary_release::accept(
+                &binary_release::confined_path(&incoming)?,
+                &binary_release::confined_path(&dist)?,
+                &stem,
+                &version,
+                &digest,
+            )?;
+            Ok(kept
+                .into_iter()
+                .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .collect::<Vec<_>>()
+                .join("\n"))
+        }
+    }
 }
 
 fn main() -> std::process::ExitCode {
