@@ -11,6 +11,7 @@ import hashlib
 import http.server
 import json
 import os
+import shutil
 import ssl
 import subprocess
 import sys
@@ -27,14 +28,15 @@ SDIST = "demo_pkg-1.2.3.tar.gz"
 DIGEST_OID = bytes.fromhex("2b0601040183bf30010d")
 MAX_BYTES = 16 * 1024 * 1024
 
-STUB_PYTHON = """#!/usr/bin/env python3
-import json
+STUB_PKG_MAIN = """import json
 import os
 import sys
 from pathlib import Path
 
 cfg = json.loads(Path(os.environ["FAKE_ATTEST_SCENARIO"]).read_text(encoding="utf-8"))
-Path(cfg["log"]).write_text(json.dumps(sys.argv[1:]), encoding="utf-8")
+Path(cfg["log"]).write_text(
+    json.dumps(["-m", "pypi_attestations", *sys.argv[1:]]), encoding="utf-8"
+)
 sys.stderr.write(cfg.get("stderr", ""))
 sys.exit(cfg.get("code", 0))
 """
@@ -46,11 +48,25 @@ def find_binary(explicit: str | None) -> Path:
     env = os.environ.get("RELEASE_POLICY_BIN")
     if env:
         return Path(env).resolve()
+    exe = "release-policy.exe" if os.name == "nt" else "release-policy"
     for profile in ("release", "debug"):
-        candidate = ROOT / "target" / profile / "release-policy"
+        candidate = ROOT / "target" / profile / exe
         if candidate.exists():
             return candidate
     raise FileNotFoundError("pass --binary or set RELEASE_POLICY_BIN")
+
+
+def find_openssl() -> str | None:
+    found = shutil.which("openssl")
+    if found:
+        return found
+    if os.name == "nt":
+        git_bin = shutil.which("git")
+        if git_bin:
+            candidate = Path(git_bin).resolve().parent.parent / "usr" / "bin" / "openssl.exe"
+            if candidate.is_file():
+                return str(candidate)
+    return None
 
 
 def der(tag: int, contents: bytes) -> bytes:
@@ -162,8 +178,7 @@ def run_py(
 ) -> subprocess.CompletedProcess[str]:
     script_dir = str(ROOT / "scripts")
     code = (
-        "import shutil, sys; "
-        "sys.executable = shutil.which('python') or sys.executable; "
+        "import sys; "
         f"sys.path.insert(0, {script_dir!r}); "
         "import verify_pypi; "
         f"verify_pypi._PYPI = {base_url!r}; "
@@ -176,6 +191,7 @@ def run_py(
         cwd=cwd,
         env=env,
         text=True,
+        encoding="utf-8",
         capture_output=True,
     )
 
@@ -198,6 +214,7 @@ def run_rs(
         cwd=cwd,
         env=env,
         text=True,
+        encoding="utf-8",
         capture_output=True,
     )
 
@@ -208,7 +225,8 @@ def compare_case(
     cwd: Path,
     cli_args: list[str],
     routes: dict[str, list[tuple[int, dict[str, str], bytes]]],
-    stub_bin: Path,
+    stub_path: Path,
+    stub_pkg: Path,
     scenario_file: Path,
     attest_cfg: dict,
     *,
@@ -219,7 +237,9 @@ def compare_case(
     def prep_env(log_path: Path) -> dict[str, str]:
         scenario_file.write_text(json.dumps({**attest_cfg, "log": str(log_path)}), encoding="utf-8")
         env = dict(os.environ)
-        env["PATH"] = f"{stub_bin}:{env.get('PATH', '')}"
+        env["PATH"] = f"{stub_path}{os.pathsep}{env.get('PATH', '')}"
+        existing_py = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{stub_pkg}{os.pathsep}{existing_py}" if existing_py else str(stub_pkg)
         env["FAKE_ATTEST_SCENARIO"] = str(scenario_file)
         if ca_cert is not None:
             env["SSL_CERT_FILE"] = str(ca_cert)
@@ -258,16 +278,17 @@ def compare_case(
         )
 
 
-def make_loopback_cert(directory: Path) -> tuple[Path, Path, Path]:
+def make_loopback_cert(openssl: str, directory: Path) -> tuple[Path, Path, Path]:
     ca_key = directory / "ca-key.pem"
     ca_cert = directory / "ca.pem"
     cert_p = directory / "cert.pem"
     key_p = directory / "key.pem"
     csr_p = directory / "server.csr"
     ext_p = directory / "ext.cnf"
+    ossl_env = {**os.environ, "MSYS_NO_PATHCONV": "1", "MSYS2_ARG_CONV_EXCL": "*"}
     subprocess.run(
         [
-            "openssl",
+            openssl,
             "req",
             "-x509",
             "-newkey",
@@ -290,10 +311,11 @@ def make_loopback_cert(directory: Path) -> tuple[Path, Path, Path]:
         ],
         check=True,
         capture_output=True,
+        env=ossl_env,
     )
     subprocess.run(
         [
-            "openssl",
+            openssl,
             "req",
             "-newkey",
             "rsa:2048",
@@ -307,6 +329,7 @@ def make_loopback_cert(directory: Path) -> tuple[Path, Path, Path]:
         ],
         check=True,
         capture_output=True,
+        env=ossl_env,
     )
     ext_p.write_text(
         "basicConstraints=critical,CA:FALSE\n"
@@ -319,7 +342,7 @@ def make_loopback_cert(directory: Path) -> tuple[Path, Path, Path]:
     )
     subprocess.run(
         [
-            "openssl",
+            openssl,
             "x509",
             "-req",
             "-in",
@@ -338,6 +361,7 @@ def make_loopback_cert(directory: Path) -> tuple[Path, Path, Path]:
         ],
         check=True,
         capture_output=True,
+        env=ossl_env,
     )
     return ca_cert, cert_p, key_p
 
@@ -351,11 +375,23 @@ def main() -> int:
     compared = 0
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
-        stub_bin = tmp / "bin"
-        stub_bin.mkdir()
-        stub_py = stub_bin / "python"
-        stub_py.write_text(STUB_PYTHON, encoding="utf-8", newline="\n")
-        stub_py.chmod(0o755)
+        stub_pkg = tmp / "stub_pkg"
+        pkg_dir = stub_pkg / "pypi_attestations"
+        pkg_dir.mkdir(parents=True)
+        (pkg_dir / "__init__.py").write_text("", encoding="utf-8", newline="\n")
+        (pkg_dir / "__main__.py").write_text(STUB_PKG_MAIN, encoding="utf-8", newline="\n")
+        if os.name == "nt":
+            stub_path = Path(sys.executable).resolve().parent
+        else:
+            stub_path = tmp / "bin"
+            stub_path.mkdir()
+            stub_py = stub_path / "python"
+            stub_py.write_text(
+                f"#!/bin/sh\nexec '{sys.executable}' \"$@\"\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            stub_py.chmod(0o755)
         scenario = tmp / "attest.json"
 
         whl = tmp / WHEEL
@@ -390,26 +426,40 @@ def main() -> int:
         }
 
         http_srv = MockServer()
-        ca_p, cert_p, key_p = make_loopback_cert(tmp)
-        https_srv = MockServer(certfile=cert_p, keyfile=key_p)
+        openssl = find_openssl()
+        https_srv: MockServer | None = None
+        ca_p: Path | None = None
+        if openssl is not None:
+            ca_p, cert_p, key_p = make_loopback_cert(openssl, tmp)
+            https_srv = MockServer(certfile=cert_p, keyfile=key_p)
         try:
             # 1-2: happy path over HTTP AND over HTTPS (ureq + rustls TLS handshake)
             compare_case(
-                binary, http_srv, tmp, base_args, ok_routes, stub_bin, scenario, {"code": 0}
-            )
-            compared += 1
-            compare_case(
                 binary,
-                https_srv,
+                http_srv,
                 tmp,
                 base_args,
                 ok_routes,
-                stub_bin,
+                stub_path,
+                stub_pkg,
                 scenario,
                 {"code": 0},
-                ca_cert=ca_p,
             )
             compared += 1
+            if https_srv is not None:
+                compare_case(
+                    binary,
+                    https_srv,
+                    tmp,
+                    base_args,
+                    ok_routes,
+                    stub_path,
+                    stub_pkg,
+                    scenario,
+                    {"code": 0},
+                    ca_cert=ca_p,
+                )
+                compared += 1
 
             # 3: retry 404 -> partial -> complete
             retry_routes = {
@@ -422,7 +472,15 @@ def main() -> int:
                 sdist_prov: [(200, {}, provenance())],
             }
             compare_case(
-                binary, http_srv, tmp, base_args, retry_routes, stub_bin, scenario, {"code": 0}
+                binary,
+                http_srv,
+                tmp,
+                base_args,
+                retry_routes,
+                stub_path,
+                stub_pkg,
+                scenario,
+                {"code": 0},
             )
             compared += 1
 
@@ -464,7 +522,15 @@ def main() -> int:
                 },
             ):
                 compare_case(
-                    binary, http_srv, tmp, base_args, routes, stub_bin, scenario, {"code": 0}
+                    binary,
+                    http_srv,
+                    tmp,
+                    base_args,
+                    routes,
+                    stub_path,
+                    stub_pkg,
+                    scenario,
+                    {"code": 0},
                 )
                 compared += 1
 
@@ -475,7 +541,15 @@ def main() -> int:
             )
             for attest in attest_cases:
                 compare_case(
-                    binary, http_srv, tmp, base_args, ok_routes, stub_bin, scenario, attest
+                    binary,
+                    http_srv,
+                    tmp,
+                    base_args,
+                    ok_routes,
+                    stub_path,
+                    stub_pkg,
+                    scenario,
+                    attest,
                 )
                 compared += 1
 
@@ -492,11 +566,22 @@ def main() -> int:
                 idx = base_args.index(flag)
                 mod = list(base_args)
                 mod[idx + 1] = overrides[1]
-                compare_case(binary, http_srv, tmp, mod, ok_routes, stub_bin, scenario, {"code": 0})
+                compare_case(
+                    binary,
+                    http_srv,
+                    tmp,
+                    mod,
+                    ok_routes,
+                    stub_path,
+                    stub_pkg,
+                    scenario,
+                    {"code": 0},
+                )
                 compared += 1
         finally:
             http_srv.close()
-            https_srv.close()
+            if https_srv is not None:
+                https_srv.close()
 
     print(f"verify-pypi parity: {compared} inputs compared, 0 unexplained differences")
     return 0

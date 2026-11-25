@@ -66,11 +66,24 @@ def find_binary(explicit: str | None) -> Path:
     env = os.environ.get("RELEASE_POLICY_BIN")
     if env:
         return Path(env).resolve()
+    exe = "release-policy.exe" if os.name == "nt" else "release-policy"
     for profile in ("release", "debug"):
-        candidate = ROOT / "target" / profile / "release-policy"
+        candidate = ROOT / "target" / profile / exe
         if candidate.exists():
             return candidate
     raise FileNotFoundError("pass --binary or set RELEASE_POLICY_BIN")
+
+
+def find_fake_gh_exe(binary: Path) -> Path:
+    candidates = [
+        binary.with_name("fake-gh.exe"),
+        ROOT / "target" / "release" / "fake-gh.exe",
+        ROOT / "target" / "debug" / "fake-gh.exe",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError("build fake-gh.exe (`cargo build --bin fake-gh`) or use POSIX")
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -79,6 +92,7 @@ def git(cwd: Path, *args: str) -> str:
         cwd=cwd,
         check=True,
         text=True,
+        encoding="utf-8",
         capture_output=True,
     )
     return proc.stdout.strip()
@@ -148,16 +162,20 @@ def run_cmd(cmd: list[str], cwd: Path, env: dict[str, str]) -> subprocess.Comple
         env=env,
         stdin=subprocess.DEVNULL,
         text=True,
+        encoding="utf-8",
         capture_output=True,
     )
 
 
-def install_fake_gh(directory: Path) -> tuple[Path, Path]:
+def install_fake_gh(directory: Path, binary: Path) -> tuple[Path, Path]:
     bin_dir = directory / "bin"
     bin_dir.mkdir(exist_ok=True)
-    gh_path = bin_dir / "gh"
-    gh_path.write_text(FAKE_GH, encoding="utf-8", newline="\n")
-    gh_path.chmod(gh_path.stat().st_mode | stat.S_IXUSR)
+    if os.name == "nt":
+        shutil.copy2(find_fake_gh_exe(binary), bin_dir / "gh.exe")
+    else:
+        gh_path = bin_dir / "gh"
+        gh_path.write_text(FAKE_GH, encoding="utf-8", newline="\n")
+        gh_path.chmod(gh_path.stat().st_mode | stat.S_IXUSR)
     scenario = directory / "scenario.json"
     return bin_dir, scenario
 
@@ -235,7 +253,7 @@ def compare_publish_scenario(
         target = info["second"]
         current = info["first"]
 
-    bin_dir, scenario = install_fake_gh(case_dir)
+    bin_dir, scenario = install_fake_gh(case_dir, binary)
     if any(
         isinstance(item.get("body"), str) and item["body"] == "__CURRENT_BODY__"
         for r in rules
@@ -293,7 +311,7 @@ def compare_publish_scenario(
             json.dumps({"rules": rules, "log": str(log_path)}), encoding="utf-8"
         )
         env = dict(os.environ)
-        env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+        env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
         env["FAKE_GH_SCENARIO"] = str(scenario)
         proc = run_cmd(cmd, repo, env)
         calls = (
@@ -462,9 +480,9 @@ def main() -> int:
         bin_patch = tmp / "bin.patch"
         bin_patch.write_bytes(b"\xff\xfe")
 
-        bin_dir, scenario = install_fake_gh(tmp)
+        bin_dir, scenario = install_fake_gh(tmp, binary)
         env = dict(os.environ)
-        env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+        env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
         env["FAKE_GH_SCENARIO"] = str(scenario)
 
         def pub_cmd(repo_name: str, patch_path: Path) -> list[str]:

@@ -33,8 +33,9 @@ def find_binary(explicit: str | None) -> Path:
     env = os.environ.get("RELEASE_POLICY_BIN")
     if env:
         return Path(env).resolve()
+    exe = "release-policy.exe" if os.name == "nt" else "release-policy"
     for profile in ("release", "debug"):
-        candidate = ROOT / "target" / profile / "release-policy"
+        candidate = ROOT / "target" / profile / exe
         if candidate.exists():
             return candidate
     raise FileNotFoundError("pass --binary or set RELEASE_POLICY_BIN")
@@ -49,6 +50,7 @@ def run_both(
         cwd=cwd,
         env=run_env,
         text=True,
+        encoding="utf-8",
         capture_output=True,
     )
     rs = subprocess.run(
@@ -56,6 +58,7 @@ def run_both(
         cwd=cwd,
         env=run_env,
         text=True,
+        encoding="utf-8",
         capture_output=True,
     )
     return py, rs
@@ -127,7 +130,7 @@ def main() -> int:
 
     compared = 0
     with tempfile.TemporaryDirectory() as raw:
-        tmp = Path(raw)
+        tmp = Path(raw).resolve()
         ws = tmp / "ws"
         ws.mkdir()
         src = ws / "comp"
@@ -151,6 +154,8 @@ def main() -> int:
         (execs / "demo").write_bytes(b"#!/bin/sh\necho demo 1.2.3\n")
         (execs / "demo").chmod(0o755)
         (execs / "demo.exe").write_bytes(b"MZ")
+        if os.name == "nt":
+            (execs / "demo.cmd").write_bytes(b"@echo off\r\necho demo 1.2.3\r\n")
 
         env = dict(os.environ)
         env["GITHUB_WORKSPACE"] = str(ws)
@@ -230,6 +235,7 @@ def main() -> int:
                 cwd=ws,
                 env=env,
                 text=True,
+                encoding="utf-8",
                 capture_output=True,
             )
             rs_p = subprocess.run(
@@ -237,6 +243,7 @@ def main() -> int:
                 cwd=ws,
                 env=env,
                 text=True,
+                encoding="utf-8",
                 capture_output=True,
             )
             assert py_p.returncode == rs_p.returncode == 0, (py_p, rs_p)
@@ -345,11 +352,12 @@ def main() -> int:
             )
             compared += 1
 
+        smoke_exe = execs / ("demo.cmd" if os.name == "nt" else "demo")
         for ver in ("1.2.3", "9.9.9"):
             assert_parity(
                 binary,
                 ws,
-                ["smoke", "--version", ver, "--executable", str(execs / "demo")],
+                ["smoke", "--version", ver, "--executable", str(smoke_exe)],
                 env=env,
             )
             compared += 1
@@ -462,6 +470,7 @@ def main() -> int:
             cwd=ws,
             env=env,
             text=True,
+            encoding="utf-8",
             capture_output=True,
         )
         rs_r = subprocess.run(
@@ -477,6 +486,7 @@ def main() -> int:
             cwd=ws,
             env=env,
             text=True,
+            encoding="utf-8",
             capture_output=True,
         )
         assert py_r.returncode == rs_r.returncode == 0, (py_r, rs_r)
@@ -496,6 +506,7 @@ def main() -> int:
             cwd=ws,
             env=env,
             text=True,
+            encoding="utf-8",
             capture_output=True,
             check=True,
         ).stdout.splitlines()
@@ -518,6 +529,7 @@ def main() -> int:
             cwd=ws,
             env=env,
             text=True,
+            encoding="utf-8",
             capture_output=True,
             check=True,
         ).stdout.splitlines()
@@ -529,6 +541,7 @@ def main() -> int:
             cwd=ws,
             env=env,
             text=True,
+            encoding="utf-8",
             capture_output=True,
         )
         rs_a = subprocess.run(
@@ -536,6 +549,7 @@ def main() -> int:
             cwd=ws,
             env=env,
             text=True,
+            encoding="utf-8",
             capture_output=True,
         )
         assert py_a.returncode == rs_a.returncode == 0
@@ -543,18 +557,34 @@ def main() -> int:
         compared += 1
 
         link = ws / "sym_cargo.toml"
-        link.symlink_to(manifest)
-        assert_parity(
-            binary,
-            ws,
-            ["cargo-package", "--version", "1.2.3", "--binary", "demo", "--manifest", str(link)],
-            env=env,
+        try:
+            link.symlink_to(manifest)
+            has_symlink = True
+        except OSError:
+            has_symlink = False
+        if has_symlink:
+            assert_parity(
+                binary,
+                ws,
+                ["cargo-package", "--version", "1.2.3", "--binary", "demo", "--manifest", str(link)],
+                env=env,
+            )
+            compared += 1
+        outside = (
+            str(
+                Path(os.environ.get("SystemRoot", r"C:\Windows"))
+                / "System32"
+                / "drivers"
+                / "etc"
+                / "hosts"
+            )
+            if os.name == "nt"
+            else "/etc/hosts"
         )
-        compared += 1
         assert_parity(
             binary,
             ws,
-            ["sbom-lists", "--package", "demo", "--sbom", "/etc/hosts"],
+            ["sbom-lists", "--package", "demo", "--sbom", outside],
             env=env,
         )
         compared += 1

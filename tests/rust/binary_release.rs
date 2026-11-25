@@ -6,9 +6,11 @@ mod support;
 use crc32fast::Hasher;
 use flate2::write::GzEncoder;
 use flate2::{Compression, GzBuilder};
+#[cfg(unix)]
+use release_policy::binary_release::MAX_ARCHIVE_BYTES;
 use release_policy::binary_release::{
-    DOCUMENTS, MAX_ARCHIVE_BYTES, MAX_DECOMPRESSED_BYTES, MAX_MEMBERS, TARGETS, accept, asset_name,
-    binaries, cargo_package, confined_path, data_names, digests, find_data_files, find_documents,
+    DOCUMENTS, MAX_DECOMPRESSED_BYTES, MAX_MEMBERS, TARGETS, accept, asset_name, binaries,
+    cargo_package, confined_path, data_names, digests, find_data_files, find_documents,
     handoff_names, linkage, macho_linkage, member_names, needed_libraries, package, receive,
     resolve_path, sbom_lists, smoke_with_timeout, toolchain, verify,
 };
