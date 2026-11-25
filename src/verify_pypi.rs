@@ -10,7 +10,6 @@ use crate::{Result, common::*};
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::LazyLock;
@@ -142,6 +141,50 @@ fn resolve_redirect(base: &str, location: &str) -> String {
     format!("{scheme}://{authority}{dir}{location}")
 }
 
+fn check_redirect(
+    current: &str,
+    status: u16,
+    response: &ureq::http::Response<ureq::Body>,
+    config: &Config,
+) -> Result<Option<String>> {
+    if !matches!(status, 301 | 302 | 303 | 307 | 308) {
+        return Ok(None);
+    }
+    let Some(loc_val) = response.headers().get("location") else {
+        return Ok(None);
+    };
+    let Ok(loc_str) = loc_val.to_str() else {
+        return Ok(None);
+    };
+    let next = resolve_redirect(current, loc_str);
+    let allowed = Some((
+        config.allowed_origin.0.clone(),
+        config.allowed_origin.1.clone(),
+    ));
+    if scheme_and_authority(&next) != allowed {
+        return Err(format!(
+            "{current} redirected to {next}, outside https://pypi.org"
+        ));
+    }
+    Ok(Some(next))
+}
+
+fn read_limited_body(current: &str, response: ureq::http::Response<ureq::Body>) -> Result<Vec<u8>> {
+    let body = response
+        .into_body()
+        .into_with_config()
+        .limit((MAX_RESPONSE_BYTES + 1) as u64)
+        .read_to_vec()
+        .map_err(|e| match e {
+            ureq::Error::BodyExceedsLimit(_) => format!("{current} answered more than 16 MiB"),
+            other => format!("{current} could not be read: {other}"),
+        })?;
+    if body.len() > MAX_RESPONSE_BYTES {
+        return Err(format!("{current} answered more than 16 MiB"));
+    }
+    Ok(body)
+}
+
 pub fn fetch_with_config(url: &str, accept: &str, config: &Config) -> Result<Option<Vec<u8>>> {
     let agent = build_agent(config)?;
     let mut current = url.to_owned();
@@ -152,21 +195,7 @@ pub fn fetch_with_config(url: &str, accept: &str, config: &Config) -> Result<Opt
             .call()
             .map_err(|e| format!("{current} could not be read: {e}"))?;
         let status = response.status().as_u16();
-        if matches!(status, 301 | 302 | 303 | 307 | 308)
-            && let Some(loc_val) = response.headers().get("location")
-            && let Ok(loc_str) = loc_val.to_str()
-        {
-            let next = resolve_redirect(&current, loc_str);
-            if scheme_and_authority(&next).as_ref()
-                != Some(&(
-                    config.allowed_origin.0.clone(),
-                    config.allowed_origin.1.clone(),
-                ))
-            {
-                return Err(format!(
-                    "{current} redirected to {next}, outside https://pypi.org"
-                ));
-            }
+        if let Some(next) = check_redirect(&current, status, &response, config)? {
             current = next;
             continue;
         }
@@ -176,27 +205,34 @@ pub fn fetch_with_config(url: &str, accept: &str, config: &Config) -> Result<Opt
         if !(200..300).contains(&status) {
             return Err(format!("{current} answered HTTP {status}"));
         }
-        let body = response
-            .into_body()
-            .into_with_config()
-            .limit((MAX_RESPONSE_BYTES + 1) as u64)
-            .read_to_vec()
-            .map_err(|e| match e {
-                ureq::Error::BodyExceedsLimit(_) => {
-                    format!("{current} answered more than 16 MiB")
-                }
-                other => format!("{current} could not be read: {other}"),
-            })?;
-        if body.len() > MAX_RESPONSE_BYTES {
-            return Err(format!("{current} answered more than 16 MiB"));
-        }
-        return Ok(Some(body));
+        return Ok(Some(read_limited_body(&current, response)?));
     }
     Err(format!("{url} could not be read: too many redirects"))
 }
 
 pub fn fetch(url: &str, accept: &str) -> Result<Option<Vec<u8>>> {
     fetch_with_config(url, accept, &Config::default())
+}
+
+fn wait_attestation_child(
+    child: &mut std::process::Child,
+    timeout: Duration,
+    fname: &str,
+) -> Result<std::process::ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(status) => return Ok(status),
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "pypi-attestations did not finish verifying {fname}"
+                ));
+            }
+            None => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
 }
 
 pub fn verify_attestations(file: &Path, provenance: &Path, repository: &str) -> Result<()> {
@@ -212,53 +248,29 @@ pub fn verify_attestations(file: &Path, provenance: &Path, repository: &str) -> 
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("pypi-attestations could not be run: {e}"))?;
-
     let mut out_pipe = child.stdout.take().expect("piped stdout");
     let mut err_pipe = child.stderr.take().expect("piped stderr");
-    let out_thread = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        out_pipe.read_to_end(&mut buf)?;
-        Ok(buf)
-    });
-    let err_thread = std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        err_pipe.read_to_end(&mut buf)?;
-        Ok(buf)
-    });
-
-    let deadline = Instant::now() + Duration::from_secs(600);
-    let status = loop {
-        match child.try_wait().map_err(|e| e.to_string())? {
-            Some(status) => break status,
-            None if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = out_thread.join();
-                let _ = err_thread.join();
-                let fname = file
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                return Err(format!(
-                    "pypi-attestations did not finish verifying {fname}"
-                ));
-            }
-            None => std::thread::sleep(Duration::from_millis(10)),
+    let out_thread = std::thread::spawn(move || std::io::read_to_string(&mut out_pipe));
+    let err_thread = std::thread::spawn(move || std::io::read_to_string(&mut err_pipe));
+    let fname = file
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let status = match wait_attestation_child(&mut child, Duration::from_secs(600), &fname) {
+        Ok(status) => status,
+        Err(err) => {
+            let _ = out_thread.join();
+            let _ = err_thread.join();
+            return Err(err);
         }
     };
-
     let _ = out_thread.join();
-    let stderr_raw = err_thread.join().unwrap().map_err(|e| e.to_string())?;
+    let stderr = err_thread.join().unwrap().map_err(|e| e.to_string())?;
     if !status.success() {
-        let stderr = String::from_utf8_lossy(&stderr_raw);
         let reason = py::splitlines(py::strip(&stderr))
             .last()
             .copied()
             .unwrap_or("no message");
-        let fname = file
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
         return Err(format!("provenance for {fname} does not verify: {reason}"));
     }
     Ok(())
@@ -445,6 +457,62 @@ fn publisher_repr(publisher: Option<&Json>) -> String {
     format!("{{{}}}", items.join(", "))
 }
 
+fn check_bundle_publisher(
+    bundle: &Json,
+    name: &str,
+    repository: &str,
+    workflow: &str,
+    expected: &str,
+) -> Result<()> {
+    let publisher = bundle
+        .get("publisher")
+        .filter(|p| matches!(p, Json::Object(_)));
+    let actual_matches = publisher.is_some_and(|p| {
+        p.get("kind").and_then(Json::as_str) == Some("GitHub")
+            && p.get("repository").and_then(Json::as_str) == Some(repository)
+            && p.get("workflow").and_then(Json::as_str) == Some(workflow)
+    });
+    if !actual_matches {
+        return Err(format!(
+            "provenance for {name} names publisher {}, expected {expected}",
+            publisher_repr(publisher)
+        ));
+    }
+    Ok(())
+}
+
+fn check_bundle_attestations(bundle: &Json, name: &str, commit: &str) -> Result<()> {
+    let Some(attestations) = bundle
+        .get("attestations")
+        .and_then(Json::as_array)
+        .filter(|a| !a.is_empty())
+    else {
+        return Err(format!(
+            "provenance for {name} has a bundle with no attestations"
+        ));
+    };
+    for attestation in attestations {
+        let Some(cert_b64) = attestation
+            .get("verification_material")
+            .and_then(|vm| vm.get("certificate"))
+            .and_then(Json::as_str)
+        else {
+            return Err(format!("provenance for {name} has no readable certificate"));
+        };
+        let Some(der) = decode_base64_strict(cert_b64) else {
+            return Err(format!("provenance for {name} has no readable certificate"));
+        };
+        let signed_at = certificate_commit(&der)?;
+        if signed_at.as_deref() != Some(commit) {
+            return Err(format!(
+                "provenance for {name} was signed at commit {}, expected {commit}",
+                signed_at.as_deref().unwrap_or("None")
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn check_provenance(
     raw: &[u8],
     name: &str,
@@ -475,48 +543,8 @@ fn check_provenance(
         py::repr_str(workflow)
     );
     for bundle in bundles {
-        let publisher = bundle
-            .get("publisher")
-            .filter(|p| matches!(p, Json::Object(_)));
-        let actual_matches = publisher.is_some_and(|p| {
-            p.get("kind").and_then(Json::as_str) == Some("GitHub")
-                && p.get("repository").and_then(Json::as_str) == Some(repository)
-                && p.get("workflow").and_then(Json::as_str) == Some(workflow)
-        });
-        if !actual_matches {
-            return Err(format!(
-                "provenance for {name} names publisher {}, expected {expected}",
-                publisher_repr(publisher)
-            ));
-        }
-        let Some(attestations) = bundle
-            .get("attestations")
-            .and_then(Json::as_array)
-            .filter(|a| !a.is_empty())
-        else {
-            return Err(format!(
-                "provenance for {name} has a bundle with no attestations"
-            ));
-        };
-        for attestation in attestations {
-            let Some(cert_b64) = attestation
-                .get("verification_material")
-                .and_then(|vm| vm.get("certificate"))
-                .and_then(Json::as_str)
-            else {
-                return Err(format!("provenance for {name} has no readable certificate"));
-            };
-            let Some(der) = decode_base64_strict(cert_b64) else {
-                return Err(format!("provenance for {name} has no readable certificate"));
-            };
-            let signed_at = certificate_commit(&der)?;
-            if signed_at.as_deref() != Some(commit) {
-                return Err(format!(
-                    "provenance for {name} was signed at commit {}, expected {commit}",
-                    signed_at.as_deref().unwrap_or("None")
-                ));
-            }
-        }
+        check_bundle_publisher(bundle, name, repository, workflow, &expected)?;
+        check_bundle_attestations(bundle, name, commit)?;
     }
     Ok(())
 }
@@ -603,6 +631,85 @@ pub type FetchFn<'a> = dyn FnMut(&str, &str) -> Result<Option<Vec<u8>>> + 'a;
 pub type VerifyFn<'a> = dyn FnMut(&Path, &Path, &str) -> Result<()> + 'a;
 pub type SleepFn<'a> = dyn FnMut(Duration) + 'a;
 
+fn built_digests(built: &BTreeMap<String, PathBuf>) -> Result<BTreeMap<String, String>> {
+    let mut digests = BTreeMap::new();
+    for (name, path) in built {
+        let bytes = read_bytes(path)?;
+        let hex: String = Sha256::digest(&bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        digests.insert(name.clone(), hex);
+    }
+    Ok(digests)
+}
+
+fn poll_release_files(
+    release_url: &str,
+    label: &str,
+    built_keys: &BTreeSet<&str>,
+    config: &Config,
+    get: &mut FetchFn<'_>,
+    sleep: &mut SleepFn<'_>,
+) -> Result<BTreeMap<String, String>> {
+    let mut served = None;
+    for attempt in 0..config.attempts {
+        let raw = get(release_url, "application/json")?;
+        served = match raw {
+            None => None,
+            Some(bytes) => Some(served_files(&bytes, label)?),
+        };
+        if let Some(ref map) = served {
+            let served_keys: BTreeSet<&str> = map.keys().map(String::as_str).collect();
+            if !served_keys.is_subset(built_keys) || built_keys.is_subset(&served_keys) {
+                break;
+            }
+        }
+        if attempt + 1 < config.attempts {
+            sleep(config.delay);
+        }
+    }
+    served.ok_or_else(|| format!("PyPI does not serve {label}"))
+}
+
+struct ProvenanceExpectation<'a> {
+    base_url: &'a str,
+    normalised: &'a str,
+    version: &'a str,
+    repository: &'a str,
+    commit: &'a str,
+    workflow: &'a str,
+}
+
+fn verify_all_provenances(
+    built: &BTreeMap<String, PathBuf>,
+    expect: &ProvenanceExpectation<'_>,
+    get: &mut FetchFn<'_>,
+    verify: &mut VerifyFn<'_>,
+) -> Result<()> {
+    let scratch = tempfile::tempdir().map_err(|e| e.to_string())?;
+    for (name, file_path) in built {
+        let url = format!(
+            "{}/integrity/{}/{}/{}/provenance",
+            expect.base_url, expect.normalised, expect.version, name
+        );
+        let Some(raw) = get(&url, INTEGRITY_ACCEPT)? else {
+            return Err(format!("PyPI serves no provenance for {name}"));
+        };
+        check_provenance(
+            &raw,
+            name,
+            expect.repository,
+            expect.commit,
+            expect.workflow,
+        )?;
+        let prov_path = scratch.path().join(format!("{name}.provenance"));
+        write_bytes(&prov_path, &raw)?;
+        verify(file_path, &prov_path, expect.repository)?;
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn verify_publication_with(
     project: &str,
@@ -618,59 +725,22 @@ pub fn verify_publication_with(
 ) -> Result<String> {
     check_names(project, version, repository, commit, workflow)?;
     let built = built_files(files)?;
-    let mut digests = BTreeMap::new();
-    for (name, path) in &built {
-        let bytes = read_bytes(path)?;
-        let hex: String = Sha256::digest(&bytes)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        digests.insert(name.clone(), hex);
-    }
-
+    let digests = built_digests(&built)?;
     let normalised = NORMALISE_RE.replace_all(project, "-").to_ascii_lowercase();
     let label = format!("{normalised} {version}");
     let built_keys: BTreeSet<&str> = built.keys().map(String::as_str).collect();
     let release_url = format!("{}/pypi/{normalised}/{version}/json", config.base_url);
-
-    let mut served = None;
-    for attempt in 0..config.attempts {
-        let raw = get(&release_url, "application/json")?;
-        served = match raw {
-            None => None,
-            Some(bytes) => Some(served_files(&bytes, &label)?),
-        };
-        if let Some(ref map) = served {
-            let served_keys: BTreeSet<&str> = map.keys().map(String::as_str).collect();
-            let has_extra = !served_keys.is_subset(&built_keys);
-            let has_all_built = built_keys.is_subset(&served_keys);
-            if has_extra || has_all_built {
-                break;
-            }
-        }
-        if attempt + 1 < config.attempts {
-            sleep(config.delay);
-        }
-    }
-    let Some(served_map) = served else {
-        return Err(format!("PyPI does not serve {label}"));
-    };
+    let served_map = poll_release_files(&release_url, &label, &built_keys, config, get, sleep)?;
     compare_served(&served_map, &digests, &label)?;
-
-    let scratch = tempfile::tempdir().map_err(|e| e.to_string())?;
-    for (name, file_path) in &built {
-        let url = format!(
-            "{}/integrity/{normalised}/{version}/{name}/provenance",
-            config.base_url
-        );
-        let Some(raw) = get(&url, INTEGRITY_ACCEPT)? else {
-            return Err(format!("PyPI serves no provenance for {name}"));
-        };
-        check_provenance(&raw, name, repository, commit, workflow)?;
-        let prov_path = scratch.path().join(format!("{name}.provenance"));
-        write_bytes(&prov_path, &raw)?;
-        verify(file_path, &prov_path, repository)?;
-    }
+    let expect = ProvenanceExpectation {
+        base_url: &config.base_url,
+        normalised: &normalised,
+        version,
+        repository,
+        commit,
+        workflow,
+    };
+    verify_all_provenances(&built, &expect, get, verify)?;
     let names_joined = built.keys().cloned().collect::<Vec<_>>().join(", ");
     Ok(format!(
         "verify_pypi: PyPI serves {label} as built, with provenance from {repository} at {commit}: {names_joined}"

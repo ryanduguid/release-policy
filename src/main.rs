@@ -99,28 +99,79 @@ enum Command {
     },
     /// Read a publication back from PyPI and compare it with the files that were built (scripts/verify_pypi.py)
     #[command(name = "verify-pypi", alias = "verify_pypi")]
-    VerifyPypi {
-        #[arg(long)]
-        project: String,
-        #[arg(long)]
-        version: String,
-        #[arg(long)]
-        repository: String,
-        #[arg(long)]
-        commit: String,
-        #[arg(long)]
-        workflow: String,
-        #[arg(long = "file", action = clap::ArgAction::Append, required = true)]
-        files: Vec<String>,
-        #[arg(long, hide = true)]
-        base_url: Option<String>,
-        #[arg(long, hide = true)]
-        attempts: Option<usize>,
-        #[arg(long, hide = true)]
-        delay_ms: Option<u64>,
-        #[arg(long, hide = true)]
-        ca_cert: Option<PathBuf>,
-    },
+    VerifyPypi(VerifyPypiArgs),
+}
+
+#[derive(Args)]
+struct VerifyPypiArgs {
+    #[arg(long)]
+    project: String,
+    #[arg(long)]
+    version: String,
+    #[arg(long)]
+    repository: String,
+    #[arg(long)]
+    commit: String,
+    #[arg(long)]
+    workflow: String,
+    #[arg(long = "file", action = clap::ArgAction::Append, required = true)]
+    files: Vec<String>,
+    #[arg(long, hide = true)]
+    base_url: Option<String>,
+    #[arg(long, hide = true)]
+    attempts: Option<usize>,
+    #[arg(long, hide = true)]
+    delay_ms: Option<u64>,
+    #[arg(long, hide = true)]
+    ca_cert: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct BinaryPackageArgs {
+    #[arg(long)]
+    binary: String,
+    #[arg(long)]
+    target: String,
+    #[arg(long)]
+    stem: String,
+    #[arg(long)]
+    version: String,
+    #[arg(long, allow_hyphen_values = true)]
+    epoch: String,
+    #[arg(long)]
+    executables: String,
+    #[arg(long)]
+    source: String,
+    #[arg(long)]
+    root: String,
+    #[arg(long)]
+    output_dir: String,
+    #[arg(long, default_value = "")]
+    data_files: String,
+}
+
+#[derive(Args)]
+struct BinaryReceiveArgs {
+    #[arg(long)]
+    stem: String,
+    #[arg(long)]
+    version: String,
+    #[arg(long)]
+    binary: String,
+    #[arg(long)]
+    target: String,
+    #[arg(long)]
+    incoming: String,
+    #[arg(long)]
+    dist: String,
+    #[arg(long)]
+    extract_dir: String,
+    #[arg(long)]
+    source: String,
+    #[arg(long)]
+    root: String,
+    #[arg(long, default_value = "")]
+    data_files: String,
 }
 
 #[derive(Subcommand)]
@@ -139,28 +190,7 @@ enum BinaryReleaseCommand {
         #[arg(long)]
         root: String,
     },
-    Package {
-        #[arg(long)]
-        binary: String,
-        #[arg(long)]
-        target: String,
-        #[arg(long)]
-        stem: String,
-        #[arg(long)]
-        version: String,
-        #[arg(long, allow_hyphen_values = true)]
-        epoch: String,
-        #[arg(long)]
-        executables: String,
-        #[arg(long)]
-        source: String,
-        #[arg(long)]
-        root: String,
-        #[arg(long)]
-        output_dir: String,
-        #[arg(long, default_value = "")]
-        data_files: String,
-    },
+    Package(BinaryPackageArgs),
     Verify {
         #[arg(long)]
         binary: String,
@@ -173,28 +203,7 @@ enum BinaryReleaseCommand {
         #[arg(long, default_value = "")]
         data_files: String,
     },
-    Receive {
-        #[arg(long)]
-        stem: String,
-        #[arg(long)]
-        version: String,
-        #[arg(long)]
-        binary: String,
-        #[arg(long)]
-        target: String,
-        #[arg(long)]
-        incoming: String,
-        #[arg(long)]
-        dist: String,
-        #[arg(long)]
-        extract_dir: String,
-        #[arg(long)]
-        source: String,
-        #[arg(long)]
-        root: String,
-        #[arg(long, default_value = "")]
-        data_files: String,
-    },
+    Receive(BinaryReceiveArgs),
     Smoke {
         #[arg(long)]
         version: String,
@@ -384,227 +393,291 @@ fn execute(cli: Cli) -> Result<i32> {
                 &source_directory,
             )?;
         }
-        Command::PythonRelease { command } => match command {
-            Release::Tag {
-                tag,
-                tag_prefix,
-                format,
-            } => {
-                let t = parse_release_tag(&tag, &tag_prefix)?;
-                output(
-                    &serde_json::json!({"artifact_tag":t.artifact_tag,"full_tag":t.full_tag,"tag_prefix":t.tag_prefix,"version":t.version,"version_tag":t.version_tag}),
-                    &[&t.version, &t.version_tag, &t.full_tag, &t.artifact_tag],
-                    &format,
-                );
-            }
-            Release::ValidateInputs {
-                root,
-                source_directory,
-                tag_prefix,
-                format,
-            } => {
-                let directory = validate_source_directory(&root, &source_directory)?;
-                validate_tag_prefix(&tag_prefix)?;
-                output(
-                    &serde_json::json!({"source_directory":directory,"tag_prefix":tag_prefix}),
-                    &[&directory, &tag_prefix],
-                    &format,
-                );
-            }
-            Release::Metadata {
-                root,
-                version_parser,
-                version_file,
-                format,
-            } => {
-                let v = derive_metadata(&root, &version_parser, &version_file)?;
-                output(
-                    &v,
-                    &[v["stem"].as_str().unwrap(), v["version"].as_str().unwrap()],
-                    &format,
-                );
-            }
-            Release::CreateCandidate(a) => {
-                write_candidate_inventory(&a.directory, &a.context())?;
-            }
-            Release::VerifyCandidate(a) => {
-                verify_candidate_inventory(&a.directory, &a.context())?;
-            }
-        },
-        Command::VerifySkills { command } => {
-            let result = match command {
-                Skills::GuardRelease { mode, tag } => {
-                    verify_skills::guard_skill_release(&mode, &tag)
-                }
-                Skills::Verify { mode, version_file } => verify_skills::verify_with(
-                    &cwd,
-                    &mode,
-                    &version_file,
-                    // The script ran its steps with its own interpreter; the
-                    // binary uses the `python` the caller put first on PATH.
-                    &verify_skills::python_on_path(),
-                    |args, root| {
-                        // Consumer Python test programs remain consumer-owned executables.
-                        let status = std::process::Command::new(&args[0])
-                            .args(&args[1..])
-                            .current_dir(root)
-                            .status()
-                            .map_err(|e| e.to_string())?;
-                        if !status.success() {
-                            let command = args
-                                .iter()
-                                .map(|a| release_policy::py::repr_str(a))
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            return Err(format!(
-                                "Command '({command})' returned non-zero exit status {}.",
-                                status.code().unwrap_or(1)
-                            ));
-                        }
-                        Ok(())
-                    },
-                ),
-            };
-            if let Err(e) = result {
-                print(&format!("verify_skills: {e}\n"), true);
-                return Ok(1);
-            }
-        }
+        Command::PythonRelease { command } => run_python_release(command)?,
+        Command::VerifySkills { command } => return Ok(run_verify_skills(&cwd, command)),
         Command::Init {
             family,
             required_checks,
             artifact_stem,
             version_file,
             force,
+        } => print(
+            &release_policy::init::init(
+                &cwd,
+                &release_policy::init::Options {
+                    family,
+                    required_checks,
+                    artifact_stem,
+                    version_file,
+                    force,
+                },
+            )?,
+            false,
+        ),
+        Command::PinFamilies { revisions } => return Ok(run_pin_families(&cwd, &revisions)),
+        Command::RepinIssue { command } => return run_repin_issue(&cwd, command),
+        Command::BinaryRelease { command } => return Ok(exec_binary_release(command)),
+        Command::VerifyPypi(args) => return Ok(run_verify_pypi(args)),
+    }
+    Ok(0)
+}
+
+fn run_python_release(command: Release) -> Result<()> {
+    match command {
+        Release::Tag {
+            tag,
+            tag_prefix,
+            format,
         } => {
-            let options = release_policy::init::Options {
-                family,
-                required_checks,
-                artifact_stem,
-                version_file,
-                force,
-            };
-            print(&release_policy::init::init(&cwd, &options)?, false);
+            let t = parse_release_tag(&tag, &tag_prefix)?;
+            output(
+                &serde_json::json!({"artifact_tag":t.artifact_tag,"full_tag":t.full_tag,"tag_prefix":t.tag_prefix,"version":t.version,"version_tag":t.version_tag}),
+                &[&t.version, &t.version_tag, &t.full_tag, &t.artifact_tag],
+                &format,
+            );
         }
-        Command::PinFamilies { revisions } => {
-            if revisions.len() != 2 {
-                print(&format!("{}\n", pin_families::USAGE), true);
-                return Ok(2);
-            }
-            match pin_families::changed(&revisions[0], &revisions[1], &cwd) {
-                Ok(families) => print(&pin_families::report(&families), false),
-                Err(e) => {
-                    print(&format!("pin_families: {e}\n"), true);
-                    return Ok(1);
-                }
-            }
+        Release::ValidateInputs {
+            root,
+            source_directory,
+            tag_prefix,
+            format,
+        } => {
+            let directory = validate_source_directory(&root, &source_directory)?;
+            validate_tag_prefix(&tag_prefix)?;
+            output(
+                &serde_json::json!({"source_directory":directory,"tag_prefix":tag_prefix}),
+                &[&directory, &tag_prefix],
+                &format,
+            );
         }
-        Command::RepinIssue { command } => match command {
-            RepinIssueCommand::Prepare { target, patch } => {
-                match repin_issue::prepare(&cwd, &target, &patch)? {
-                    None => print("attribution pin is current\n", false),
-                    Some(stale) => print(
-                        &format!(
-                            "attribution pin {stale} is stale; wrote {}\n",
-                            patch.display()
-                        ),
-                        false,
-                    ),
+        Release::Metadata {
+            root,
+            version_parser,
+            version_file,
+            format,
+        } => {
+            let v = derive_metadata(&root, &version_parser, &version_file)?;
+            output(
+                &v,
+                &[v["stem"].as_str().unwrap(), v["version"].as_str().unwrap()],
+                &format,
+            );
+        }
+        Release::CreateCandidate(a) => {
+            write_candidate_inventory(&a.directory, &a.context())?;
+        }
+        Release::VerifyCandidate(a) => {
+            verify_candidate_inventory(&a.directory, &a.context())?;
+        }
+    }
+    Ok(())
+}
+
+fn run_verify_skills(cwd: &std::path::Path, command: Skills) -> i32 {
+    let result = match command {
+        Skills::GuardRelease { mode, tag } => verify_skills::guard_skill_release(&mode, &tag),
+        Skills::Verify { mode, version_file } => verify_skills::verify_with(
+            cwd,
+            &mode,
+            &version_file,
+            &verify_skills::python_on_path(),
+            |args, root| {
+                let status = std::process::Command::new(&args[0])
+                    .args(&args[1..])
+                    .current_dir(root)
+                    .status()
+                    .map_err(|e| e.to_string())?;
+                if !status.success() {
+                    let command = args
+                        .iter()
+                        .map(|a| release_policy::py::repr_str(a))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(format!(
+                        "Command '({command})' returned non-zero exit status {}.",
+                        status.code().unwrap_or(1)
+                    ));
                 }
-            }
-            RepinIssueCommand::Publish {
-                repository,
-                target,
-                patch,
-                current,
-            } => {
-                if !repin_issue::unchanged_since(&cwd, &target, &current)? {
+                Ok(())
+            },
+        ),
+    };
+    if let Err(e) = result {
+        print(&format!("verify_skills: {e}\n"), true);
+        return 1;
+    }
+    0
+}
+
+fn run_pin_families(cwd: &std::path::Path, revisions: &[String]) -> i32 {
+    if revisions.len() != 2 {
+        print(&format!("{}\n", pin_families::USAGE), true);
+        return 2;
+    }
+    match pin_families::changed(&revisions[0], &revisions[1], cwd) {
+        Ok(families) => {
+            print(&pin_families::report(&families), false);
+            0
+        }
+        Err(e) => {
+            print(&format!("pin_families: {e}\n"), true);
+            1
+        }
+    }
+}
+
+fn run_repin_issue(cwd: &std::path::Path, command: RepinIssueCommand) -> Result<i32> {
+    match command {
+        RepinIssueCommand::Prepare { target, patch } => {
+            match repin_issue::prepare(cwd, &target, &patch)? {
+                None => print("attribution pin is current\n", false),
+                Some(stale) => {
+                    let disp = release_policy::py::PyPath::new(&patch.to_string_lossy());
                     print(
-                        &format!(
-                            "main no longer descends from {target} with the same action and workflow; rerun this workflow to repin to main\n"
-                        ),
-                        true,
+                        &format!("attribution pin {stale} is stale; wrote {disp}\n"),
+                        false,
                     );
-                    return Ok(1);
                 }
-                let patch_bytes = read_bytes(&patch)?;
-                let patch_text =
-                    release_policy::py::decode_utf8(&patch_bytes).map_err(|e| e.to_string())?;
-                let summary = repin_issue::publish(
-                    &repository,
-                    &target,
-                    &patch_text,
-                    &mut repin_issue::system_gh,
-                )?;
-                print(&format!("{summary}\n"), false);
             }
-        },
-        Command::BinaryRelease { command } => match run_binary_release(command) {
-            Ok(out) => print(&format!("{out}\n"), false),
-            Err(e) => {
-                print(&format!("binary_release: {e}\n"), true);
+        }
+        RepinIssueCommand::Publish {
+            repository,
+            target,
+            patch,
+            current,
+        } => {
+            if !repin_issue::unchanged_since(cwd, &target, &current)? {
+                print(
+                    &format!(
+                        "main no longer descends from {target} with the same action and workflow; rerun this workflow to repin to main\n"
+                    ),
+                    true,
+                );
                 return Ok(1);
             }
-        },
-        Command::VerifyPypi {
-            project,
-            version,
-            repository,
-            commit,
-            workflow,
-            files,
-            base_url,
-            attempts,
-            delay_ms,
-            ca_cert,
-        } => {
-            let result = (|| -> Result<String> {
-                let mut config = verify_pypi::Config::default();
-                if let Some(url) = base_url {
-                    if !full(r"https?://127\.0\.0\.1:[0-9]{1,5}", &url) {
-                        return Err("--base-url is restricted to loopback addresses".into());
-                    }
-                    config.base_url = url;
-                }
-                if let Some(n) = attempts {
-                    config.attempts = n;
-                }
-                if let Some(ms) = delay_ms {
-                    config.delay = std::time::Duration::from_millis(ms);
-                }
-                if let Some(cert_path) = ca_cert {
-                    if !config.base_url.starts_with("https://127.0.0.1:") {
-                        return Err(
-                            "--ca-cert requires a loopback https://127.0.0.1:<port> --base-url"
-                                .into(),
-                        );
-                    }
-                    config.root_ca_pem = Some(read_bytes(&cert_path)?);
-                }
-                let py_files: Vec<release_policy::py::PyPath> = files
-                    .iter()
-                    .map(|s| release_policy::py::PyPath::new(s))
-                    .collect();
-                verify_pypi::verify_publication(
-                    &project,
-                    &version,
-                    &py_files,
-                    &repository,
-                    &commit,
-                    &workflow,
-                    &config,
-                )
-            })();
-            match result {
-                Ok(line) => print(&format!("{line}\n"), false),
-                Err(e) => {
-                    print(&format!("verify_pypi: {e}\n"), true);
-                    return Ok(1);
-                }
-            }
+            let patch_bytes = read_bytes(&patch)?;
+            let patch_text =
+                release_policy::py::decode_utf8(&patch_bytes).map_err(|e| e.to_string())?;
+            let summary = repin_issue::publish(
+                &repository,
+                &target,
+                &patch_text,
+                &mut repin_issue::system_gh,
+            )?;
+            print(&format!("{summary}\n"), false);
         }
     }
     Ok(0)
+}
+
+fn build_verify_pypi_config(args: &VerifyPypiArgs) -> Result<verify_pypi::Config> {
+    let mut config = verify_pypi::Config::default();
+    if let Some(url) = &args.base_url {
+        if !full(r"https?://127\.0\.0\.1:[0-9]{1,5}", url) {
+            return Err("--base-url is restricted to loopback addresses".into());
+        }
+        config.base_url = url.clone();
+    }
+    if let Some(n) = args.attempts {
+        config.attempts = n;
+    }
+    if let Some(ms) = args.delay_ms {
+        config.delay = std::time::Duration::from_millis(ms);
+    }
+    if let Some(cert_path) = &args.ca_cert {
+        if !config.base_url.starts_with("https://127.0.0.1:") {
+            return Err("--ca-cert requires a loopback https://127.0.0.1:<port> --base-url".into());
+        }
+        config.root_ca_pem = Some(read_bytes(cert_path)?);
+    }
+    Ok(config)
+}
+
+fn run_verify_pypi(args: VerifyPypiArgs) -> i32 {
+    let result = (|| -> Result<String> {
+        let config = build_verify_pypi_config(&args)?;
+        let py_files: Vec<release_policy::py::PyPath> = args
+            .files
+            .iter()
+            .map(|s| release_policy::py::PyPath::new(s))
+            .collect();
+        verify_pypi::verify_publication(
+            &args.project,
+            &args.version,
+            &py_files,
+            &args.repository,
+            &args.commit,
+            &args.workflow,
+            &config,
+        )
+    })();
+    match result {
+        Ok(line) => {
+            print(&format!("{line}\n"), false);
+            0
+        }
+        Err(e) => {
+            print(&format!("verify_pypi: {e}\n"), true);
+            1
+        }
+    }
+}
+
+fn exec_binary_release(command: BinaryReleaseCommand) -> i32 {
+    match run_binary_release(command) {
+        Ok(out) => {
+            print(&format!("{out}\n"), false);
+            0
+        }
+        Err(e) => {
+            print(&format!("binary_release: {e}\n"), true);
+            1
+        }
+    }
+}
+
+fn run_binary_package(a: BinaryPackageArgs) -> Result<String> {
+    if a.epoch.is_empty() || !a.epoch.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(format!(
+            "epoch is not a Unix time: {}",
+            release_policy::py::repr_str(&a.epoch)
+        ));
+    }
+    let epoch: u64 = a.epoch.parse().map_err(|_| {
+        format!(
+            "epoch is not a Unix time: {}",
+            release_policy::py::repr_str(&a.epoch)
+        )
+    })?;
+    let path = binary_release::package(
+        &binary_release::confined_path(&a.executables)?,
+        &a.binary,
+        &a.target,
+        &a.stem,
+        &a.version,
+        &binary_release::confined_path(&a.source)?,
+        &binary_release::confined_path(&a.root)?,
+        epoch,
+        &binary_release::confined_path(&a.output_dir)?,
+        &a.data_files,
+    )?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+fn run_binary_receive(a: BinaryReceiveArgs) -> Result<String> {
+    let path = binary_release::receive(
+        &binary_release::confined_path(&a.incoming)?,
+        &a.stem,
+        &a.version,
+        &a.binary,
+        &a.target,
+        &binary_release::confined_path(&a.dist)?,
+        &binary_release::confined_path(&a.extract_dir)?,
+        &binary_release::confined_path(&a.source)?,
+        &binary_release::confined_path(&a.root)?,
+        &a.data_files,
+    )?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 fn run_binary_release(command: BinaryReleaseCommand) -> Result<String> {
@@ -622,44 +695,7 @@ fn run_binary_release(command: BinaryReleaseCommand) -> Result<String> {
             &binary_release::confined_path(&source)?,
             &binary_release::confined_path(&root)?,
         ),
-        BinaryReleaseCommand::Package {
-            binary,
-            target,
-            stem,
-            version,
-            epoch,
-            executables,
-            source,
-            root,
-            output_dir,
-            data_files,
-        } => {
-            if epoch.is_empty() || !epoch.bytes().all(|b| b.is_ascii_digit()) {
-                return Err(format!(
-                    "epoch is not a Unix time: {}",
-                    release_policy::py::repr_str(&epoch)
-                ));
-            }
-            let epoch: u64 = epoch.parse().map_err(|_| {
-                format!(
-                    "epoch is not a Unix time: {}",
-                    release_policy::py::repr_str(&epoch)
-                )
-            })?;
-            let path = binary_release::package(
-                &binary_release::confined_path(&executables)?,
-                &binary,
-                &target,
-                &stem,
-                &version,
-                &binary_release::confined_path(&source)?,
-                &binary_release::confined_path(&root)?,
-                epoch,
-                &binary_release::confined_path(&output_dir)?,
-                &data_files,
-            )?;
-            Ok(path.to_string_lossy().into_owned())
-        }
+        BinaryReleaseCommand::Package(a) => run_binary_package(a),
         BinaryReleaseCommand::Verify {
             binary,
             target,
@@ -667,10 +703,10 @@ fn run_binary_release(command: BinaryReleaseCommand) -> Result<String> {
             extract_dir,
             data_files,
         } => {
-            let extract = match extract_dir {
-                Some(raw) => Some(binary_release::confined_path(&raw)?),
-                None => None,
-            };
+            let extract = extract_dir
+                .as_deref()
+                .map(binary_release::confined_path)
+                .transpose()?;
             Ok(binary_release::verify(
                 &binary_release::confined_path(&archive)?,
                 &binary,
@@ -680,32 +716,13 @@ fn run_binary_release(command: BinaryReleaseCommand) -> Result<String> {
             )?
             .join("\n"))
         }
-        BinaryReleaseCommand::Receive {
-            stem,
-            version,
-            binary,
-            target,
-            incoming,
-            dist,
-            extract_dir,
-            source,
-            root,
-            data_files,
-        } => {
-            let path = binary_release::receive(
-                &binary_release::confined_path(&incoming)?,
-                &stem,
-                &version,
-                &binary,
-                &target,
-                &binary_release::confined_path(&dist)?,
-                &binary_release::confined_path(&extract_dir)?,
-                &binary_release::confined_path(&source)?,
-                &binary_release::confined_path(&root)?,
-                &data_files,
-            )?;
-            Ok(path.to_string_lossy().into_owned())
-        }
+        BinaryReleaseCommand::Receive(a) => run_binary_receive(a),
+        other => run_binary_inspect(other),
+    }
+}
+
+fn run_binary_inspect(command: BinaryReleaseCommand) -> Result<String> {
+    match command {
         BinaryReleaseCommand::Smoke {
             version,
             executable,
@@ -729,6 +746,12 @@ fn run_binary_release(command: BinaryReleaseCommand) -> Result<String> {
             }
             Ok(format!("{} lists {package}", py_sbom.name()))
         }
+        other => run_binary_handoff(other),
+    }
+}
+
+fn run_binary_handoff(command: BinaryReleaseCommand) -> Result<String> {
+    match command {
         BinaryReleaseCommand::Digests {
             stem,
             version,
@@ -764,6 +787,7 @@ fn run_binary_release(command: BinaryReleaseCommand) -> Result<String> {
                 .collect::<Vec<_>>()
                 .join("\n"))
         }
+        _ => unreachable!(),
     }
 }
 

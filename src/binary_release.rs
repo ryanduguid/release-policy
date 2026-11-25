@@ -277,15 +277,7 @@ fn read_toml(path: &Path, label: &str) -> Result<toml::Value> {
     toml::from_str::<toml::Value>(&text).map_err(|e| format!("{label}: {e}"))
 }
 
-pub fn cargo_package(manifest: &Path, release_version: &str, binary: &str) -> Result<String> {
-    let mdisp = manifest.display();
-    if symlink(manifest) {
-        return Err(format!("{mdisp} must not be a symbolic link"));
-    }
-    let document = read_toml(
-        manifest,
-        &format!("{mdisp} is not a readable Cargo manifest"),
-    )?;
+fn package_meta<'a>(document: &'a toml::Value, mdisp: &str) -> Result<(&'a str, &'a str)> {
     let Some(package) = document.get("package").and_then(toml::Value::as_table) else {
         return Err(format!("{mdisp} has no [package] table"));
     };
@@ -299,19 +291,16 @@ pub fn cargo_package(manifest: &Path, release_version: &str, binary: &str) -> Re
             "{mdisp} must state a literal package name and version; workspace inheritance is not supported"
         ));
     };
-    checked(&VERSION_RE, version, &format!("{mdisp} package version"))?;
-    if version != release_version {
-        return Err(format!(
-            "Cargo.toml version {version} != release version {release_version}"
-        ));
-    }
     if package.get("publish").and_then(toml::Value::as_bool) != Some(false) {
         return Err(format!(
             "{mdisp} must set publish = false: binaries ship on GitHub Releases only"
         ));
     }
-    let mut declared: HashSet<&str> = HashSet::new();
-    declared.insert(name);
+    Ok((name, version))
+}
+
+fn declared_bins<'a>(document: &'a toml::Value, name: &'a str) -> HashSet<&'a str> {
+    let mut declared = HashSet::from([name]);
     if let Some(bins) = document.get("bin").and_then(toml::Value::as_array) {
         for item in bins {
             if let Some(bin_name) = item
@@ -323,6 +312,26 @@ pub fn cargo_package(manifest: &Path, release_version: &str, binary: &str) -> Re
             }
         }
     }
+    declared
+}
+
+pub fn cargo_package(manifest: &Path, release_version: &str, binary: &str) -> Result<String> {
+    let mdisp = manifest.display();
+    if symlink(manifest) {
+        return Err(format!("{mdisp} must not be a symbolic link"));
+    }
+    let document = read_toml(
+        manifest,
+        &format!("{mdisp} is not a readable Cargo manifest"),
+    )?;
+    let (name, version) = package_meta(&document, &mdisp.to_string())?;
+    checked(&VERSION_RE, version, &format!("{mdisp} package version"))?;
+    if version != release_version {
+        return Err(format!(
+            "Cargo.toml version {version} != release version {release_version}"
+        ));
+    }
+    let declared = declared_bins(&document, name);
     for each in binaries(binary)? {
         if !declared.contains(each.as_str()) {
             return Err(format!(
@@ -539,68 +548,64 @@ fn dos_datetime(epoch: u64) -> (u16, u16) {
     (dos_time, dos_date)
 }
 
-fn write_zip(output: &Path, members: &[(String, Vec<u8>, u32)], epoch: u64) -> Result<()> {
-    let (dos_time, dos_date) = dos_datetime(epoch);
-    let mut out = create_exclusive(output)?;
-    let mut buf = Vec::new();
-    let mut central = Vec::new();
+fn write_zip_local(
+    buf: &mut Vec<u8>,
+    name: &[u8],
+    compressed: &[u8],
+    uncomp_len: u32,
+    crc: u32,
+    dos: (u16, u16),
+) {
+    let flags: u16 = if name.is_ascii() { 0 } else { 0x800 };
+    buf.extend_from_slice(b"PK\x03\x04");
+    buf.extend_from_slice(&20u16.to_le_bytes());
+    buf.extend_from_slice(&flags.to_le_bytes());
+    buf.extend_from_slice(&8u16.to_le_bytes());
+    buf.extend_from_slice(&dos.0.to_le_bytes());
+    buf.extend_from_slice(&dos.1.to_le_bytes());
+    buf.extend_from_slice(&crc.to_le_bytes());
+    buf.extend_from_slice(&(compressed.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&uncomp_len.to_le_bytes());
+    buf.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    buf.extend_from_slice(&0u16.to_le_bytes());
+    buf.extend_from_slice(name);
+    buf.extend_from_slice(compressed);
+}
 
-    for (name, data, mode) in members {
-        let local_offset = buf.len() as u32;
-        let name_bytes = name.as_bytes();
-        let flags: u16 = if name.is_ascii() { 0 } else { 0x800 };
-        let mut hasher = Hasher::new();
-        hasher.update(data);
-        let crc = hasher.finalize();
+#[allow(clippy::too_many_arguments)]
+fn write_zip_central(
+    central: &mut Vec<u8>,
+    name: &[u8],
+    comp_len: u32,
+    uncomp_len: u32,
+    crc: u32,
+    mode: u32,
+    local_offset: u32,
+    dos: (u16, u16),
+) {
+    let flags: u16 = if name.is_ascii() { 0 } else { 0x800 };
+    let ext_attr: u32 = (0o100000 | mode) << 16;
+    central.extend_from_slice(b"PK\x01\x02");
+    central.extend_from_slice(&((3u16 << 8) | 20u16).to_le_bytes());
+    central.extend_from_slice(&20u16.to_le_bytes());
+    central.extend_from_slice(&flags.to_le_bytes());
+    central.extend_from_slice(&8u16.to_le_bytes());
+    central.extend_from_slice(&dos.0.to_le_bytes());
+    central.extend_from_slice(&dos.1.to_le_bytes());
+    central.extend_from_slice(&crc.to_le_bytes());
+    central.extend_from_slice(&comp_len.to_le_bytes());
+    central.extend_from_slice(&uncomp_len.to_le_bytes());
+    central.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    central.extend_from_slice(&[0u8; 8]);
+    central.extend_from_slice(&ext_attr.to_le_bytes());
+    central.extend_from_slice(&local_offset.to_le_bytes());
+    central.extend_from_slice(name);
+}
 
-        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(data).map_err(|e| e.to_string())?;
-        let compressed = encoder.finish().map_err(|e| e.to_string())?;
-        let comp_len = compressed.len() as u32;
-        let uncomp_len = data.len() as u32;
-        let name_len = name_bytes.len() as u16;
-
-        // Local file header (30 bytes + name)
-        buf.extend_from_slice(b"PK\x03\x04");
-        buf.extend_from_slice(&20u16.to_le_bytes()); // version needed
-        buf.extend_from_slice(&flags.to_le_bytes());
-        buf.extend_from_slice(&8u16.to_le_bytes()); // deflate
-        buf.extend_from_slice(&dos_time.to_le_bytes());
-        buf.extend_from_slice(&dos_date.to_le_bytes());
-        buf.extend_from_slice(&crc.to_le_bytes());
-        buf.extend_from_slice(&comp_len.to_le_bytes());
-        buf.extend_from_slice(&uncomp_len.to_le_bytes());
-        buf.extend_from_slice(&name_len.to_le_bytes());
-        buf.extend_from_slice(&0u16.to_le_bytes()); // extra len
-        buf.extend_from_slice(name_bytes);
-        buf.extend_from_slice(&compressed);
-
-        // Central directory header (46 bytes + name)
-        let ext_attr: u32 = (0o100000 | mode) << 16;
-        central.extend_from_slice(b"PK\x01\x02");
-        central.extend_from_slice(&((3u16 << 8) | 20u16).to_le_bytes()); // create_system=3, v20
-        central.extend_from_slice(&20u16.to_le_bytes());
-        central.extend_from_slice(&flags.to_le_bytes());
-        central.extend_from_slice(&8u16.to_le_bytes());
-        central.extend_from_slice(&dos_time.to_le_bytes());
-        central.extend_from_slice(&dos_date.to_le_bytes());
-        central.extend_from_slice(&crc.to_le_bytes());
-        central.extend_from_slice(&comp_len.to_le_bytes());
-        central.extend_from_slice(&uncomp_len.to_le_bytes());
-        central.extend_from_slice(&name_len.to_le_bytes());
-        central.extend_from_slice(&0u16.to_le_bytes()); // extra len
-        central.extend_from_slice(&0u16.to_le_bytes()); // comment len
-        central.extend_from_slice(&0u16.to_le_bytes()); // disk start
-        central.extend_from_slice(&0u16.to_le_bytes()); // int attr
-        central.extend_from_slice(&ext_attr.to_le_bytes());
-        central.extend_from_slice(&local_offset.to_le_bytes());
-        central.extend_from_slice(name_bytes);
-    }
-
+fn write_zip_eocd(buf: &mut Vec<u8>, central: &[u8], count: u16) {
     let cd_offset = buf.len() as u32;
     let cd_size = central.len() as u32;
-    let count = members.len() as u16;
-    buf.extend_from_slice(&central);
+    buf.extend_from_slice(central);
     buf.extend_from_slice(ZIP_END);
     buf.extend_from_slice(&0u16.to_le_bytes());
     buf.extend_from_slice(&0u16.to_le_bytes());
@@ -609,7 +614,35 @@ fn write_zip(output: &Path, members: &[(String, Vec<u8>, u32)], epoch: u64) -> R
     buf.extend_from_slice(&cd_size.to_le_bytes());
     buf.extend_from_slice(&cd_offset.to_le_bytes());
     buf.extend_from_slice(&0u16.to_le_bytes());
+}
 
+fn write_zip(output: &Path, members: &[(String, Vec<u8>, u32)], epoch: u64) -> Result<()> {
+    let dos = dos_datetime(epoch);
+    let mut out = create_exclusive(output)?;
+    let mut buf = Vec::new();
+    let mut central = Vec::new();
+    for (name, data, mode) in members {
+        let local_offset = buf.len() as u32;
+        let mut hasher = Hasher::new();
+        hasher.update(data);
+        let crc = hasher.finalize();
+        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(data).map_err(|e| e.to_string())?;
+        let compressed = encoder.finish().map_err(|e| e.to_string())?;
+        let uncomp_len = data.len() as u32;
+        write_zip_local(&mut buf, name.as_bytes(), &compressed, uncomp_len, crc, dos);
+        write_zip_central(
+            &mut central,
+            name.as_bytes(),
+            compressed.len() as u32,
+            uncomp_len,
+            crc,
+            *mode,
+            local_offset,
+            dos,
+        );
+    }
+    write_zip_eocd(&mut buf, &central, members.len() as u16);
     out.write_all(&buf)
         .map_err(|e| py::oserror_str(&e, &output.to_string_lossy(), OsStyle::Native))
 }
@@ -742,9 +775,88 @@ fn zip_directory_is_small(archive: &Path, archive_name: &str) -> Result<(u16, u3
     Ok((total, directory, cd_offset, size))
 }
 
-fn read_zip_members(archive: &Path) -> Result<BTreeMap<String, (Vec<u8>, u32)>> {
-    let archive_name = archive_filename(archive);
-    let (total, cd_size, cd_offset, file_size) = zip_directory_is_small(archive, &archive_name)?;
+struct ZipCdEntry {
+    name: String,
+    method: u16,
+    crc: u32,
+    comp_size: u32,
+    uncomp_size: u32,
+    ext_attr: u32,
+    local_off: u32,
+}
+
+fn check_zip_cd_flags(
+    extra: &[u8],
+    comp_size: u32,
+    uncomp_size: u32,
+    local_off: u32,
+    flag: u16,
+    name: &str,
+    archive_name: &str,
+) -> Result<()> {
+    if has_zip64_extra(extra)
+        || comp_size == u32::MAX
+        || uncomp_size == u32::MAX
+        || local_off == u32::MAX
+    {
+        return Err(format!(
+            "{archive_name} is a ZIP64 archive; release archives are not"
+        ));
+    }
+    if flag & 1 != 0 {
+        return Err(format!("{name}: encrypted ZIP entries are unsupported"));
+    }
+    Ok(())
+}
+
+fn parse_zip_cd_entry(cd: &[u8], pos: usize, archive_name: &str) -> Result<(ZipCdEntry, usize)> {
+    if pos + 46 > cd.len() || &cd[pos..pos + 4] != b"PK\x01\x02" {
+        return Err(format!(
+            "{archive_name}: malformed ZIP central directory entry"
+        ));
+    }
+    let flag = u16_le(cd, pos + 8);
+    let name_len = u16_le(cd, pos + 28) as usize;
+    let extra_len = u16_le(cd, pos + 30) as usize;
+    let end = pos + 46 + name_len + extra_len + u16_le(cd, pos + 32) as usize;
+    if end > cd.len() {
+        return Err(format!(
+            "{archive_name}: truncated ZIP central directory entry"
+        ));
+    }
+    let name_raw = &cd[pos + 46..pos + 46 + name_len];
+    let name = if flag & 0x800 != 0 {
+        py::decode_utf8(name_raw).map_err(|e| e.to_string())?
+    } else {
+        String::from_utf8_lossy(name_raw).into_owned()
+    };
+    let comp_size = u32_le(cd, pos + 20);
+    let uncomp_size = u32_le(cd, pos + 24);
+    let local_off = u32_le(cd, pos + 42);
+    let extra = &cd[pos + 46 + name_len..pos + 46 + name_len + extra_len];
+    check_zip_cd_flags(
+        extra,
+        comp_size,
+        uncomp_size,
+        local_off,
+        flag,
+        &name,
+        archive_name,
+    )?;
+    let entry = ZipCdEntry {
+        name,
+        method: u16_le(cd, pos + 10),
+        crc: u32_le(cd, pos + 16),
+        comp_size,
+        uncomp_size,
+        ext_attr: u32_le(cd, pos + 38),
+        local_off,
+    };
+    Ok((entry, end))
+}
+
+fn read_zip_central_dir(archive: &Path, archive_name: &str) -> Result<(File, u16, Vec<u8>, u64)> {
+    let (total, cd_size, cd_offset, file_size) = zip_directory_is_small(archive, archive_name)?;
     if u64::from(cd_offset) + u64::from(cd_size) > file_size {
         return Err(format!(
             "{archive_name}: malformed ZIP central directory offset"
@@ -757,73 +869,38 @@ fn read_zip_members(archive: &Path) -> Result<BTreeMap<String, (Vec<u8>, u32)>> 
     let mut cd = vec![0u8; cd_size as usize];
     file.read_exact(&mut cd)
         .map_err(|_| format!("{archive_name}: truncated ZIP central directory"))?;
+    Ok((file, total, cd, file_size))
+}
 
+fn read_zip_members(archive: &Path) -> Result<BTreeMap<String, (Vec<u8>, u32)>> {
+    let archive_name = archive_filename(archive);
+    let (mut file, total, cd, file_size) = read_zip_central_dir(archive, &archive_name)?;
     let mut pos = 0usize;
     let mut members = BTreeMap::new();
     let mut remaining_decompressed = MAX_DECOMPRESSED_BYTES;
-
     for _ in 0..total {
-        if pos + 46 > cd.len() || &cd[pos..pos + 4] != b"PK\x01\x02" {
-            return Err(format!(
-                "{archive_name}: malformed ZIP central directory entry"
-            ));
-        }
-        let flag = u16_le(&cd, pos + 8);
-        let method = u16_le(&cd, pos + 10);
-        let crc = u32_le(&cd, pos + 16);
-        let comp_size = u32_le(&cd, pos + 20);
-        let uncomp_size = u32_le(&cd, pos + 24);
-        let name_len = u16_le(&cd, pos + 28) as usize;
-        let extra_len = u16_le(&cd, pos + 30) as usize;
-        let comment_len = u16_le(&cd, pos + 32) as usize;
-        let ext_attr = u32_le(&cd, pos + 38);
-        let local_off = u32_le(&cd, pos + 42);
-        let end = pos + 46 + name_len + extra_len + comment_len;
-        if end > cd.len() {
-            return Err(format!(
-                "{archive_name}: truncated ZIP central directory entry"
-            ));
-        }
-        let name_raw = &cd[pos + 46..pos + 46 + name_len];
-        let name = if flag & 0x800 != 0 {
-            py::decode_utf8(name_raw).map_err(|e| e.to_string())?
-        } else {
-            // CP437 / UTF-8 fallback when ASCII
-            String::from_utf8_lossy(name_raw).into_owned()
-        };
-        let extra = &cd[pos + 46 + name_len..pos + 46 + name_len + extra_len];
-        pos = end;
-        if has_zip64_extra(extra)
-            || comp_size == u32::MAX
-            || uncomp_size == u32::MAX
-            || local_off == u32::MAX
-        {
-            return Err(format!(
-                "{archive_name} is a ZIP64 archive; release archives are not"
-            ));
-        }
-        if flag & 1 != 0 {
-            return Err(format!("{name}: encrypted ZIP entries are unsupported"));
-        }
-        let mode = (ext_attr >> 16) & 0o177_777;
+        let (entry, next_pos) = parse_zip_cd_entry(&cd, pos, &archive_name)?;
+        pos = next_pos;
+        let mode = (entry.ext_attr >> 16) & 0o177_777;
         let kind = mode & 0o170_000;
-        if name.ends_with('/') || (kind != 0 && kind != 0o100_000) {
-            return Err(format!("{name} is not a regular file"));
+        if entry.name.ends_with('/') || (kind != 0 && kind != 0o100_000) {
+            return Err(format!("{} is not a regular file", entry.name));
         }
-        admit(&members, &name, uncomp_size as usize)?;
+        admit(&members, &entry.name, entry.uncomp_size as usize)?;
         let data = extract_zip_entry(
             &mut file,
             &archive_name,
-            &name,
-            u64::from(local_off),
-            method,
-            comp_size,
-            uncomp_size,
-            crc,
+            &entry,
+            file_size,
             remaining_decompressed,
         )?;
-        remaining_decompressed -= data.len();
-        members.insert(name, (data, mode & 0o7777));
+        remaining_decompressed =
+            remaining_decompressed
+                .checked_sub(data.len())
+                .ok_or_else(|| {
+                    format!("{archive_name}: the archive decompresses beyond the size limit")
+                })?;
+        members.insert(entry.name, (data, mode & 0o7777));
     }
     if pos != cd.len() {
         return Err(format!(
@@ -848,18 +925,46 @@ fn has_zip64_extra(mut extra: &[u8]) -> bool {
     false
 }
 
-#[allow(clippy::too_many_arguments)]
-fn extract_zip_entry(
+fn decode_zip_payload(raw: Vec<u8>, entry: &ZipCdEntry, budget: usize) -> Result<Vec<u8>> {
+    match entry.method {
+        0 => {
+            if raw.len() != entry.uncomp_size as usize || raw.len() > budget {
+                return Err(format!("{}: uncompressed size mismatch", entry.name));
+            }
+            Ok(raw)
+        }
+        8 => {
+            let cap = (entry.uncomp_size as usize).min(budget);
+            let mut decoder = DeflateDecoder::new(&raw[..]);
+            let mut out = Vec::new();
+            (&mut decoder)
+                .take((cap + 1) as u64)
+                .read_to_end(&mut out)
+                .map_err(|e| format!("{}: deflate decode failed: {e}", entry.name))?;
+            if out.len() > cap || out.len() != entry.uncomp_size as usize {
+                return Err(format!("{}: uncompressed size mismatch", entry.name));
+            }
+            Ok(out)
+        }
+        other => Err(format!(
+            "{}: unsupported ZIP compression method {other}",
+            entry.name
+        )),
+    }
+}
+
+fn read_zip_payload_offset(
     file: &mut File,
     archive_name: &str,
     name: &str,
     local_off: u64,
-    method: u16,
-    comp_size: u32,
-    uncomp_size: u32,
-    expected_crc: u32,
-    budget: usize,
-) -> Result<Vec<u8>> {
+    file_size: u64,
+) -> Result<u64> {
+    if local_off.checked_add(30).is_none_or(|end| end > file_size) {
+        return Err(format!(
+            "{archive_name}: truncated ZIP local header for {name}"
+        ));
+    }
     file.seek(SeekFrom::Start(local_off))
         .map_err(|e| e.to_string())?;
     let mut local = [0u8; 30];
@@ -870,38 +975,50 @@ fn extract_zip_entry(
             "Bad magic number for file header in {archive_name}"
         ));
     }
-    let name_len = u16_le(&local, 26) as u64;
-    let extra_len = u16_le(&local, 28) as u64;
-    file.seek(SeekFrom::Current((name_len + extra_len) as i64))
+    let skip = u64::from(u16_le(&local, 26)) + u64::from(u16_le(&local, 28));
+    Ok(local_off + 30 + skip)
+}
+
+fn extract_zip_entry(
+    file: &mut File,
+    archive_name: &str,
+    entry: &ZipCdEntry,
+    file_size: u64,
+    budget: usize,
+) -> Result<Vec<u8>> {
+    let payload_off = read_zip_payload_offset(
+        file,
+        archive_name,
+        &entry.name,
+        u64::from(entry.local_off),
+        file_size,
+    )?;
+    let comp = u64::from(entry.comp_size);
+    if comp > MAX_ARCHIVE_BYTES as u64
+        || payload_off
+            .checked_add(comp)
+            .is_none_or(|end| end > file_size)
+    {
+        return Err(format!(
+            "{archive_name}: truncated ZIP payload for {}",
+            entry.name
+        ));
+    }
+    if entry.method == 0
+        && (entry.comp_size != entry.uncomp_size || (entry.uncomp_size as usize) > budget)
+    {
+        return Err(format!("{}: uncompressed size mismatch", entry.name));
+    }
+    file.seek(SeekFrom::Start(payload_off))
         .map_err(|e| e.to_string())?;
-    let mut raw = vec![0u8; comp_size as usize];
+    let mut raw = vec![0u8; entry.comp_size as usize];
     file.read_exact(&mut raw)
-        .map_err(|_| format!("{archive_name}: truncated ZIP payload for {name}"))?;
-    let data = match method {
-        0 => raw,
-        8 => {
-            let cap = (uncomp_size as usize).min(budget);
-            let mut decoder = DeflateDecoder::new(&raw[..]);
-            let mut out = Vec::new();
-            let mut limited = (&mut decoder).take((cap + 1) as u64);
-            limited
-                .read_to_end(&mut out)
-                .map_err(|e| format!("{name}: deflate decode failed: {e}"))?;
-            if out.len() > cap || out.len() != uncomp_size as usize {
-                return Err(format!("{name}: uncompressed size mismatch"));
-            }
-            out
-        }
-        other => {
-            return Err(format!(
-                "{name}: unsupported ZIP compression method {other}"
-            ));
-        }
-    };
+        .map_err(|_| format!("{archive_name}: truncated ZIP payload for {}", entry.name))?;
+    let data = decode_zip_payload(raw, entry, budget)?;
     let mut hasher = Hasher::new();
     hasher.update(&data);
-    if hasher.finalize() != expected_crc {
-        return Err(format!("Bad CRC-32 for file '{name}'"));
+    if hasher.finalize() != entry.crc {
+        return Err(format!("Bad CRC-32 for file '{}'", entry.name));
     }
     Ok(data)
 }
@@ -979,6 +1096,62 @@ fn valid_tar_checksum(block: &[u8; 512]) -> Result<bool> {
     Ok(expected as i64 == unsigned || expected as i64 == signed)
 }
 
+fn skip_pax_header(stream: &mut dyn Read, size: usize) -> Result<()> {
+    let mut left = size
+        .checked_add(511)
+        .map(|n| (n / 512) * 512)
+        .ok_or_else(|| "truncated PAX header in tar archive".to_owned())?;
+    let mut trash = [0u8; 4096];
+    while left > 0 {
+        let chunk = left.min(trash.len());
+        if !read_tar_exact(stream, &mut trash[..chunk])? {
+            return Err("truncated PAX header in tar archive".into());
+        }
+        left -= chunk;
+    }
+    Ok(())
+}
+
+fn read_tar_member_data(stream: &mut dyn Read, name: &str, size: usize) -> Result<Vec<u8>> {
+    let mut data = Vec::with_capacity(size.min(64 * 1024));
+    let read = stream
+        .take(size as u64)
+        .read_to_end(&mut data)
+        .map_err(|e| e.to_string())?;
+    if read != size {
+        return Err(format!("truncated tar member {name}"));
+    }
+    let pad = (512 - (size % 512)) % 512;
+    if pad > 0 {
+        let mut zeros = [0u8; 512];
+        if !read_tar_exact(stream, &mut zeros[..pad])? {
+            return Err(format!("truncated tar padding for {name}"));
+        }
+    }
+    Ok(data)
+}
+
+fn parse_tar_entry_meta(block: &[u8; 512]) -> Result<(u8, String, usize, u32)> {
+    let typeflag = block[156];
+    let base = tar_header_str(&block[0..100])?;
+    let prefix = tar_header_str(&block[345..500])?;
+    let raw_name = if prefix.is_empty() {
+        base
+    } else {
+        format!("{prefix}/{base}")
+    };
+    let name = if typeflag == b'5' {
+        raw_name.trim_end_matches('/').to_owned()
+    } else {
+        raw_name
+    };
+    let size_u64 = parse_tar_octal(&block[124..136])?;
+    let size = usize::try_from(size_u64)
+        .map_err(|_| format!("{name} exceeds the archive's member count or size limit"))?;
+    let mode = (parse_tar_octal(&block[100..108])? as u32) & 0o7777;
+    Ok((typeflag, name, size, mode))
+}
+
 fn read_tar_gz_members(archive: &Path) -> Result<BTreeMap<String, (Vec<u8>, u32)>> {
     let file = File::open(archive)
         .map_err(|e| py::oserror_str(&e, &archive.to_string_lossy(), OsStyle::Native))?;
@@ -988,14 +1161,10 @@ fn read_tar_gz_members(archive: &Path) -> Result<BTreeMap<String, (Vec<u8>, u32)
         left: MAX_DECOMPRESSED_BYTES,
     });
     let mut members = BTreeMap::new();
-    let mut global_pax = false;
-    let mut next_pax = false;
+    let mut saw_pax = false;
     let mut block = [0u8; 512];
-
     while read_tar_exact(&mut stream, &mut block)? {
         if block.iter().all(|&b| b == 0) {
-            // Drain any remaining decompressed stream up to the limit so zero-padding
-            // or concatenated gzip bombs are caught cleanly.
             let mut sink = [0u8; 4096];
             while stream.read(&mut sink).map_err(|e| e.to_string())? > 0 {}
             break;
@@ -1003,41 +1172,13 @@ fn read_tar_gz_members(archive: &Path) -> Result<BTreeMap<String, (Vec<u8>, u32)
         if !valid_tar_checksum(&block)? {
             return Err("invalid tar header checksum".into());
         }
-        let typeflag = block[156];
-        let base = tar_header_str(&block[0..100])?;
-        let prefix = tar_header_str(&block[345..500])?;
-        let raw_name = if prefix.is_empty() {
-            base
-        } else {
-            format!("{prefix}/{base}")
-        };
-        let size = parse_tar_octal(&block[124..136])? as usize;
-        let mode = (parse_tar_octal(&block[100..108])? as u32) & 0o7777;
-
-        if typeflag == b'x' || typeflag == b'X' || typeflag == b'g' {
-            let mut left = size.div_ceil(512) * 512;
-            let mut trash = [0u8; 4096];
-            while left > 0 {
-                let chunk = left.min(trash.len());
-                if !read_tar_exact(&mut stream, &mut trash[..chunk])? {
-                    return Err("truncated PAX header in tar archive".into());
-                }
-                left -= chunk;
-            }
-            if typeflag == b'g' {
-                global_pax = true;
-            } else {
-                next_pax = true;
-            }
+        let (typeflag, name, size, mode) = parse_tar_entry_meta(&block)?;
+        if matches!(typeflag, b'x' | b'X' | b'g') {
+            skip_pax_header(&mut stream, size)?;
+            saw_pax = true;
             continue;
         }
-
-        let name = if typeflag == b'5' {
-            raw_name.trim_end_matches('/').to_owned()
-        } else {
-            raw_name
-        };
-        if next_pax || global_pax {
+        if saw_pax {
             return Err(format!(
                 "{name} uses PAX headers; release archives are USTAR"
             ));
@@ -1046,17 +1187,7 @@ fn read_tar_gz_members(archive: &Path) -> Result<BTreeMap<String, (Vec<u8>, u32)
             return Err(format!("{name} is not a regular file"));
         }
         admit(&members, &name, size)?;
-        let mut data = vec![0u8; size];
-        if !read_tar_exact(&mut stream, &mut data)? {
-            return Err(format!("truncated tar member {name}"));
-        }
-        let pad = (512 - (size % 512)) % 512;
-        if pad > 0 {
-            let mut zeros = vec![0u8; pad];
-            if !read_tar_exact(&mut stream, &mut zeros)? {
-                return Err(format!("truncated tar padding for {name}"));
-            }
-        }
+        let data = read_tar_member_data(&mut stream, &name, size)?;
         members.insert(name, (data, mode));
     }
     Ok(members)
@@ -1104,6 +1235,70 @@ fn set_file_mode(_path: &Path, _mode: u32) -> Result<()> {
     Ok(())
 }
 
+fn check_verify_members(
+    members: &BTreeMap<String, (Vec<u8>, u32)>,
+    exec_names: &[String],
+    data: &[String],
+    doc_set: &BTreeSet<&str>,
+    expected: &[String],
+    target: Target,
+) -> Result<()> {
+    for name in members.keys() {
+        let single = !name.is_empty()
+            && !name.contains('/')
+            && !name.contains('\\')
+            && name != "."
+            && name != "..";
+        if !single {
+            return Err(format!("unsafe member name {}", py::repr_str(name)));
+        }
+    }
+    for (kind, names) in [("executable", exec_names), ("data file", data)] {
+        for name in names {
+            if !members.contains_key(name.as_str()) {
+                return Err(format!("the {kind} {name} is missing"));
+            }
+        }
+    }
+    let known_docs: HashSet<&str> = DOCUMENTS.into_iter().collect();
+    if doc_set.iter().any(|d| !known_docs.contains(d))
+        || REQUIRED_DOCUMENTS.iter().any(|r| !doc_set.contains(r))
+    {
+        let actual_refs: Vec<&str> = members.keys().map(String::as_str).collect();
+        let expected_refs: Vec<&str> = expected.iter().map(String::as_str).collect();
+        return Err(format!(
+            "members are {}, expected {}",
+            repr_list(actual_refs),
+            repr_list(expected_refs)
+        ));
+    }
+    for name in exec_names {
+        if target.executable_suffix.is_empty() && members[name].1 & 0o100 == 0 {
+            return Err(format!("{name} is not executable"));
+        }
+    }
+    Ok(())
+}
+
+fn extract_members(
+    dir: &Path,
+    expected: &[String],
+    members: &BTreeMap<String, (Vec<u8>, u32)>,
+) -> Result<()> {
+    create_dir_exclusive(dir)?;
+    for name in expected {
+        let dest = dir.join(name);
+        write_bytes(&dest, &members[name].0)?;
+        let mode = if members[name].1 == 0 {
+            0o644
+        } else {
+            members[name].1
+        };
+        set_file_mode(&dest, mode)?;
+    }
+    Ok(())
+}
+
 pub fn verify(
     archive: &Path,
     binary: &str,
@@ -1131,55 +1326,34 @@ pub fn verify(
     let documents: Vec<&str> = doc_set.iter().copied().collect();
     let data_refs: Vec<&str> = data.iter().map(String::as_str).collect();
     let expected = member_names(binary, triple, &documents, &data_refs)?;
-
-    for name in members.keys() {
-        let single_segment = !name.is_empty()
-            && !name.contains('/')
-            && !name.contains('\\')
-            && name != "."
-            && name != "..";
-        if !single_segment {
-            return Err(format!("unsafe member name {}", py::repr_str(name)));
-        }
-    }
-    for (kind, names) in [("executable", &exec_names), ("data file", &data)] {
-        for name in names {
-            if !members.contains_key(name.as_str()) {
-                return Err(format!("the {kind} {name} is missing"));
-            }
-        }
-    }
-    let known_docs: HashSet<&str> = DOCUMENTS.into_iter().collect();
-    let has_unexpected_doc = doc_set.iter().any(|d| !known_docs.contains(d));
-    let missing_required = REQUIRED_DOCUMENTS.iter().any(|r| !doc_set.contains(r));
-    if has_unexpected_doc || missing_required {
-        let actual_refs: Vec<&str> = members.keys().map(String::as_str).collect();
-        let expected_refs: Vec<&str> = expected.iter().map(String::as_str).collect();
-        return Err(format!(
-            "members are {}, expected {}",
-            repr_list(actual_refs),
-            repr_list(expected_refs)
-        ));
-    }
-    for name in &exec_names {
-        if target.executable_suffix.is_empty() && members[name].1 & 0o100 == 0 {
-            return Err(format!("{name} is not executable"));
-        }
-    }
+    check_verify_members(&members, &exec_names, &data, &doc_set, &expected, target)?;
     if let Some(dir) = extract_dir {
-        create_dir_exclusive(dir)?;
-        for name in &expected {
-            let dest = dir.join(name);
-            write_bytes(&dest, &members[name].0)?;
-            let mode = if members[name].1 == 0 {
-                0o644
-            } else {
-                members[name].1
-            };
-            set_file_mode(&dest, mode)?;
-        }
+        extract_members(dir, &expected, &members)?;
     }
     Ok(expected)
+}
+
+fn wait_smoke_child(
+    child: &mut std::process::Child,
+    executable: &Path,
+    timeout: Duration,
+) -> Result<std::process::ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(status) => return Ok(status),
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "Command '{}' timed out after {} seconds",
+                    executable.display(),
+                    timeout.as_secs()
+                ));
+            }
+            None => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
 }
 
 pub fn smoke_with_timeout(executable: &Path, version: &str, timeout: Duration) -> Result<String> {
@@ -1189,7 +1363,6 @@ pub fn smoke_with_timeout(executable: &Path, version: &str, timeout: Duration) -
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| py::oserror_str(&e, &executable.to_string_lossy(), OsStyle::Native))?;
-
     let mut stdout_pipe = child.stdout.take().expect("piped stdout");
     let mut stderr_pipe = child.stderr.take().expect("piped stderr");
     let out_handle = std::thread::spawn(move || -> io::Result<Vec<u8>> {
@@ -1202,26 +1375,14 @@ pub fn smoke_with_timeout(executable: &Path, version: &str, timeout: Duration) -
         stderr_pipe.read_to_end(&mut buf)?;
         Ok(buf)
     });
-
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait().map_err(|e| e.to_string())? {
-            Some(status) => break status,
-            None if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = out_handle.join();
-                let _ = err_handle.join();
-                return Err(format!(
-                    "Command '{}' timed out after {} seconds",
-                    executable.display(),
-                    timeout.as_secs()
-                ));
-            }
-            None => std::thread::sleep(Duration::from_millis(10)),
+    let status = match wait_smoke_child(&mut child, executable, timeout) {
+        Ok(status) => status,
+        Err(err) => {
+            let _ = out_handle.join();
+            let _ = err_handle.join();
+            return Err(err);
         }
     };
-
     let stdout_raw = out_handle.join().unwrap().map_err(|e| e.to_string())?;
     let _ = err_handle.join();
     let stdout = py::decode_utf8(&stdout_raw).map_err(|e| e.to_string())?;
@@ -1300,14 +1461,7 @@ fn macho_path(executable: &[u8], offset: usize, length: usize) -> Result<String>
     py::decode_utf8(&slice[..nul]).map_err(|_| MACHO_MALFORMED.to_owned())
 }
 
-pub fn macho_linkage(executable: &[u8], triple: &str) -> Result<Vec<String>> {
-    let target = target_for(triple)?;
-    if !target.object_format.starts_with("Mach-O") {
-        return Err(format!(
-            "only a macOS executable's linkage is read from it, not {triple}'s"
-        ));
-    }
-    let (count, end) = macho_load_commands(executable, target)?;
+fn scan_macho_commands(executable: &[u8], count: u32, end: usize) -> Result<Vec<String>> {
     let mut offset = 32usize;
     let mut needed = Vec::new();
     for _ in 0..count {
@@ -1343,6 +1497,18 @@ pub fn macho_linkage(executable: &[u8], triple: &str) -> Result<Vec<String>> {
     if offset != end {
         return Err(MACHO_MALFORMED.into());
     }
+    Ok(needed)
+}
+
+pub fn macho_linkage(executable: &[u8], triple: &str) -> Result<Vec<String>> {
+    let target = target_for(triple)?;
+    if !target.object_format.starts_with("Mach-O") {
+        return Err(format!(
+            "only a macOS executable's linkage is read from it, not {triple}'s"
+        ));
+    }
+    let (count, end) = macho_load_commands(executable, target)?;
+    let needed = scan_macho_commands(executable, count, end)?;
     let foreign: Vec<&str> = needed
         .iter()
         .map(String::as_str)
@@ -1355,6 +1521,43 @@ pub fn macho_linkage(executable: &[u8], triple: &str) -> Result<Vec<String>> {
         ));
     }
     Ok(needed)
+}
+
+fn check_windows_dlls(needed: &[String]) -> Result<()> {
+    let runtime: Vec<&str> = needed
+        .iter()
+        .map(String::as_str)
+        .filter(|name| WINDOWS_RUNTIME_RE.is_match(name))
+        .collect();
+    if !runtime.is_empty() {
+        return Err(format!("imports C runtime DLLs: {}", repr_list(runtime)));
+    }
+    let unsafe_dlls: Vec<&str> = needed
+        .iter()
+        .map(String::as_str)
+        .filter(|name| !DLL_NAME_RE.is_match(name))
+        .collect();
+    if !unsafe_dlls.is_empty() {
+        return Err(format!(
+            "imports DLLs by path or with an unexpected name: {}",
+            repr_list(unsafe_dlls)
+        ));
+    }
+    let allowed: HashSet<&str> = WINDOWS_SYSTEM_DLLS.into_iter().collect();
+    let foreign: Vec<&str> = needed
+        .iter()
+        .map(String::as_str)
+        .filter(|name| {
+            !API_SET_RE.is_match(name) && !allowed.contains(name.to_lowercase().as_str())
+        })
+        .collect();
+    if !foreign.is_empty() {
+        return Err(format!(
+            "imports DLLs outside the pinned Windows system set: {}",
+            repr_list(foreign)
+        ));
+    }
+    Ok(())
 }
 
 pub fn linkage(readobj_output: &str, triple: &str) -> Result<Vec<String>> {
@@ -1390,40 +1593,41 @@ pub fn linkage(readobj_output: &str, triple: &str) -> Result<Vec<String>> {
         }
         return Ok(needed);
     }
-    let runtime: Vec<&str> = needed
-        .iter()
-        .map(String::as_str)
-        .filter(|name| WINDOWS_RUNTIME_RE.is_match(name))
-        .collect();
-    if !runtime.is_empty() {
-        return Err(format!("imports C runtime DLLs: {}", repr_list(runtime)));
-    }
-    let unsafe_dlls: Vec<&str> = needed
-        .iter()
-        .map(String::as_str)
-        .filter(|name| !DLL_NAME_RE.is_match(name))
-        .collect();
-    if !unsafe_dlls.is_empty() {
-        return Err(format!(
-            "imports DLLs by path or with an unexpected name: {}",
-            repr_list(unsafe_dlls)
-        ));
-    }
-    let allowed: HashSet<&str> = WINDOWS_SYSTEM_DLLS.into_iter().collect();
-    let foreign: Vec<&str> = needed
-        .iter()
-        .map(String::as_str)
-        .filter(|name| {
-            !API_SET_RE.is_match(name) && !allowed.contains(name.to_lowercase().as_str())
-        })
-        .collect();
-    if !foreign.is_empty() {
-        return Err(format!(
-            "imports DLLs outside the pinned Windows system set: {}",
-            repr_list(foreign)
-        ));
-    }
+    check_windows_dlls(&needed)?;
     Ok(needed)
+}
+
+fn read_toolchain_channel(directory: &Path) -> Result<Option<String>> {
+    let legacy = directory.join("rust-toolchain");
+    let current = directory.join("rust-toolchain.toml");
+    if legacy.exists() || symlink(&legacy) {
+        return Err(format!(
+            "{}: use rust-toolchain.toml with an exact channel",
+            legacy.display()
+        ));
+    }
+    if symlink(&current) || (current.exists() && !current.is_file()) {
+        return Err(format!("{} must be a regular file", current.display()));
+    }
+    if !current.is_file() {
+        return Ok(None);
+    }
+    let document = read_toml(
+        &current,
+        &format!("{} is not readable TOML", current.display()),
+    )?;
+    let channel = document
+        .get("toolchain")
+        .and_then(toml::Value::as_table)
+        .and_then(|t| t.get("channel"))
+        .and_then(toml::Value::as_str);
+    let Some(channel) = channel.filter(|c| TOOLCHAIN_CHANNEL_RE.is_match(c)) else {
+        return Err(format!(
+            "{} must pin an exact MAJOR.MINOR.PATCH channel",
+            current.display()
+        ));
+    };
+    Ok(Some(channel.to_owned()))
 }
 
 pub fn toolchain(source: &Path, root: &Path) -> Result<String> {
@@ -1438,34 +1642,8 @@ pub fn toolchain(source: &Path, root: &Path) -> Result<String> {
     }
     let mut cur = Some(source.as_path());
     while let Some(directory) = cur {
-        let legacy = directory.join("rust-toolchain");
-        let current = directory.join("rust-toolchain.toml");
-        if legacy.exists() || symlink(&legacy) {
-            return Err(format!(
-                "{}: use rust-toolchain.toml with an exact channel",
-                legacy.display()
-            ));
-        }
-        if symlink(&current) || (current.exists() && !current.is_file()) {
-            return Err(format!("{} must be a regular file", current.display()));
-        }
-        if current.is_file() {
-            let document = read_toml(
-                &current,
-                &format!("{} is not readable TOML", current.display()),
-            )?;
-            let channel = document
-                .get("toolchain")
-                .and_then(toml::Value::as_table)
-                .and_then(|t| t.get("channel"))
-                .and_then(toml::Value::as_str);
-            let Some(channel) = channel.filter(|c| TOOLCHAIN_CHANNEL_RE.is_match(c)) else {
-                return Err(format!(
-                    "{} must pin an exact MAJOR.MINOR.PATCH channel",
-                    current.display()
-                ));
-            };
-            return Ok(channel.to_owned());
+        if let Some(channel) = read_toolchain_channel(directory)? {
+            return Ok(channel);
         }
         if path_equals(directory, &root) {
             break;
@@ -1479,25 +1657,14 @@ pub fn toolchain(source: &Path, root: &Path) -> Result<String> {
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn receive(
-    incoming: &Path,
-    stem: &str,
-    version: &str,
-    binary: &str,
-    triple: &str,
-    dist: &Path,
-    extract_dir: &Path,
-    source: &Path,
-    root: &Path,
-    data_files: &str,
-) -> Result<PathBuf> {
-    let name = asset_name(stem, version, triple)?;
-    let digest_name = format!("{name}.sha256");
-    let expected: BTreeSet<&str> = [name.as_str(), digest_name.as_str()].into_iter().collect();
+fn read_dir_regular_entries(
+    dir: &Path,
+    expected_names: &[&str],
+) -> Result<BTreeMap<String, PathBuf>> {
+    let expected: BTreeSet<&str> = expected_names.iter().copied().collect();
     let mut entries = BTreeMap::new();
-    let read_dir = std::fs::read_dir(incoming)
-        .map_err(|e| py::oserror_str(&e, &incoming.to_string_lossy(), OsStyle::Native))?;
+    let read_dir = std::fs::read_dir(dir)
+        .map_err(|e| py::oserror_str(&e, &dir.to_string_lossy(), OsStyle::Native))?;
     for entry_res in read_dir {
         let entry = entry_res.map_err(|e| e.to_string())?;
         let fname = entry.file_name().to_string_lossy().into_owned();
@@ -1516,8 +1683,10 @@ pub fn receive(
             return Err(format!("{entry_name} is not a regular file"));
         }
     }
-    let digest_file = &entries[&digest_name];
-    let archive = &entries[&name];
+    Ok(entries)
+}
+
+fn read_incoming_digest(digest_file: &Path, archive: &Path, name: &str) -> Result<String> {
     if std::fs::metadata(digest_file)
         .map_err(|e| e.to_string())?
         .len()
@@ -1532,17 +1701,89 @@ pub fn receive(
     }
     let line_bytes = read_bytes(digest_file)?;
     let line = String::from_utf8_lossy(&line_bytes);
-    let Some(caps) = DIGEST_LINE_RE.captures(&line) else {
+    let Some(caps) = DIGEST_LINE_RE
+        .captures(&line)
+        .filter(|c| &c["name"] == name)
+    else {
         return Err(format!(
             "{name}.sha256 is not one sha256sum line for {name}"
         ));
     };
-    if caps["name"] != *name {
+    Ok(caps["digest"].to_owned())
+}
+
+struct ReceivedSpec<'a> {
+    name: &'a str,
+    expected_digest: &'a str,
+    binary: &'a str,
+    triple: &'a str,
+    extract_dir: &'a Path,
+    data_files: &'a str,
+    tagged: &'a BTreeMap<String, PathBuf>,
+}
+
+fn verify_admitted_archive(
+    archive: &Path,
+    admitted: &Path,
+    dst: File,
+    spec: &ReceivedSpec<'_>,
+) -> Result<()> {
+    let mut dst = dst;
+    let mut src = File::open(archive)
+        .map_err(|e| py::oserror_str(&e, &archive.to_string_lossy(), OsStyle::Native))?;
+    io::copy(&mut src, &mut dst).map_err(|e| e.to_string())?;
+    drop(dst);
+
+    if file_sha256(admitted)? != spec.expected_digest {
+        return Err(format!("{} does not match its recorded digest", spec.name));
+    }
+    let names = verify(
+        admitted,
+        spec.binary,
+        spec.triple,
+        Some(spec.extract_dir),
+        spec.data_files,
+    )?;
+    let exec_count = binaries(spec.binary)?.len();
+    let shipped: BTreeSet<&str> = names[exec_count..].iter().map(String::as_str).collect();
+    let tagged_names: BTreeSet<&str> = spec.tagged.keys().map(String::as_str).collect();
+    if shipped != tagged_names {
         return Err(format!(
-            "{name}.sha256 is not one sha256sum line for {name}"
+            "{} ships {}, the tag has {}",
+            spec.name,
+            repr_list(shipped.iter().copied()),
+            repr_list(tagged_names.iter().copied())
         ));
     }
-    let expected_digest = caps["digest"].to_owned();
+    for document in shipped {
+        if read_bytes(&spec.extract_dir.join(document))? != read_bytes(&spec.tagged[document])? {
+            return Err(format!(
+                "{}'s {document} differs from the tagged {document}",
+                spec.name
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn receive(
+    incoming: &Path,
+    stem: &str,
+    version: &str,
+    binary: &str,
+    triple: &str,
+    dist: &Path,
+    extract_dir: &Path,
+    source: &Path,
+    root: &Path,
+    data_files: &str,
+) -> Result<PathBuf> {
+    let name = asset_name(stem, version, triple)?;
+    let digest_name = format!("{name}.sha256");
+    let entries = read_dir_regular_entries(incoming, &[&name, &digest_name])?;
+    let archive = &entries[&name];
+    let expected_digest = read_incoming_digest(&entries[&digest_name], archive, &name)?;
 
     let mut tagged = find_documents(source, root)?;
     for (k, v) in find_data_files(source, data_files)? {
@@ -1551,42 +1792,17 @@ pub fn receive(
     std::fs::create_dir_all(dist)
         .map_err(|e| py::oserror_str(&e, &dist.to_string_lossy(), OsStyle::Native))?;
     let admitted = dist.join(&name);
-    create_exclusive(&admitted)?;
-
-    let check = (|| -> Result<()> {
-        let mut src = File::open(archive)
-            .map_err(|e| py::oserror_str(&e, &archive.to_string_lossy(), OsStyle::Native))?;
-        let mut dst = File::create(&admitted)
-            .map_err(|e| py::oserror_str(&e, &admitted.to_string_lossy(), OsStyle::Native))?;
-        io::copy(&mut src, &mut dst).map_err(|e| e.to_string())?;
-        drop(dst);
-
-        let actual_digest = file_sha256(&admitted)?;
-        if actual_digest != expected_digest {
-            return Err(format!("{name} does not match its recorded digest"));
-        }
-        let names = verify(&admitted, binary, triple, Some(extract_dir), data_files)?;
-        let exec_count = binaries(binary)?.len();
-        let shipped: BTreeSet<&str> = names[exec_count..].iter().map(String::as_str).collect();
-        let tagged_names: BTreeSet<&str> = tagged.keys().map(String::as_str).collect();
-        if shipped != tagged_names {
-            return Err(format!(
-                "{name} ships {}, the tag has {}",
-                repr_list(shipped.iter().copied()),
-                repr_list(tagged_names.iter().copied())
-            ));
-        }
-        for document in shipped {
-            if read_bytes(&extract_dir.join(document))? != read_bytes(&tagged[document])? {
-                return Err(format!(
-                    "{name}'s {document} differs from the tagged {document}"
-                ));
-            }
-        }
-        Ok(())
-    })();
-
-    if let Err(err) = check {
+    let dst = create_exclusive(&admitted)?;
+    let spec = ReceivedSpec {
+        name: &name,
+        expected_digest: &expected_digest,
+        binary,
+        triple,
+        extract_dir,
+        data_files,
+        tagged: &tagged,
+    };
+    if let Err(err) = verify_admitted_archive(archive, &admitted, dst, &spec) {
         let _ = std::fs::remove_file(&admitted);
         return Err(err);
     }
@@ -1644,14 +1860,10 @@ pub fn digests(dist: &Path, stem: &str, version: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
-pub fn accept(
-    incoming: &Path,
-    dist: &Path,
-    stem: &str,
-    version: &str,
+fn parse_expected_digests(
     digest_outputs: &[String],
-) -> Result<Vec<PathBuf>> {
-    let names = handoff_names(stem, version)?;
+    names: &[(String, String)],
+) -> Result<HashMap<String, String>> {
     let mut expected = HashMap::new();
     for item in digest_outputs {
         let (role, digest) = item.split_once('=').unwrap_or((item.as_str(), ""));
@@ -1670,29 +1882,20 @@ pub fn accept(
             repr_list(required_roles.iter().copied())
         ));
     }
+    Ok(expected)
+}
 
-    let mut entries = BTreeMap::new();
-    let read_dir = std::fs::read_dir(incoming)
-        .map_err(|e| py::oserror_str(&e, &incoming.to_string_lossy(), OsStyle::Native))?;
-    for entry_res in read_dir {
-        let entry = entry_res.map_err(|e| e.to_string())?;
-        let fname = entry.file_name().to_string_lossy().into_owned();
-        entries.insert(fname, entry.path());
-    }
-    let actual_names: BTreeSet<&str> = entries.keys().map(String::as_str).collect();
-    let expected_names: BTreeSet<&str> = names.iter().map(|(_, n)| n.as_str()).collect();
-    if actual_names != expected_names {
-        return Err(format!(
-            "artefact holds {}, expected {}",
-            repr_list(actual_names.iter().copied()),
-            repr_list(expected_names.iter().copied())
-        ));
-    }
-    for (entry_name, entry_path) in &entries {
-        if symlink(entry_path) || !entry_path.is_file() {
-            return Err(format!("{entry_name} is not a regular file"));
-        }
-    }
+pub fn accept(
+    incoming: &Path,
+    dist: &Path,
+    stem: &str,
+    version: &str,
+    digest_outputs: &[String],
+) -> Result<Vec<PathBuf>> {
+    let names = handoff_names(stem, version)?;
+    let expected = parse_expected_digests(digest_outputs, &names)?;
+    let expected_names: Vec<&str> = names.iter().map(|(_, n)| n.as_str()).collect();
+    let entries = read_dir_regular_entries(incoming, &expected_names)?;
 
     let mut kept = Vec::with_capacity(names.len());
     for (role, name) in &names {

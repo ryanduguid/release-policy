@@ -59,9 +59,13 @@ fn canonical_digest_normalises_crlf_and_third_party_pins() {
         canonical_digest(other_third_party)
     );
 
-    // Own-repo pins keep their SHA in the digest; casing matters for owner matching.
+    // Own-repo pins keep their SHA in the digest regardless of owner casing.
     let changed_own = b"steps:\n  - uses: actions/checkout@1111111111111111111111111111111111111111 # v4.2.1\n  - uses: actions/checkout@2222222222222222222222222222222222222222 # v4\n  - uses: ryanduguid/release-policy/.github/actions/no-ai-attribution@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n";
     assert_ne!(canonical_digest(lf_doc), canonical_digest(changed_own));
+
+    let mixed_a = b"uses: RyanDuguid/release-policy/.github/workflows/pr-review.yml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v1.0.0\n";
+    let mixed_b = b"uses: RyanDuguid/release-policy/.github/workflows/pr-review.yml@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb # v1.0.0\n";
+    assert_ne!(canonical_digest(mixed_a), canonical_digest(mixed_b));
 
     // Non-UTF-8 lines pass through unmodified without panicking.
     let raw = b"# \xff\n- uses: actions/checkout@1234567890abcdef1234567890abcdef12345678 # v4\r\n";
@@ -516,4 +520,79 @@ fn cli_prepare_and_publish_with_fake_gh_and_error_paths() {
     assert_eq!(empty_err_out.code, 1);
     assert!(empty_err_out.stderr.starts_with("release-policy: "));
     assert!(gh_path.exists());
+
+    // Prepare normalises `./repin.patch` like Python's pathlib.Path.
+    repo.write(
+        WORKFLOW,
+        workflow_text(
+            &first,
+            "      - uses: RyanDuguid/other/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v1\n",
+        ),
+    );
+    let mixed_wf = std::fs::read(repo.path(WORKFLOW)).unwrap();
+    repo.write(BASELINE, baseline_text(&canonical_digest(&mixed_wf)));
+    let dot_cur = repo.commit("mixed case baseline");
+    let out_dot = cli(
+        repo.root(),
+        &[
+            "repin-issue",
+            "prepare",
+            "--target",
+            &dot_cur,
+            "--patch",
+            "./repin.patch",
+        ],
+        "",
+    );
+    assert_eq!(out_dot.code, 0, "stderr: {}", out_dot.stderr);
+    assert_eq!(
+        out_dot.stdout,
+        format!("attribution pin {first} is stale; wrote repin.patch\n")
+    );
+
+    // Large stdin + gh early failure ignores BrokenPipe and preserves gh stderr.
+    let big_patch = format!(
+        "--- a/x\n+++ b/x\n@@ -1 +1 @@\n+{}\n",
+        "x".repeat(256 * 1024)
+    );
+    repo.write("big.patch", &big_patch);
+    gh.set_rules(json!([
+        rule(
+            &["api", "repos/o/r/issues?state=open&per_page=100&page=1"],
+            "[]",
+            "",
+            0
+        ),
+        rule(
+            &[
+                "api",
+                "--method",
+                "POST",
+                "repos/o/r/issues",
+                "--input",
+                "-"
+            ],
+            "",
+            "early exit\n",
+            1,
+        ),
+    ]));
+    let out_broken = gh.run(
+        repo.root(),
+        &[
+            "repin-issue",
+            "publish",
+            "--repository",
+            "o/r",
+            "--target",
+            &dot_cur,
+            "--patch",
+            "big.patch",
+            "--current",
+            &dot_cur,
+        ],
+        "",
+    );
+    assert_eq!(out_broken.code, 1);
+    assert_eq!(out_broken.stderr, "release-policy: early exit\n");
 }

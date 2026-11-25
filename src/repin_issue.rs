@@ -74,7 +74,7 @@ pub fn canonical_digest(document: &[u8]) -> String {
             normalised.push(b'\n');
         }
         if let Some(caps) = THIRD_PARTY_PIN_LINE.captures(line)
-            && &caps["owner"] != b"ryanduguid"
+            && !caps["owner"].eq_ignore_ascii_case(b"ryanduguid")
         {
             normalised.extend_from_slice(&caps["head"]);
             normalised.push(b'@');
@@ -122,9 +122,11 @@ pub fn system_gh(arguments: &[&str], stdin: Option<&str>) -> Result<String> {
         && let Some(mut handle) = child.stdin.take()
     {
         use std::io::Write;
-        handle
-            .write_all(input.as_bytes())
-            .map_err(|e| e.to_string())?;
+        match handle.write_all(input.as_bytes()) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(e) => return Err(e.to_string()),
+        }
     }
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     let stdout = py::universal_newlines(&py::decode_utf8(&out.stdout).map_err(|e| e.to_string())?);
@@ -302,6 +304,20 @@ fn issue_number(issue: &Json) -> Result<String> {
         .ok_or_else(|| "GitHub issue is missing a number".to_owned())
 }
 
+fn create_repin_issue(repository: &str, body: &str, gh: &mut Gh<'_>) -> Result<String> {
+    let payload = Json::Object(vec![
+        ("title".into(), Json::str_obj(TITLE)),
+        ("body".into(), Json::str_obj(body)),
+    ]);
+    let endpoint = format!("repos/{repository}/issues");
+    let created_raw = gh(
+        &["api", "--method", "POST", &endpoint, "--input", "-"],
+        Some(&pyjson::dumps(&payload, Dump::default())),
+    )?;
+    let created = pyjson::loads(&created_raw).map_err(|e| e.0)?;
+    Ok(format!("opened #{}", issue_number(&created)?))
+}
+
 pub fn publish(
     repository: &str,
     target: &str,
@@ -324,17 +340,7 @@ pub fn publish(
         ));
     }
     if ours.is_empty() {
-        let payload = Json::Object(vec![
-            ("title".into(), Json::str_obj(TITLE)),
-            ("body".into(), Json::str_obj(&body)),
-        ]);
-        let endpoint = format!("repos/{repository}/issues");
-        let created_raw = gh(
-            &["api", "--method", "POST", &endpoint, "--input", "-"],
-            Some(&pyjson::dumps(&payload, Dump::default())),
-        )?;
-        let created = pyjson::loads(&created_raw).map_err(|e| e.0)?;
-        return Ok(format!("opened #{}", issue_number(&created)?));
+        return create_repin_issue(repository, &body, gh);
     }
     let existing = ours[0];
     let number = issue_number(existing)?;

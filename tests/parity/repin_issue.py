@@ -130,18 +130,21 @@ def make_repo(parent: Path, name: str, pin_mode: str = "stale") -> dict[str, str
     second = git(repo, "rev-parse", "HEAD")
 
     pin_sha = second if pin_mode == "current" else first
+    extra_owner = "RyanDuguid" if pin_mode == "mixed_case" else "actions"
     wf = (
         "name: Attribution\non:\n  pull_request_target:\njobs:\n  check:\n"
         "    steps:\n"
-        "      - uses: actions/checkout@1111111111111111111111111111111111111111 # v4.2.1\n"
+        f"      - uses: {extra_owner}/checkout@1111111111111111111111111111111111111111 # v4.2.1\n"
         f"      - {PIN_PREFIX}{pin_sha}\n"
     )
     if pin_mode == "crlf":
         wf = wf.replace("\n", "\r\n")
-    norm = wf.replace("\r\n", "\n").replace(
-        "1111111111111111111111111111111111111111 # v4.2.1",
-        "0000000000000000000000000000000000000000 # v4",
-    )
+    norm = wf.replace("\r\n", "\n")
+    if pin_mode != "mixed_case":
+        norm = norm.replace(
+            "1111111111111111111111111111111111111111 # v4.2.1",
+            "0000000000000000000000000000000000000000 # v4",
+        )
     digest = hashlib.sha256(norm.encode("utf-8")).hexdigest()
     base = f'CANONICAL_SHA256 = {{\n    "{WORKFLOW}": "{digest}",\n}}\n'
     if pin_mode == "crlf":
@@ -201,12 +204,17 @@ def compare_prepare(binary: Path, tmp: Path, pin_mode: str, label: str) -> None:
     env = dict(os.environ)
     py_patch = py_dir / "out.patch"
     rs_patch = rs_dir / "out.patch"
-    args_py = ["prepare", "--target", info["head"], "--patch", str(py_patch)]
-    args_rs = ["repin-issue", "prepare", "--target", info["head"], "--patch", str(rs_patch)]
+    py_arg = "./out.patch" if pin_mode == "dot_patch" else str(py_patch)
+    rs_arg = "./out.patch" if pin_mode == "dot_patch" else str(rs_patch)
+    if pin_mode == "dot_patch":
+        py_patch = Path(info["root"]) / "out.patch"
+        rs_patch = rs_dir / "repo" / "out.patch"
+    args_py = ["prepare", "--target", info["head"], "--patch", py_arg]
+    args_rs = ["repin-issue", "prepare", "--target", info["head"], "--patch", rs_arg]
     py_res = run_cmd(py_cmd(args_py), Path(info["root"]), env)
     rs_res = run_cmd([str(binary), *args_rs], rs_dir / "repo", env)
 
-    expected_stdout = py_res.stdout.replace(str(py_patch), str(rs_patch))
+    expected_stdout = py_res.stdout.replace(py_arg, rs_arg)
     assert py_res.returncode == rs_res.returncode == 0, (py_res, rs_res)
     assert expected_stdout == rs_res.stdout, (expected_stdout, rs_res.stdout)
     assert py_res.stderr == rs_res.stderr == "", (py_res.stderr, rs_res.stderr)
@@ -346,8 +354,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
 
-        # 1-3: prepare stale, current, CRLF + third-party pin
-        for mode in ("stale", "current", "crlf"):
+        # 1-5: prepare stale, current, CRLF + third-party pin, mixed-case RyanDuguid, ./patch
+        for mode in ("stale", "current", "crlf", "mixed_case", "dot_patch"):
             compare_prepare(binary, tmp, mode, f"prep_{mode}")
             compared += 1
 

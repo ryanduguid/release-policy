@@ -9,8 +9,8 @@ use flate2::{Compression, GzBuilder};
 #[cfg(unix)]
 use release_policy::binary_release::MAX_ARCHIVE_BYTES;
 use release_policy::binary_release::{
-    DOCUMENTS, MAX_DECOMPRESSED_BYTES, MAX_MEMBERS, TARGETS, accept, asset_name, binaries,
-    cargo_package, confined_path, data_names, digests, find_data_files, find_documents,
+    DOCUMENTS, MAX_DECOMPRESSED_BYTES, MAX_MEMBER_BYTES, MAX_MEMBERS, TARGETS, accept, asset_name,
+    binaries, cargo_package, confined_path, data_names, digests, find_data_files, find_documents,
     handoff_names, linkage, macho_linkage, member_names, needed_libraries, package, receive,
     resolve_path, sbom_lists, smoke_with_timeout, toolchain, verify,
 };
@@ -545,6 +545,50 @@ fn package_and_verify_roundtrip_and_traps() {
             .contains("end of central directory")
     );
 
+    // Hostile ZIP claiming comp_size = 0xFFFF_FFFE in CD must refuse without allocating 4 GiB.
+    build_single_zip(
+        &bad,
+        "app.exe",
+        b"x",
+        (0o100_644) << 16,
+        0,
+        0,
+        &[],
+        false,
+        false,
+    );
+    let mut raw = std::fs::read(&bad).unwrap();
+    let cd_pos = raw.windows(4).rposition(|w| w == b"PK\x01\x02").unwrap();
+    raw[cd_pos + 20..cd_pos + 24].copy_from_slice(&0xFFFF_FFFEu32.to_le_bytes());
+    std::fs::write(&bad, raw).unwrap();
+    assert!(
+        verify(&bad, "app", WIN, None, "")
+            .unwrap_err()
+            .contains("truncated ZIP payload")
+    );
+
+    // Hostile STORED ZIP with comp_size != uncomp_size must refuse with size mismatch.
+    build_single_zip(
+        &bad,
+        "app.exe",
+        b"0123456789",
+        (0o100_644) << 16,
+        0,
+        0,
+        &[],
+        false,
+        false,
+    );
+    let mut raw = std::fs::read(&bad).unwrap();
+    let cd_pos = raw.windows(4).rposition(|w| w == b"PK\x01\x02").unwrap();
+    raw[cd_pos + 24..cd_pos + 28].copy_from_slice(&1u32.to_le_bytes());
+    std::fs::write(&bad, raw).unwrap();
+    assert!(
+        verify(&bad, "app", WIN, None, "")
+            .unwrap_err()
+            .contains("uncompressed size mismatch")
+    );
+
     // Tar traps: PAX header, symlink, dir, bad checksum, traversal, non-executable, bomb.
     let bad_tar = root.join("bad.tar.gz");
     write_tar_raw(
@@ -668,6 +712,33 @@ fn package_and_verify_roundtrip_and_traps() {
         verify(&bomb, "app", LINUX, None, "")
             .unwrap_err()
             .contains("size limit")
+    );
+
+    // Truncated tar claiming a 512 MiB member must fail cleanly without allocating 512 MiB.
+    let huge_hdr = root.join("huge_hdr.tar.gz");
+    {
+        let mut blk = [0u8; 512];
+        blk[..3].copy_from_slice(b"app");
+        blk[100..108].copy_from_slice(b"0000755\0");
+        blk[108..116].copy_from_slice(b"0000000\0");
+        blk[116..124].copy_from_slice(b"0000000\0");
+        blk[124..136].copy_from_slice(format!("{:011o}\0", MAX_MEMBER_BYTES).as_bytes());
+        blk[136..148].copy_from_slice(b"00000000000\0");
+        blk[148..156].fill(b' ');
+        blk[156] = b'0';
+        blk[257..263].copy_from_slice(b"ustar\0");
+        blk[263..265].copy_from_slice(b"00");
+        let cksum: u32 = blk.iter().map(|&b| u32::from(b)).sum();
+        blk[148..156].copy_from_slice(format!("{cksum:06o}\0 ").as_bytes());
+        let mut gz = GzEncoder::new(File::create(&huge_hdr).unwrap(), Compression::default());
+        gz.write_all(&blk).unwrap();
+        gz.write_all(b"abcd").unwrap();
+        gz.finish().unwrap();
+    }
+    assert!(
+        verify(&huge_hdr, "app", LINUX, None, "")
+            .unwrap_err()
+            .contains("truncated tar member")
     );
 
     // Oversize file check without consuming disk on Unix sparse files

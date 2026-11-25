@@ -26,7 +26,7 @@ pypi_attestations`). Runtime refusals exit `1`; CLI usage errors exit `2`.
 
 | Python tests | Rust tests | Differential parity |
 | --- | --- | --- |
-| `tests/test_repin_issue.py` | `tests/rust/repin_issue.rs` (7 tests) | `tests/parity/repin_issue.py` (`22` inputs compared, `0` unexplained differences) |
+| `tests/test_repin_issue.py` | `tests/rust/repin_issue.rs` (7 tests) | `tests/parity/repin_issue.py` (`24` inputs compared, `0` unexplained differences) |
 | `tests/test_binary_release.py` | `tests/rust/binary_release.rs` (5 tests) | `tests/parity/binary_release.py` (`37` inputs compared, `0` unexplained differences) |
 | `tests/test_verify_pypi.py` | `tests/rust/verify_pypi.rs` (4 tests) | `tests/parity/verify_pypi.py` (`24` inputs compared, `0` unexplained differences) |
 
@@ -51,7 +51,8 @@ pypi_attestations`). Runtime refusals exit `1`; CLI usage errors exit `2`.
 - **`repin-issue` repository root**: `release-policy repin-issue` acts on the
   current working directory, matching `check-canaries` and `pin-families`,
   whereas `scripts/repin_issue.py` defaults to its script checkout parent.
-- **Deflate stream bytes**: `flate2` uses `miniz_oxide` rather than C `zlib`,
+- **Deflate stream bytes**: `flate2` defaults to the pure-Rust `miniz_oxide`
+  backend (no `zlib-rs` or C `zlib` dependency) rather than Python's C `zlib`,
   so raw `.tar.gz` and `.zip` compressed bitstreams differ from Python even
   though extracted entries, payload bytes, timestamps and Unix permissions are
   identical.
@@ -67,12 +68,13 @@ pypi_attestations`). Runtime refusals exit `1`; CLI usage errors exit `2`.
 
 ## Quirks preserved
 
-- **`repin-issue`**: `THIRD_PARTY_PIN` excludes only case-sensitive `ryanduguid/`
-  references; `\r\n` normalisation runs in `canonical_digest` and `prepare`
-  only, whilst `publish --patch` decodes raw UTF-8 bytes verbatim; pagination
-  stops at `MAX_ISSUE_PAGES = 10`; non-bot issues produce
-  `left #<n>: a person opened it`; `publish` checks `unchanged_since` against
-  `main` before calling `gh`.
+- **`repin-issue`**: `THIRD_PARTY_PIN` excludes case-insensitive `ryanduguid/`
+  references (`eq_ignore_ascii_case`), matching `scripts/repin_issue.py` and
+  `tests/test_repository_baseline.sh`; `\r\n` normalisation runs in
+  `canonical_digest` and `prepare` only, whilst `publish --patch` decodes raw
+  UTF-8 bytes verbatim; pagination stops at `MAX_ISSUE_PAGES = 10`; non-bot
+  issues produce `left #<n>: a person opened it`; `publish` checks
+  `unchanged_since` against `main` before calling `gh`.
 - **`binary-release`**: enforces `MAX_MEMBERS = 12`, `MAX_MEMBER_BYTES = 512 MiB`,
   `MAX_DECOMPRESSED_BYTES = 512 MiB + 64 KiB`, `64 KiB` ZIP directory cap and
   `1024`-byte digest lines; refuses PAX extended headers, ZIP64 locators/extras,
@@ -136,9 +138,9 @@ Run on Linux (`ll`) with `RUSTUP_TOOLCHAIN=1.99.1`:
 - `cargo build --locked --release --bin release-policy`
 - `cargo auditable build --locked --release --target x86_64-unknown-linux-musl --bin release-policy`
 - `cargo llvm-cov --locked --lcov --output-path rust.lcov --fail-under-lines 92`
-  (`95.15%` line coverage overall: `repin_issue.rs` `96.28%`,
-  `binary_release.rs` `87.52%`, `verify_pypi.rs` `88.89%`)
-- `python3.14 tests/parity/repin_issue.py --binary <release-policy>` (`22` inputs compared, `0` unexplained differences)
+  (`95.28%` line coverage overall: `repin_issue.rs` `96.32%`,
+  `binary_release.rs` `88.50%`, `verify_pypi.rs` `90.06%`)
+- `python3.14 tests/parity/repin_issue.py --binary <release-policy>` (`24` inputs compared, `0` unexplained differences)
 - `python3.14 tests/parity/binary_release.py --binary <release-policy>` (`37` inputs compared, `0` unexplained differences)
 - `python3.14 tests/parity/verify_pypi.py --binary <release-policy>` (`24` inputs compared, `0` unexplained differences)
 - `bash tests/test_repository_baseline.sh`, `bash tests/test_gates.sh`,
