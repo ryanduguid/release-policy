@@ -131,11 +131,17 @@ pub fn handoff_spec() -> Vec<(String, String)> {
         ("source-tar".into(), ".tar.gz".into()),
     ];
     for t in TARGETS {
-        out.push((format!("{}-archive", t.role), format!("-{}{}", t.triple, t.suffix)));
+        out.push((
+            format!("{}-archive", t.role),
+            format!("-{}{}", t.triple, t.suffix),
+        ));
     }
     out.push(("source-sbom".into(), ".spdx.json".into()));
     for t in TARGETS {
-        out.push((format!("{}-sbom", t.role), format!("-{}.spdx.json", t.triple)));
+        out.push((
+            format!("{}-sbom", t.role),
+            format!("-{}.spdx.json", t.triple),
+        ));
     }
     out
 }
@@ -144,17 +150,18 @@ static STEM_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\A[a-z0-9]+(?:-[a-z0-9]+)*\z").unwrap());
 static BINARY_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\A[a-z0-9]+(?:[-_][a-z0-9]+)*\z").unwrap());
-static VERSION_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z").unwrap());
+static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z").unwrap()
+});
 static DATA_FILE_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\A[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_][A-Za-z0-9_.-]*)*\z").unwrap()
 });
 static TOOLCHAIN_CHANNEL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\A[1-9][0-9]*\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\z").unwrap());
-static DIGEST_LINE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\A(?P<digest>[0-9a-f]{64}) [ *](?P<name>[^\r\n]+)\r?\n\z").unwrap());
-static SHA256_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\A[0-9a-f]{64}\z").unwrap());
+static DIGEST_LINE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\A(?P<digest>[0-9a-f]{64}) [ *](?P<name>[^\r\n]+)\r?\n\z").unwrap()
+});
+static SHA256_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\A[0-9a-f]{64}\z").unwrap());
 static WINDOWS_RUNTIME_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\A(?:vcruntime|msvcp|msvcr|ucrtbase|api-ms-win-crt-).*\z").unwrap()
 });
@@ -275,7 +282,10 @@ pub fn cargo_package(manifest: &Path, release_version: &str, binary: &str) -> Re
     if symlink(manifest) {
         return Err(format!("{mdisp} must not be a symbolic link"));
     }
-    let document = read_toml(manifest, &format!("{mdisp} is not a readable Cargo manifest"))?;
+    let document = read_toml(
+        manifest,
+        &format!("{mdisp} is not a readable Cargo manifest"),
+    )?;
     let Some(package) = document.get("package").and_then(toml::Value::as_table) else {
         return Err(format!("{mdisp} has no [package] table"));
     };
@@ -657,7 +667,9 @@ fn admit(members: &BTreeMap<String, (Vec<u8>, u32)>, name: &str, size: usize) ->
     }
     let existing: usize = members.values().map(|(d, _)| d.len()).sum();
     let Some(total) = existing.checked_add(size) else {
-        return Err(format!("{name} exceeds the archive's member count or size limit"));
+        return Err(format!(
+            "{name} exceeds the archive's member count or size limit"
+        ));
     };
     if members.len() >= MAX_MEMBERS || size > MAX_MEMBER_BYTES || total > MAX_DECOMPRESSED_BYTES {
         return Err(format!(
@@ -689,7 +701,9 @@ fn zip_directory_is_small(archive: &Path, archive_name: &str) -> Result<(u16, u3
     let mut handle = File::open(archive)
         .map_err(|e| py::oserror_str(&e, &archive.to_string_lossy(), OsStyle::Native))?;
     let start = size.saturating_sub((ZIP_END_SEARCH + 20) as u64);
-    handle.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
+    handle
+        .seek(SeekFrom::Start(start))
+        .map_err(|e| e.to_string())?;
     let mut tail = Vec::new();
     handle.read_to_end(&mut tail).map_err(|e| e.to_string())?;
 
@@ -700,7 +714,9 @@ fn zip_directory_is_small(archive: &Path, archive_name: &str) -> Result<(u16, u3
         .ok_or_else(|| format!("{archive_name} has no ZIP end of central directory record"))?;
 
     if end >= 20 && &tail[end - 20..end - 16] == ZIP64_LOCATOR {
-        return Err(format!("{archive_name} is a ZIP64 archive; release archives are not"));
+        return Err(format!(
+            "{archive_name} is a ZIP64 archive; release archives are not"
+        ));
     }
     let eocd = &tail[end..end + 22];
     let disk_num = u16_le(eocd, 4);
@@ -710,14 +726,18 @@ fn zip_directory_is_small(archive: &Path, archive_name: &str) -> Result<(u16, u3
     let directory = u32_le(eocd, 12);
     let cd_offset = u32_le(eocd, 16);
     let comment_len = u16_le(eocd, 20) as usize;
-    if on_disk != total || total as usize > MAX_MEMBERS || directory as usize > MAX_ZIP_DIRECTORY_BYTES
+    if on_disk != total
+        || total as usize > MAX_MEMBERS
+        || directory as usize > MAX_ZIP_DIRECTORY_BYTES
     {
         return Err(format!(
             "{archive_name} lists {total} members in a {directory}-byte directory"
         ));
     }
     if disk_num != 0 || cd_disk != 0 || end + 22 + comment_len > tail.len() {
-        return Err(format!("{archive_name}: malformed ZIP end of central directory"));
+        return Err(format!(
+            "{archive_name}: malformed ZIP end of central directory"
+        ));
     }
     Ok((total, directory, cd_offset, size))
 }
@@ -726,7 +746,9 @@ fn read_zip_members(archive: &Path) -> Result<BTreeMap<String, (Vec<u8>, u32)>> 
     let archive_name = archive_filename(archive);
     let (total, cd_size, cd_offset, file_size) = zip_directory_is_small(archive, &archive_name)?;
     if u64::from(cd_offset) + u64::from(cd_size) > file_size {
-        return Err(format!("{archive_name}: malformed ZIP central directory offset"));
+        return Err(format!(
+            "{archive_name}: malformed ZIP central directory offset"
+        ));
     }
     let mut file = File::open(archive)
         .map_err(|e| py::oserror_str(&e, &archive.to_string_lossy(), OsStyle::Native))?;
@@ -742,7 +764,9 @@ fn read_zip_members(archive: &Path) -> Result<BTreeMap<String, (Vec<u8>, u32)>> 
 
     for _ in 0..total {
         if pos + 46 > cd.len() || &cd[pos..pos + 4] != b"PK\x01\x02" {
-            return Err(format!("{archive_name}: malformed ZIP central directory entry"));
+            return Err(format!(
+                "{archive_name}: malformed ZIP central directory entry"
+            ));
         }
         let flag = u16_le(&cd, pos + 8);
         let method = u16_le(&cd, pos + 10);
@@ -756,7 +780,9 @@ fn read_zip_members(archive: &Path) -> Result<BTreeMap<String, (Vec<u8>, u32)>> 
         let local_off = u32_le(&cd, pos + 42);
         let end = pos + 46 + name_len + extra_len + comment_len;
         if end > cd.len() {
-            return Err(format!("{archive_name}: truncated ZIP central directory entry"));
+            return Err(format!(
+                "{archive_name}: truncated ZIP central directory entry"
+            ));
         }
         let name_raw = &cd[pos + 46..pos + 46 + name_len];
         let name = if flag & 0x800 != 0 {
@@ -772,7 +798,9 @@ fn read_zip_members(archive: &Path) -> Result<BTreeMap<String, (Vec<u8>, u32)>> 
             || uncomp_size == u32::MAX
             || local_off == u32::MAX
         {
-            return Err(format!("{archive_name} is a ZIP64 archive; release archives are not"));
+            return Err(format!(
+                "{archive_name} is a ZIP64 archive; release archives are not"
+            ));
         }
         if flag & 1 != 0 {
             return Err(format!("{name}: encrypted ZIP entries are unsupported"));
@@ -798,7 +826,9 @@ fn read_zip_members(archive: &Path) -> Result<BTreeMap<String, (Vec<u8>, u32)>> 
         members.insert(name, (data, mode & 0o7777));
     }
     if pos != cd.len() {
-        return Err(format!("{archive_name}: trailing data in ZIP central directory"));
+        return Err(format!(
+            "{archive_name}: trailing data in ZIP central directory"
+        ));
     }
     Ok(members)
 }
@@ -836,7 +866,9 @@ fn extract_zip_entry(
     file.read_exact(&mut local)
         .map_err(|_| format!("{archive_name}: truncated ZIP local header for {name}"))?;
     if &local[0..4] != b"PK\x03\x04" {
-        return Err(format!("Bad magic number for file header in {archive_name}"));
+        return Err(format!(
+            "Bad magic number for file header in {archive_name}"
+        ));
     }
     let name_len = u16_le(&local, 26) as u64;
     let extra_len = u16_le(&local, 28) as u64;
@@ -860,7 +892,11 @@ fn extract_zip_entry(
             }
             out
         }
-        other => return Err(format!("{name}: unsupported ZIP compression method {other}")),
+        other => {
+            return Err(format!(
+                "{name}: unsupported ZIP compression method {other}"
+            ));
+        }
     };
     let mut hasher = Hasher::new();
     hasher.update(&data);
@@ -1002,7 +1038,9 @@ fn read_tar_gz_members(archive: &Path) -> Result<BTreeMap<String, (Vec<u8>, u32)
             raw_name
         };
         if next_pax || global_pax {
-            return Err(format!("{name} uses PAX headers; release archives are USTAR"));
+            return Err(format!(
+                "{name} uses PAX headers; release archives are USTAR"
+            ));
         }
         if typeflag != b'0' && typeflag != 0 {
             return Err(format!("{name} is not a regular file"));
@@ -1287,7 +1325,10 @@ pub fn macho_linkage(executable: &[u8], triple: &str) -> Result<Vec<String>> {
         if command == 0x27 {
             return Err("the executable sets dyld environment variables".into());
         }
-        if matches!(command, 0xC | 0x8000_0018 | 0x8000_001F | 0x20 | 0x8000_0023) {
+        if matches!(
+            command,
+            0xC | 0x8000_0018 | 0x8000_001F | 0x20 | 0x8000_0023
+        ) {
             needed.push(macho_path(executable, offset, length)?);
         } else if command == MACHO_LOAD_DYLINKER {
             let text = macho_path(executable, offset, length)?;
@@ -1308,7 +1349,10 @@ pub fn macho_linkage(executable: &[u8], triple: &str) -> Result<Vec<String>> {
         .filter(|name| !matches!(MACOS_SYSTEM_LIBRARY_RE.is_match(name), Ok(true)))
         .collect();
     if !foreign.is_empty() {
-        return Err(format!("loads libraries macOS does not ship: {}", repr_list(foreign)));
+        return Err(format!(
+            "loads libraries macOS does not ship: {}",
+            repr_list(foreign)
+        ));
     }
     Ok(needed)
 }
@@ -1386,7 +1430,11 @@ pub fn toolchain(source: &Path, root: &Path) -> Result<String> {
     let source = resolve_path(source);
     let root = resolve_path(root);
     if source != root && !is_relative_to(&source, &root) {
-        return Err(format!("{} is not inside {}", source.display(), root.display()));
+        return Err(format!(
+            "{} is not inside {}",
+            source.display(),
+            root.display()
+        ));
     }
     let mut cur = Some(source.as_path());
     while let Some(directory) = cur {
@@ -1402,7 +1450,10 @@ pub fn toolchain(source: &Path, root: &Path) -> Result<String> {
             return Err(format!("{} must be a regular file", current.display()));
         }
         if current.is_file() {
-            let document = read_toml(&current, &format!("{} is not readable TOML", current.display()))?;
+            let document = read_toml(
+                &current,
+                &format!("{} is not readable TOML", current.display()),
+            )?;
             let channel = document
                 .get("toolchain")
                 .and_then(toml::Value::as_table)
@@ -1467,8 +1518,14 @@ pub fn receive(
     }
     let digest_file = &entries[&digest_name];
     let archive = &entries[&name];
-    if std::fs::metadata(digest_file).map_err(|e| e.to_string())?.len() > MAX_DIGEST_BYTES {
-        return Err(format!("{name}.sha256 is not one sha256sum line for {name}"));
+    if std::fs::metadata(digest_file)
+        .map_err(|e| e.to_string())?
+        .len()
+        > MAX_DIGEST_BYTES
+    {
+        return Err(format!(
+            "{name}.sha256 is not one sha256sum line for {name}"
+        ));
     }
     if std::fs::metadata(archive).map_err(|e| e.to_string())?.len() > MAX_ARCHIVE_BYTES as u64 {
         return Err(format!("{name} exceeds the archive size limit"));
@@ -1476,10 +1533,14 @@ pub fn receive(
     let line_bytes = read_bytes(digest_file)?;
     let line = String::from_utf8_lossy(&line_bytes);
     let Some(caps) = DIGEST_LINE_RE.captures(&line) else {
-        return Err(format!("{name}.sha256 is not one sha256sum line for {name}"));
+        return Err(format!(
+            "{name}.sha256 is not one sha256sum line for {name}"
+        ));
     };
     if caps["name"] != *name {
-        return Err(format!("{name}.sha256 is not one sha256sum line for {name}"));
+        return Err(format!(
+            "{name}.sha256 is not one sha256sum line for {name}"
+        ));
     }
     let expected_digest = caps["digest"].to_owned();
 
@@ -1517,7 +1578,9 @@ pub fn receive(
         }
         for document in shipped {
             if read_bytes(&extract_dir.join(document))? != read_bytes(&tagged[document])? {
-                return Err(format!("{name}'s {document} differs from the tagged {document}"));
+                return Err(format!(
+                    "{name}'s {document} differs from the tagged {document}"
+                ));
             }
         }
         Ok(())
@@ -1564,7 +1627,11 @@ fn file_sha256(path: &Path) -> Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }
 
 pub fn digests(dist: &Path, stem: &str, version: &str) -> Result<Vec<String>> {
@@ -1640,7 +1707,9 @@ pub fn accept(
             &own
         } else {
             if file_sha256(&own)? != *want {
-                return Err(format!("{name} from the admit job differs from this job's own"));
+                return Err(format!(
+                    "{name} from the admit job differs from this job's own"
+                ));
             }
             received
         };

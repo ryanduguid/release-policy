@@ -7,10 +7,10 @@ use crc32fast::Hasher;
 use flate2::write::GzEncoder;
 use flate2::{Compression, GzBuilder};
 use release_policy::binary_release::{
-    DOCUMENTS, MAX_ARCHIVE_BYTES, MAX_DECOMPRESSED_BYTES, MAX_MEMBERS, TARGETS, accept,
-    asset_name, binaries, cargo_package, confined_path, data_names, digests, find_data_files,
-    find_documents, handoff_names, linkage, macho_linkage, member_names, needed_libraries,
-    package, receive, resolve_path, sbom_lists, smoke_with_timeout, toolchain, verify,
+    DOCUMENTS, MAX_ARCHIVE_BYTES, MAX_DECOMPRESSED_BYTES, MAX_MEMBERS, TARGETS, accept, asset_name,
+    binaries, cargo_package, confined_path, data_names, digests, find_data_files, find_documents,
+    handoff_names, linkage, macho_linkage, member_names, needed_libraries, package, receive,
+    resolve_path, sbom_lists, smoke_with_timeout, toolchain, verify,
 };
 use release_policy::common::sha256;
 use serde_json::json;
@@ -30,7 +30,9 @@ const MACOS_ARM: &str = "aarch64-apple-darwin";
 const WIN: &str = "x86_64-pc-windows-msvc";
 const WIN_ARM: &str = "aarch64-pc-windows-msvc";
 
-fn write_tar_raw(path: &Path, entries: &[(&str, &[u8], u8, u32, &[u8])]) {
+type TarEntry<'a> = (&'a str, &'a [u8], u8, u32, &'a [u8]);
+
+fn write_tar_raw(path: &Path, entries: &[TarEntry<'_>]) {
     let mut tar = Vec::new();
     for &(name, data, typeflag, mode, prefix) in entries {
         let mut hdr = [0u8; 512];
@@ -54,7 +56,9 @@ fn write_tar_raw(path: &Path, entries: &[(&str, &[u8], u8, u32, &[u8])]) {
     }
     tar.resize(tar.len() + 1024, 0);
     let file = File::create(path).unwrap();
-    let mut gz = GzBuilder::new().mtime(0).write(file, Compression::default());
+    let mut gz = GzBuilder::new()
+        .mtime(0)
+        .write(file, Compression::default());
     gz.write_all(&tar).unwrap();
     gz.finish().unwrap();
 }
@@ -182,8 +186,14 @@ fn setup_tree(dir: &Path) {
 
 #[test]
 fn validation_names_documents_and_data_files() {
-    assert_eq!(asset_name("my-tool", "1.2.3", LINUX).unwrap(), "my-tool-1.2.3-x86_64-unknown-linux-musl.tar.gz");
-    assert_eq!(asset_name("my-tool", "0.0.1", WIN).unwrap(), "my-tool-0.0.1-x86_64-pc-windows-msvc.zip");
+    assert_eq!(
+        asset_name("my-tool", "1.2.3", LINUX).unwrap(),
+        "my-tool-1.2.3-x86_64-unknown-linux-musl.tar.gz"
+    );
+    assert_eq!(
+        asset_name("my-tool", "0.0.1", WIN).unwrap(),
+        "my-tool-0.0.1-x86_64-pc-windows-msvc.zip"
+    );
     assert!(asset_name("BadStem", "1.0.0", LINUX).is_err());
     assert!(asset_name("my-tool", "01.0.0", LINUX).is_err());
     assert!(asset_name("my-tool", "1.0.0", "riscv64").is_err());
@@ -195,7 +205,10 @@ fn validation_names_documents_and_data_files() {
 
     assert_eq!(
         data_names("sub/a.txt\n\n  b.json  \n").unwrap(),
-        [("a.txt".into(), "sub/a.txt".into()), ("b.json".into(), "b.json".into())]
+        [
+            ("a.txt".into(), "sub/a.txt".into()),
+            ("b.json".into(), "b.json".into())
+        ]
     );
     assert!(data_names("../evil").is_err());
     assert!(data_names("sub/LICENSE").is_err());
@@ -207,7 +220,9 @@ fn validation_names_documents_and_data_files() {
         member_names("b a", WIN, &["LICENSE", "README.md"], &["cfg.json"]).unwrap(),
         ["b.exe", "a.exe", "LICENSE", "README.md", "cfg.json"]
     );
-    let too_many = ["d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10", "d11"];
+    let too_many = [
+        "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10", "d11",
+    ];
     assert!(member_names("a b", LINUX, &DOCUMENTS, &too_many).is_err());
 
     let tmp = tempdir();
@@ -215,7 +230,10 @@ fn validation_names_documents_and_data_files() {
     setup_tree(base);
     let docs = find_documents(&base.join("crate"), base).unwrap();
     assert_eq!(docs.len(), 3);
-    assert_eq!(std::fs::read_to_string(&docs["LICENSE"]).unwrap(), "apache\n");
+    assert_eq!(
+        std::fs::read_to_string(&docs["LICENSE"]).unwrap(),
+        "apache\n"
+    );
 
     let empty = base.join("empty");
     std::fs::create_dir(&empty).unwrap();
@@ -249,37 +267,84 @@ fn cargo_package_and_toolchain_checks() {
         "[package]\nname = \"demo\"\nversion = \"1.2.3\"\npublish = false\n[[bin]]\nname = \"helper\"\n",
     )
     .unwrap();
-    assert_eq!(cargo_package(&manifest, "1.2.3", "demo helper").unwrap(), "demo");
+    assert_eq!(
+        cargo_package(&manifest, "1.2.3", "demo helper").unwrap(),
+        "demo"
+    );
     assert!(cargo_package(&manifest, "1.2.4", "demo").is_err());
     assert!(cargo_package(&manifest, "1.2.3", "missing").is_err());
 
-    std::fs::write(&manifest, "[package]\nname = \"demo\"\nversion = \"1.2.3\"\n").unwrap();
-    assert!(cargo_package(&manifest, "1.2.3", "demo").unwrap_err().contains("publish = false"));
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"demo\"\nversion = \"1.2.3\"\n",
+    )
+    .unwrap();
+    assert!(
+        cargo_package(&manifest, "1.2.3", "demo")
+            .unwrap_err()
+            .contains("publish = false")
+    );
 
-    std::fs::write(&manifest, "[package]\nname = \"demo\"\nversion.workspace = true\npublish = false\n").unwrap();
-    assert!(cargo_package(&manifest, "1.2.3", "demo").unwrap_err().contains("workspace inheritance"));
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"demo\"\nversion.workspace = true\npublish = false\n",
+    )
+    .unwrap();
+    assert!(
+        cargo_package(&manifest, "1.2.3", "demo")
+            .unwrap_err()
+            .contains("workspace inheritance")
+    );
 
     std::fs::write(&manifest, "[workspace]\n").unwrap();
-    assert!(cargo_package(&manifest, "1.2.3", "demo").unwrap_err().contains("[package]"));
+    assert!(
+        cargo_package(&manifest, "1.2.3", "demo")
+            .unwrap_err()
+            .contains("[package]")
+    );
 
     std::fs::write(&manifest, b"\xff").unwrap();
     assert!(cargo_package(&manifest, "1.2.3", "demo").is_err());
 
     // Toolchain resolution: root fallback then component override, legacy refused.
-    std::fs::write(root.join("rust-toolchain.toml"), "[toolchain]\nchannel = \"1.99.1\"\n").unwrap();
+    std::fs::write(
+        root.join("rust-toolchain.toml"),
+        "[toolchain]\nchannel = \"1.99.1\"\n",
+    )
+    .unwrap();
     assert_eq!(toolchain(&comp, root).unwrap(), "1.99.1");
 
-    std::fs::write(comp.join("rust-toolchain.toml"), "[toolchain]\nchannel = \"nightly\"\n").unwrap();
-    assert!(toolchain(&comp, root).unwrap_err().contains("MAJOR.MINOR.PATCH"));
+    std::fs::write(
+        comp.join("rust-toolchain.toml"),
+        "[toolchain]\nchannel = \"nightly\"\n",
+    )
+    .unwrap();
+    assert!(
+        toolchain(&comp, root)
+            .unwrap_err()
+            .contains("MAJOR.MINOR.PATCH")
+    );
 
-    std::fs::write(comp.join("rust-toolchain.toml"), "[toolchain]\nchannel = \"1.98.0\"\n").unwrap();
+    std::fs::write(
+        comp.join("rust-toolchain.toml"),
+        "[toolchain]\nchannel = \"1.98.0\"\n",
+    )
+    .unwrap();
     assert_eq!(toolchain(&comp, root).unwrap(), "1.98.0");
 
     std::fs::write(comp.join("rust-toolchain"), "1.99.1\n").unwrap();
-    assert!(toolchain(&comp, root).unwrap_err().contains("use rust-toolchain.toml"));
+    assert!(
+        toolchain(&comp, root)
+            .unwrap_err()
+            .contains("use rust-toolchain.toml")
+    );
 
     let outside = tempdir();
-    assert!(toolchain(outside.path(), root).unwrap_err().contains("is not inside"));
+    assert!(
+        toolchain(outside.path(), root)
+            .unwrap_err()
+            .contains("is not inside")
+    );
 }
 
 #[test]
@@ -309,8 +374,19 @@ fn package_and_verify_roundtrip_and_traps() {
     assert!(tgz.exists());
     // Refuses overwrite.
     assert!(
-        package(&execs, "app", LINUX, "my-app", "1.2.3", &root.join("crate"), root, 0, &out, "")
-            .is_err()
+        package(
+            &execs,
+            "app",
+            LINUX,
+            "my-app",
+            "1.2.3",
+            &root.join("crate"),
+            root,
+            0,
+            &out,
+            ""
+        )
+        .is_err()
     );
 
     let extracted = root.join("extracted_tgz");
@@ -341,55 +417,226 @@ fn package_and_verify_roundtrip_and_traps() {
 
     // Malformed / trapped archives.
     let bad = root.join("bad.zip");
-    build_single_zip(&bad, "app.exe", b"x", (0o100_644) << 16, 8, 0, &[], false, true);
-    assert!(verify(&bad, "app", WIN, None, "").unwrap_err().contains("ZIP64"));
+    build_single_zip(
+        &bad,
+        "app.exe",
+        b"x",
+        (0o100_644) << 16,
+        8,
+        0,
+        &[],
+        false,
+        true,
+    );
+    assert!(
+        verify(&bad, "app", WIN, None, "")
+            .unwrap_err()
+            .contains("ZIP64")
+    );
 
-    build_single_zip(&bad, "app.exe", b"x", (0o100_644) << 16, 8, 0, &[1, 0, 0, 0], false, false);
-    assert!(verify(&bad, "app", WIN, None, "").unwrap_err().contains("ZIP64"));
+    build_single_zip(
+        &bad,
+        "app.exe",
+        b"x",
+        (0o100_644) << 16,
+        8,
+        0,
+        &[1, 0, 0, 0],
+        false,
+        false,
+    );
+    assert!(
+        verify(&bad, "app", WIN, None, "")
+            .unwrap_err()
+            .contains("ZIP64")
+    );
 
-    build_single_zip(&bad, "app.exe", b"x", (0o100_644) << 16, 8, 0, &[], true, false);
-    assert!(verify(&bad, "app", WIN, None, "").unwrap_err().contains("Bad CRC-32"));
+    build_single_zip(
+        &bad,
+        "app.exe",
+        b"x",
+        (0o100_644) << 16,
+        8,
+        0,
+        &[],
+        true,
+        false,
+    );
+    assert!(
+        verify(&bad, "app", WIN, None, "")
+            .unwrap_err()
+            .contains("Bad CRC-32")
+    );
 
-    build_single_zip(&bad, "app.exe/", b"", (0o040_755) << 16, 0, 0, &[], false, false);
-    assert!(verify(&bad, "app", WIN, None, "").unwrap_err().contains("not a regular file"));
+    build_single_zip(
+        &bad,
+        "app.exe/",
+        b"",
+        (0o040_755) << 16,
+        0,
+        0,
+        &[],
+        false,
+        false,
+    );
+    assert!(
+        verify(&bad, "app", WIN, None, "")
+            .unwrap_err()
+            .contains("not a regular file")
+    );
 
-    build_single_zip(&bad, "app.exe", b"x", (0o120_777) << 16, 0, 0, &[], false, false);
-    assert!(verify(&bad, "app", WIN, None, "").unwrap_err().contains("not a regular file"));
+    build_single_zip(
+        &bad,
+        "app.exe",
+        b"x",
+        (0o120_777) << 16,
+        0,
+        0,
+        &[],
+        false,
+        false,
+    );
+    assert!(
+        verify(&bad, "app", WIN, None, "")
+            .unwrap_err()
+            .contains("not a regular file")
+    );
 
-    build_single_zip(&bad, "app.exe", b"x", (0o100_644) << 16, 99, 0, &[], false, false);
-    assert!(verify(&bad, "app", WIN, None, "").unwrap_err().contains("unsupported ZIP compression method"));
+    build_single_zip(
+        &bad,
+        "app.exe",
+        b"x",
+        (0o100_644) << 16,
+        99,
+        0,
+        &[],
+        false,
+        false,
+    );
+    assert!(
+        verify(&bad, "app", WIN, None, "")
+            .unwrap_err()
+            .contains("unsupported ZIP compression method")
+    );
 
-    build_single_zip(&bad, "app.exe", b"x", (0o100_644) << 16, 8, 1, &[], false, false);
-    assert!(verify(&bad, "app", WIN, None, "").unwrap_err().contains("encrypted ZIP"));
+    build_single_zip(
+        &bad,
+        "app.exe",
+        b"x",
+        (0o100_644) << 16,
+        8,
+        1,
+        &[],
+        false,
+        false,
+    );
+    assert!(
+        verify(&bad, "app", WIN, None, "")
+            .unwrap_err()
+            .contains("encrypted ZIP")
+    );
 
     std::fs::write(&bad, b"not a zip").unwrap();
-    assert!(verify(&bad, "app", WIN, None, "").unwrap_err().contains("end of central directory"));
+    assert!(
+        verify(&bad, "app", WIN, None, "")
+            .unwrap_err()
+            .contains("end of central directory")
+    );
 
     // Tar traps: PAX header, symlink, dir, bad checksum, traversal, non-executable, bomb.
     let bad_tar = root.join("bad.tar.gz");
-    write_tar_raw(&bad_tar, &[("PaxHeaders.0/app", b"11 path=x\n", b'x', 0o644, b""), ("app", b"x", b'0', 0o755, b"")]);
-    assert!(verify(&bad_tar, "app", LINUX, None, "").unwrap_err().contains("PAX headers"));
+    write_tar_raw(
+        &bad_tar,
+        &[
+            ("PaxHeaders.0/app", b"11 path=x\n", b'x', 0o644, b""),
+            ("app", b"x", b'0', 0o755, b""),
+        ],
+    );
+    assert!(
+        verify(&bad_tar, "app", LINUX, None, "")
+            .unwrap_err()
+            .contains("PAX headers")
+    );
 
-    write_tar_raw(&bad_tar, &[("pax_global_header", b"11 comment=a\n", b'g', 0o644, b""), ("app", b"x", b'0', 0o755, b"")]);
-    assert!(verify(&bad_tar, "app", LINUX, None, "").unwrap_err().contains("PAX headers"));
+    write_tar_raw(
+        &bad_tar,
+        &[
+            ("pax_global_header", b"11 comment=a\n", b'g', 0o644, b""),
+            ("app", b"x", b'0', 0o755, b""),
+        ],
+    );
+    assert!(
+        verify(&bad_tar, "app", LINUX, None, "")
+            .unwrap_err()
+            .contains("PAX headers")
+    );
 
     write_tar_raw(&bad_tar, &[("link", b"", b'2', 0o777, b"")]);
-    assert!(verify(&bad_tar, "app", LINUX, None, "").unwrap_err().contains("not a regular file"));
+    assert!(
+        verify(&bad_tar, "app", LINUX, None, "")
+            .unwrap_err()
+            .contains("not a regular file")
+    );
 
-    write_tar_raw(&bad_tar, &[("app", b"x", b'0', 0o755, b""), ("app", b"y", b'0', 0o755, b"")]);
-    assert!(verify(&bad_tar, "app", LINUX, None, "").unwrap_err().contains("duplicate member"));
+    write_tar_raw(
+        &bad_tar,
+        &[
+            ("app", b"x", b'0', 0o755, b""),
+            ("app", b"y", b'0', 0o755, b""),
+        ],
+    );
+    assert!(
+        verify(&bad_tar, "app", LINUX, None, "")
+            .unwrap_err()
+            .contains("duplicate member")
+    );
 
     write_tar_raw(&bad_tar, &[("../app", b"x", b'0', 0o755, b"")]);
-    assert!(verify(&bad_tar, "app", LINUX, None, "").unwrap_err().contains("unsafe member name"));
+    assert!(
+        verify(&bad_tar, "app", LINUX, None, "")
+            .unwrap_err()
+            .contains("unsafe member name")
+    );
 
-    write_tar_raw(&bad_tar, &[("app", b"x", b'0', 0o644, b""), ("LICENSE", b"l", b'0', 0o644, b""), ("README.md", b"r", b'0', 0o644, b"")]);
-    assert!(verify(&bad_tar, "app", LINUX, None, "").unwrap_err().contains("not executable"));
+    write_tar_raw(
+        &bad_tar,
+        &[
+            ("app", b"x", b'0', 0o644, b""),
+            ("LICENSE", b"l", b'0', 0o644, b""),
+            ("README.md", b"r", b'0', 0o644, b""),
+        ],
+    );
+    assert!(
+        verify(&bad_tar, "app", LINUX, None, "")
+            .unwrap_err()
+            .contains("not executable")
+    );
 
-    write_tar_raw(&bad_tar, &[("LICENSE", b"l", b'0', 0o644, b""), ("README.md", b"r", b'0', 0o644, b"")]);
-    assert!(verify(&bad_tar, "app", LINUX, None, "").unwrap_err().contains("executable app is missing"));
+    write_tar_raw(
+        &bad_tar,
+        &[
+            ("LICENSE", b"l", b'0', 0o644, b""),
+            ("README.md", b"r", b'0', 0o644, b""),
+        ],
+    );
+    assert!(
+        verify(&bad_tar, "app", LINUX, None, "")
+            .unwrap_err()
+            .contains("executable app is missing")
+    );
 
-    write_tar_raw(&bad_tar, &[("app", b"x", b'0', 0o755, b""), ("README.md", b"r", b'0', 0o644, b"")]);
-    assert!(verify(&bad_tar, "app", LINUX, None, "").unwrap_err().contains("members are"));
+    write_tar_raw(
+        &bad_tar,
+        &[
+            ("app", b"x", b'0', 0o755, b""),
+            ("README.md", b"r", b'0', 0o644, b""),
+        ],
+    );
+    assert!(
+        verify(&bad_tar, "app", LINUX, None, "")
+            .unwrap_err()
+            .contains("members are")
+    );
 
     // Corrupt tar checksum
     let mut bad_hdr_tar = vec![0u8; 1536];
@@ -398,7 +645,11 @@ fn package_and_verify_roundtrip_and_traps() {
     let mut gz = GzEncoder::new(File::create(&bad_tar).unwrap(), Compression::default());
     gz.write_all(&bad_hdr_tar).unwrap();
     gz.finish().unwrap();
-    assert!(verify(&bad_tar, "app", LINUX, None, "").unwrap_err().contains("checksum"));
+    assert!(
+        verify(&bad_tar, "app", LINUX, None, "")
+            .unwrap_err()
+            .contains("checksum")
+    );
 
     // Archive decompression bomb (> MAX_DECOMPRESSED_BYTES of compressed zeros)
     let bomb = root.join("bomb.tar.gz");
@@ -411,15 +662,28 @@ fn package_and_verify_roundtrip_and_traps() {
         }
         gz.finish().unwrap();
     }
-    assert!(verify(&bomb, "app", LINUX, None, "").unwrap_err().contains("size limit"));
+    assert!(
+        verify(&bomb, "app", LINUX, None, "")
+            .unwrap_err()
+            .contains("size limit")
+    );
 
     // Oversize file check without consuming disk on Unix sparse files
     #[cfg(unix)]
     {
         let huge = root.join("huge.tar.gz");
-        let f = OpenOptions::new().write(true).create(true).truncate(true).open(&huge).unwrap();
+        let f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&huge)
+            .unwrap();
         f.set_len((MAX_ARCHIVE_BYTES as u64) + 1).unwrap();
-        assert!(verify(&huge, "app", LINUX, None, "").unwrap_err().contains("archive size limit"));
+        assert!(
+            verify(&huge, "app", LINUX, None, "")
+                .unwrap_err()
+                .contains("archive size limit")
+        );
     }
 }
 
@@ -428,31 +692,67 @@ fn linkage_and_macho_linkage_validation() {
     let linux_ok = "Format: elf64-x86-64\nArch: x86_64\nNeededLibraries [\n]\n";
     assert!(linkage(linux_ok, LINUX).unwrap().is_empty());
 
-    let linux_interp = "Format: elf64-x86-64\nArch: x86_64\nType: PT_INTERP\nNeededLibraries [\n]\n";
-    assert!(linkage(linux_interp, LINUX).unwrap_err().contains("not a static"));
+    let linux_interp =
+        "Format: elf64-x86-64\nArch: x86_64\nType: PT_INTERP\nNeededLibraries [\n]\n";
+    assert!(
+        linkage(linux_interp, LINUX)
+            .unwrap_err()
+            .contains("not a static")
+    );
 
     let linux_so = "Format: elf64-x86-64\nArch: x86_64\nNeededLibraries [\n  libc.so.6\n]\n";
     assert!(linkage(linux_so, LINUX).unwrap_err().contains("libc.so.6"));
 
-    assert!(linkage(linux_ok, LINUX_ARM).unwrap_err().contains("not an aarch64"));
-    assert!(linkage("Format: a\nFormat: b\n", LINUX).unwrap_err().contains("more than one object"));
-    assert!(linkage("Format: elf64-x86-64\nArch: x86_64\n", LINUX).unwrap_err().contains("no NeededLibraries"));
+    assert!(
+        linkage(linux_ok, LINUX_ARM)
+            .unwrap_err()
+            .contains("not an aarch64")
+    );
+    assert!(
+        linkage("Format: a\nFormat: b\n", LINUX)
+            .unwrap_err()
+            .contains("more than one object")
+    );
+    assert!(
+        linkage("Format: elf64-x86-64\nArch: x86_64\n", LINUX)
+            .unwrap_err()
+            .contains("no NeededLibraries")
+    );
     assert!(needed_libraries("bad").is_err());
 
     let win_ok = "Format: COFF-x86-64\nArch: x86_64\nNeededLibraries [\n  KERNEL32.dll\n  api-ms-win-core-synch-l1-2-0.dll\n]\n";
-    assert_eq!(linkage(win_ok, WIN).unwrap(), ["KERNEL32.dll", "api-ms-win-core-synch-l1-2-0.dll"]);
+    assert_eq!(
+        linkage(win_ok, WIN).unwrap(),
+        ["KERNEL32.dll", "api-ms-win-core-synch-l1-2-0.dll"]
+    );
 
     let win_rt = "Format: COFF-ARM64\nArch: aarch64\nNeededLibraries [\n  VCRUNTIME140.dll\n]\n";
-    assert!(linkage(win_rt, WIN_ARM).unwrap_err().contains("C runtime DLLs"));
+    assert!(
+        linkage(win_rt, WIN_ARM)
+            .unwrap_err()
+            .contains("C runtime DLLs")
+    );
 
     let win_path = "Format: COFF-x86-64\nArch: x86_64\nNeededLibraries [\n  C:\\bad.dll\n]\n";
     assert!(linkage(win_path, WIN).unwrap_err().contains("by path"));
 
     let win_foreign = "Format: COFF-x86-64\nArch: x86_64\nNeededLibraries [\n  zlib1.dll\n]\n";
-    assert!(linkage(win_foreign, WIN).unwrap_err().contains("outside the pinned Windows system set"));
+    assert!(
+        linkage(win_foreign, WIN)
+            .unwrap_err()
+            .contains("outside the pinned Windows system set")
+    );
 
-    assert!(linkage(linux_ok, MACOS).unwrap_err().contains("load commands"));
-    assert!(macho_linkage(b"", LINUX).unwrap_err().contains("only a macOS"));
+    assert!(
+        linkage(linux_ok, MACOS)
+            .unwrap_err()
+            .contains("load commands")
+    );
+    assert!(
+        macho_linkage(b"", LINUX)
+            .unwrap_err()
+            .contains("only a macOS")
+    );
 
     let arm_ok = macho_binary(
         0x0100_000C,
@@ -474,31 +774,78 @@ fn linkage_and_macho_linkage_validation() {
         ]
     );
 
-    assert!(macho_linkage(&arm_ok, MACOS).unwrap_err().contains("x86_64 Mach-O"));
-    assert!(macho_linkage(b"\xca\xfe\xba\xbe", MACOS_ARM).unwrap_err().contains("thin 64-bit"));
-    assert!(macho_linkage(b"\xcf\xfa\xed\xfe\x00", MACOS_ARM).unwrap_err().contains("malformed"));
+    assert!(
+        macho_linkage(&arm_ok, MACOS)
+            .unwrap_err()
+            .contains("x86_64 Mach-O")
+    );
+    assert!(
+        macho_linkage(b"\xca\xfe\xba\xbe", MACOS_ARM)
+            .unwrap_err()
+            .contains("thin 64-bit")
+    );
+    assert!(
+        macho_linkage(b"\xcf\xfa\xed\xfe\x00", MACOS_ARM)
+            .unwrap_err()
+            .contains("malformed")
+    );
 
     let bad_type = macho_binary(0x0100_0007, 6, &[]);
-    assert!(macho_linkage(&bad_type, MACOS).unwrap_err().contains("file type"));
+    assert!(
+        macho_linkage(&bad_type, MACOS)
+            .unwrap_err()
+            .contains("file type")
+    );
 
-    let rpath = macho_binary(0x0100_000C, 2, &[(0x8000_001C, &macho_str_cmd(b"@executable_path"))]);
-    assert!(macho_linkage(&rpath, MACOS_ARM).unwrap_err().contains("run-path"));
+    let rpath = macho_binary(
+        0x0100_000C,
+        2,
+        &[(0x8000_001C, &macho_str_cmd(b"@executable_path"))],
+    );
+    assert!(
+        macho_linkage(&rpath, MACOS_ARM)
+            .unwrap_err()
+            .contains("run-path")
+    );
 
     let dyld_env = macho_binary(0x0100_000C, 2, &[(0x27, &[])]);
-    assert!(macho_linkage(&dyld_env, MACOS_ARM).unwrap_err().contains("environment variables"));
+    assert!(
+        macho_linkage(&dyld_env, MACOS_ARM)
+            .unwrap_err()
+            .contains("environment variables")
+    );
 
     let bad_dylinker = macho_binary(0x0100_000C, 2, &[(0xE, &macho_str_cmd(b"/tmp/dyld"))]);
-    assert!(macho_linkage(&bad_dylinker, MACOS_ARM).unwrap_err().contains("dynamic linker"));
+    assert!(
+        macho_linkage(&bad_dylinker, MACOS_ARM)
+            .unwrap_err()
+            .contains("dynamic linker")
+    );
 
-    let foreign_mac = macho_binary(0x0100_000C, 2, &[(0xC, &macho_str_cmd(b"/opt/homebrew/lib/libz.dylib"))]);
-    assert!(macho_linkage(&foreign_mac, MACOS_ARM).unwrap_err().contains("macOS does not ship"));
+    let foreign_mac = macho_binary(
+        0x0100_000C,
+        2,
+        &[(0xC, &macho_str_cmd(b"/opt/homebrew/lib/libz.dylib"))],
+    );
+    assert!(
+        macho_linkage(&foreign_mac, MACOS_ARM)
+            .unwrap_err()
+            .contains("macOS does not ship")
+    );
 
     let mismatched_fw = macho_binary(
         0x0100_000C,
         2,
-        &[(0xC, &macho_str_cmd(b"/System/Library/Frameworks/Foo.framework/Versions/A/Bar"))],
+        &[(
+            0xC,
+            &macho_str_cmd(b"/System/Library/Frameworks/Foo.framework/Versions/A/Bar"),
+        )],
     );
-    assert!(macho_linkage(&mismatched_fw, MACOS_ARM).unwrap_err().contains("macOS does not ship"));
+    assert!(
+        macho_linkage(&mismatched_fw, MACOS_ARM)
+            .unwrap_err()
+            .contains("macOS does not ship")
+    );
 }
 
 #[test]
@@ -613,7 +960,9 @@ fn receive_digests_sbom_accept_and_cli() {
     let mut map: BTreeMap<String, String> = BTreeMap::new();
     for (role, fname) in &names {
         let data = if role.ends_with("-sbom") {
-            json!({"packages": [{"name": "demo"}]}).to_string().into_bytes()
+            json!({"packages": [{"name": "demo"}]})
+                .to_string()
+                .into_bytes()
         } else {
             format!("payload:{role}").into_bytes()
         };
@@ -642,10 +991,25 @@ fn receive_digests_sbom_accept_and_cli() {
     assert!(accept(&incoming_all, &pub_dist, stem, version, &[]).is_err());
     let mut dup = digest_args.clone();
     dup.push(digest_args[0].clone());
-    assert!(accept(&incoming_all, &pub_dist, stem, version, &dup).unwrap_err().contains("repeated"));
+    assert!(
+        accept(&incoming_all, &pub_dist, stem, version, &dup)
+            .unwrap_err()
+            .contains("repeated")
+    );
 
     // CLI integration + confined_path + smoke via FakeGh.
-    let assets_out = cli(root, &["binary-release", "assets", "--stem", stem, "--version", version], "");
+    let assets_out = cli(
+        root,
+        &[
+            "binary-release",
+            "assets",
+            "--stem",
+            stem,
+            "--version",
+            version,
+        ],
+        "",
+    );
     assert_eq!(assets_out.code, 0);
     assert_eq!(assets_out.stdout.lines().count(), names.len());
 
@@ -676,7 +1040,10 @@ fn receive_digests_sbom_accept_and_cli() {
         "",
     );
     assert_eq!(bad_epoch.code, 1);
-    assert_eq!(bad_epoch.stderr, "binary_release: epoch is not a Unix time: '-1'\n");
+    assert_eq!(
+        bad_epoch.stderr,
+        "binary_release: epoch is not a Unix time: '-1'\n"
+    );
 
     let sbom_ok = cli(
         root,
@@ -693,17 +1060,28 @@ fn receive_digests_sbom_accept_and_cli() {
     assert_eq!(sbom_ok.code, 0);
     assert_eq!(
         sbom_ok.stdout,
-        format!("{} lists demo\n", sbom_path.file_name().unwrap().to_str().unwrap())
+        format!(
+            "{} lists demo\n",
+            sbom_path.file_name().unwrap().to_str().unwrap()
+        )
     );
 
     let fake = FakeGh::program(
         "smoke-app",
         json!([rule(&["--version"], "smoke-app 1.2.3\nextra\n", "", 0)]),
     );
-    let smoke_exe = fake.bin().join(format!("smoke-app{}", std::env::consts::EXE_SUFFIX));
+    let smoke_exe = fake
+        .bin()
+        .join(format!("smoke-app{}", std::env::consts::EXE_SUFFIX));
     let mut env_pairs = fake.env();
-    env_pairs.push(("RUNNER_TEMP".into(), fake.bin().parent().unwrap().to_string_lossy().into_owned()));
-    let env_refs: Vec<(&str, &str)> = env_pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    env_pairs.push((
+        "RUNNER_TEMP".into(),
+        fake.bin().parent().unwrap().to_string_lossy().into_owned(),
+    ));
+    let env_refs: Vec<(&str, &str)> = env_pairs
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
     let smoke_out = cli_env(
         root,
         &[
@@ -736,10 +1114,18 @@ fn receive_digests_sbom_accept_and_cli() {
         &env_refs,
     );
     assert_eq!(smoke_bad.code, 1);
-    assert!(smoke_bad.stderr.contains("expected a first line ending in ' 1.2.3'"));
+    assert!(
+        smoke_bad
+            .stderr
+            .contains("expected a first line ending in ' 1.2.3'")
+    );
 
     // Outside trusted base refused by confined_path
-    let outside_base = if cfg!(windows) { r"C:\outside\nowhere" } else { "/etc/passwd" };
+    let outside_base = if cfg!(windows) {
+        r"C:\outside\nowhere"
+    } else {
+        "/etc/passwd"
+    };
     assert!(
         confined_path(outside_base)
             .unwrap_err()

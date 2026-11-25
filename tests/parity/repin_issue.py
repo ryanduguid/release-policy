@@ -146,6 +146,7 @@ def run_cmd(cmd: list[str], cwd: Path, env: dict[str, str]) -> subprocess.Comple
         cmd,
         cwd=cwd,
         env=env,
+        stdin=subprocess.DEVNULL,
         text=True,
         capture_output=True,
     )
@@ -235,6 +236,23 @@ def compare_publish_scenario(
         current = info["first"]
 
     bin_dir, scenario = install_fake_gh(case_dir)
+    if any(
+        isinstance(item.get("body"), str) and item["body"] == "__CURRENT_BODY__"
+        for r in rules
+        if "stdout" in r
+        for item in (json.loads(r["stdout"]) if r["stdout"].startswith("[") else [])
+        if isinstance(item, dict)
+    ):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import repin_issue as py_repin  # noqa: E402
+
+        real_body = py_repin.issue_body(target, patch_bytes.decode("utf-8"))
+        rules = [
+            {**r, "stdout": r["stdout"].replace('"__CURRENT_BODY__"', json.dumps(real_body))}
+            if "stdout" in r
+            else r
+            for r in rules
+        ]
     results = []
     for tool_name, cmd in (
         (
@@ -324,11 +342,6 @@ def main() -> int:
         target_repo = make_repo(tmp, "body_ref", pin_mode="current")
         target = target_repo["head"]
         patch = "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
-        # Build matching issue body using the Python script's own issue_body function.
-        sys.path.insert(0, str(ROOT / "scripts"))
-        import repin_issue as py_repin  # noqa: E402
-
-        body = py_repin.issue_body(target, patch)
         compare_publish_scenario(
             binary,
             tmp,
@@ -369,7 +382,14 @@ def main() -> int:
                 {
                     "args": ["api", "repos/o/r/issues?state=open&per_page=100&page=1"],
                     "stdout": json.dumps(
-                        [{"number": 12, "title": TITLE, "body": body, "user": {"login": BOT}}]
+                        [
+                            {
+                                "number": 12,
+                                "title": TITLE,
+                                "body": "__CURRENT_BODY__",
+                                "user": {"login": BOT},
+                            }
+                        ]
                     ),
                 }
             ],

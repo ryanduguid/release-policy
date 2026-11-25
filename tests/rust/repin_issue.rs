@@ -72,14 +72,14 @@ fn canonical_digest_normalises_crlf_and_third_party_pins() {
 
 #[test]
 fn prepare_detects_stale_pin_writes_patch_and_reports_current() {
-    let (repo, first, _pinned, changed) = setup_repo();
+    let (repo, first, pinned, changed) = setup_repo();
     let patch_dir = tempdir();
     let patch = patch_dir.path().join("repin.patch");
 
-    // Current when pinned commit (`changed`) and target share the updated action tree.
-    repo.write(WORKFLOW, workflow_text(&changed, ""));
-    let cur_commit = repo.commit("repin before checking");
-    assert!(pin_is_current(repo.root(), &changed, &cur_commit).unwrap());
+    // Current when pinned commit and target share action tree; unchanged across unrelated edits.
+    assert!(pin_is_current(repo.root(), &first, &pinned).unwrap());
+    repo.write("README.md", "v2\n");
+    let cur_commit = repo.commit("unrelated doc change");
     assert!(unchanged_since(repo.root(), &changed, &cur_commit).unwrap());
 
     // Actually pin to `first` (stale relative to `changed` -> `cur_commit`).
@@ -216,9 +216,10 @@ fn issue_body_and_publish_cover_create_update_skip_and_errors() {
     // 1. Open a new issue when none exist (ignoring pull_request and wrong titles).
     let calls: RefCell<Vec<(Vec<String>, Option<String>)>> = RefCell::new(Vec::new());
     let mut gh_open = |args: &[&str], stdin: Option<&str>| -> release_policy::Result<String> {
-        calls
-            .borrow_mut()
-            .push((args.iter().map(|s| (*s).to_owned()).collect(), stdin.map(str::to_owned)));
+        calls.borrow_mut().push((
+            args.iter().map(|s| (*s).to_owned()).collect(),
+            stdin.map(str::to_owned),
+        ));
         if args[1].starts_with("repos/o/r/issues?") {
             return Ok(json!([
                 {"number": 1, "title": "Other", "user": {"login": BOT}},
@@ -228,12 +229,22 @@ fn issue_body_and_publish_cover_create_update_skip_and_errors() {
         }
         Ok(json!({"number": 42}).to_string())
     };
-    assert_eq!(publish("o/r", &sha, patch, &mut gh_open).unwrap(), "opened #42");
+    assert_eq!(
+        publish("o/r", &sha, patch, &mut gh_open).unwrap(),
+        "opened #42"
+    );
     let recorded = calls.borrow();
     assert_eq!(recorded.len(), 2);
     assert_eq!(
         recorded[1].0,
-        ["api", "--method", "POST", "repos/o/r/issues", "--input", "-"]
+        [
+            "api",
+            "--method",
+            "POST",
+            "repos/o/r/issues",
+            "--input",
+            "-"
+        ]
     );
     let sent = pyjson::loads(recorded[1].1.as_deref().unwrap()).unwrap();
     assert_eq!(sent.get("title").and_then(Json::as_str), Some(TITLE));
@@ -250,8 +261,10 @@ fn issue_body_and_publish_cover_create_update_skip_and_errors() {
 
     // 3. No-op when bot issue already carries exact body.
     let mut gh_same = |_: &[&str], _: Option<&str>| {
-        Ok(json!([{"number": 11, "title": TITLE, "body": body, "user": {"login": BOT}}])
-            .to_string())
+        Ok(
+            json!([{"number": 11, "title": TITLE, "body": body, "user": {"login": BOT}}])
+                .to_string(),
+        )
     };
     assert_eq!(
         publish("o/r", &sha, patch, &mut gh_same).unwrap(),
@@ -304,8 +317,10 @@ fn open_issues_handles_pagination_and_malformed_github_payloads() {
     assert_eq!(found.len(), 1);
 
     // Exhaust all MAX_ISSUE_PAGES pages -> error.
-    let err_limit = open_issues("o/r", &mut |_, _| Ok(serde_json::to_string(&filler).unwrap()))
-        .unwrap_err();
+    let err_limit = open_issues("o/r", &mut |_, _| {
+        Ok(serde_json::to_string(&filler).unwrap())
+    })
+    .unwrap_err();
     assert_eq!(
         err_limit,
         format!("no decision after {MAX_ISSUE_PAGES} pages of open issues")
@@ -325,7 +340,10 @@ fn cli_prepare_and_publish_with_fake_gh_and_error_paths() {
     // Pin workflow back to `first` with matching baseline digest so `prepare` updates it.
     let stale_wf = workflow_text(&first, "      # No, Mr Bond, I expect you to repin\n");
     repo.write(WORKFLOW, &stale_wf);
-    repo.write(BASELINE, baseline_text(&canonical_digest(stale_wf.as_bytes())));
+    repo.write(
+        BASELINE,
+        baseline_text(&canonical_digest(stale_wf.as_bytes())),
+    );
     let stale_commit = repo.commit("stale state");
     let patch_file = PathBuf::from("out.patch");
 
@@ -398,7 +416,13 @@ fn cli_prepare_and_publish_with_fake_gh_and_error_paths() {
     let crlf_patch = read_bytes(&repo.path("out.patch"))
         .unwrap()
         .iter()
-        .flat_map(|&b| if b == b'\n' { vec![b'\r', b'\n'] } else { vec![b] })
+        .flat_map(|&b| {
+            if b == b'\n' {
+                vec![b'\r', b'\n']
+            } else {
+                vec![b]
+            }
+        })
         .collect::<Vec<u8>>();
     repo.write("crlf.patch", crlf_patch);
 
@@ -410,7 +434,14 @@ fn cli_prepare_and_publish_with_fake_gh_and_error_paths() {
             0
         ),
         rule(
-            &["api", "--method", "POST", "repos/o/r/issues", "--input", "-"],
+            &[
+                "api",
+                "--method",
+                "POST",
+                "repos/o/r/issues",
+                "--input",
+                "-"
+            ],
             "{\"number\": 12}",
             "",
             0

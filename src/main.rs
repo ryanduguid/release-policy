@@ -3,7 +3,8 @@
 
 use clap::{Args, Parser, Subcommand};
 use release_policy::{
-    Result, binary_release, common::*, pin_families, release::*, repin_issue, verify_skills,
+    Result, binary_release, common::*, pin_families, release::*, repin_issue, verify_pypi,
+    verify_skills,
 };
 use std::path::PathBuf;
 mod cli_checks;
@@ -95,6 +96,30 @@ enum Command {
     BinaryRelease {
         #[command(subcommand)]
         command: BinaryReleaseCommand,
+    },
+    /// Read a publication back from PyPI and compare it with the files that were built (scripts/verify_pypi.py)
+    #[command(name = "verify-pypi", alias = "verify_pypi")]
+    VerifyPypi {
+        #[arg(long)]
+        project: String,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        repository: String,
+        #[arg(long)]
+        commit: String,
+        #[arg(long)]
+        workflow: String,
+        #[arg(long = "file", action = clap::ArgAction::Append, required = true)]
+        files: Vec<String>,
+        #[arg(long, hide = true)]
+        base_url: Option<String>,
+        #[arg(long, hide = true)]
+        attempts: Option<usize>,
+        #[arg(long, hide = true)]
+        delay_ms: Option<u64>,
+        #[arg(long, hide = true)]
+        ca_cert: Option<PathBuf>,
     },
 }
 
@@ -479,7 +504,10 @@ fn execute(cli: Cli) -> Result<i32> {
                 match repin_issue::prepare(&cwd, &target, &patch)? {
                     None => print("attribution pin is current\n", false),
                     Some(stale) => print(
-                        &format!("attribution pin {stale} is stale; wrote {}\n", patch.display()),
+                        &format!(
+                            "attribution pin {stale} is stale; wrote {}\n",
+                            patch.display()
+                        ),
                         false,
                     ),
                 }
@@ -500,9 +528,8 @@ fn execute(cli: Cli) -> Result<i32> {
                     return Ok(1);
                 }
                 let patch_bytes = read_bytes(&patch)?;
-                let patch_text = release_policy::py::universal_newlines(
-                    &release_policy::py::decode_utf8(&patch_bytes).map_err(|e| e.to_string())?,
-                );
+                let patch_text =
+                    release_policy::py::decode_utf8(&patch_bytes).map_err(|e| e.to_string())?;
                 let summary = repin_issue::publish(
                     &repository,
                     &target,
@@ -519,6 +546,63 @@ fn execute(cli: Cli) -> Result<i32> {
                 return Ok(1);
             }
         },
+        Command::VerifyPypi {
+            project,
+            version,
+            repository,
+            commit,
+            workflow,
+            files,
+            base_url,
+            attempts,
+            delay_ms,
+            ca_cert,
+        } => {
+            let result = (|| -> Result<String> {
+                let mut config = verify_pypi::Config::default();
+                if let Some(url) = base_url {
+                    if !full(r"https?://127\.0\.0\.1:[0-9]{1,5}", &url) {
+                        return Err("--base-url is restricted to loopback addresses".into());
+                    }
+                    config.base_url = url;
+                }
+                if let Some(n) = attempts {
+                    config.attempts = n;
+                }
+                if let Some(ms) = delay_ms {
+                    config.delay = std::time::Duration::from_millis(ms);
+                }
+                if let Some(cert_path) = ca_cert {
+                    if !config.base_url.starts_with("https://127.0.0.1:") {
+                        return Err(
+                            "--ca-cert requires a loopback https://127.0.0.1:<port> --base-url"
+                                .into(),
+                        );
+                    }
+                    config.root_ca_pem = Some(read_bytes(&cert_path)?);
+                }
+                let py_files: Vec<release_policy::py::PyPath> = files
+                    .iter()
+                    .map(|s| release_policy::py::PyPath::new(s))
+                    .collect();
+                verify_pypi::verify_publication(
+                    &project,
+                    &version,
+                    &py_files,
+                    &repository,
+                    &commit,
+                    &workflow,
+                    &config,
+                )
+            })();
+            match result {
+                Ok(line) => print(&format!("{line}\n"), false),
+                Err(e) => {
+                    print(&format!("verify_pypi: {e}\n"), true);
+                    return Ok(1);
+                }
+            }
+        }
     }
     Ok(0)
 }
@@ -622,9 +706,10 @@ fn run_binary_release(command: BinaryReleaseCommand) -> Result<String> {
             )?;
             Ok(path.to_string_lossy().into_owned())
         }
-        BinaryReleaseCommand::Smoke { version, executable } => {
-            binary_release::smoke(&binary_release::confined_path(&executable)?, &version)
-        }
+        BinaryReleaseCommand::Smoke {
+            version,
+            executable,
+        } => binary_release::smoke(&binary_release::confined_path(&executable)?, &version),
         BinaryReleaseCommand::Linkage {
             target,
             readobj_output,
@@ -648,19 +733,17 @@ fn run_binary_release(command: BinaryReleaseCommand) -> Result<String> {
             stem,
             version,
             dist,
-        } => Ok(binary_release::digests(
-            &binary_release::confined_path(&dist)?,
-            &stem,
-            &version,
-        )?
-        .join("\n")),
-        BinaryReleaseCommand::Assets { stem, version } => Ok(
-            binary_release::handoff_names(&stem, &version)?
+        } => Ok(
+            binary_release::digests(&binary_release::confined_path(&dist)?, &stem, &version)?
+                .join("\n"),
+        ),
+        BinaryReleaseCommand::Assets { stem, version } => {
+            Ok(binary_release::handoff_names(&stem, &version)?
                 .into_iter()
                 .map(|(_, name)| name)
                 .collect::<Vec<_>>()
-                .join("\n"),
-        ),
+                .join("\n"))
+        }
         BinaryReleaseCommand::Accept {
             stem,
             version,

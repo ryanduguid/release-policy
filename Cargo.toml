@@ -23,6 +23,7 @@ serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision
 sha2 = "0.11.1"
 tempfile = "3.27.0"
 toml = "1"
+ureq = "3"
 
 # init compares file IDs, which std exposes on Windows only unstably.
 [target.'cfg(windows)'.dependencies]
@@ -105,6 +106,10 @@ path = "tests/rust/repin_issue.rs"
 [[test]]
 name = "binary_release"
 path = "tests/rust/binary_release.rs"
+
+[[test]]
+name = "verify_pypi"
+path = "tests/rust/verify_pypi.rs"
 
 [profile.release]
 codegen-units = 1
