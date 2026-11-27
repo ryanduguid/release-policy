@@ -42,13 +42,16 @@ bytes and file formats. Underscored names are accepted as aliases.
 | Script | Command |
 | --- | --- |
 | `scripts/attribution_status.py` | `release-policy attribution-status` |
+| `scripts/binary_release.py` | `release-policy binary-release` |
 | `scripts/build_release_archives.py` | `release-policy build-release-archives` |
 | `scripts/check_canaries.py` | `release-policy check-canaries` |
 | `scripts/check_egress.py` | `release-policy check-egress` |
 | `scripts/check_reviews.py` | `release-policy check-reviews` |
 | `scripts/pin_families.py` | `release-policy pin-families` |
 | `scripts/python_release.py` | `release-policy python-release` |
+| `scripts/repin_issue.py` | `release-policy repin-issue` |
 | `scripts/required_checks.py` | `release-policy required-checks` |
+| `scripts/verify_pypi.py` | `release-policy verify-pypi` |
 | `scripts/verify_skills.py` | `release-policy verify-skills` |
 
 For example, `python scripts/python_release.py tag --tag v1.2.3 --tag-prefix v`
@@ -61,20 +64,17 @@ release, move both, with the goldens in `tests/data/init`, in one pull request;
 `tests/test_init_goldens.py` checks that the pin is the commit of the tag it
 names and that the release's workflows accept each golden's inputs.
 
-`scripts/repin_issue.py` has no command yet. Only the `Attribution repin`
-workflow runs it, and like the release workflows it calls the scripts until
-the switch-over; port it then. The same holds for `scripts/binary_release.py`,
-which `release-binary.yml` and `scripts/build_binary.sh` run, and for
-`scripts/build_skill_bundle.py`, which `publish-archives.yml` runs.
-`scripts/verify_pypi.py` has no command either: a consumer's PyPI read-back
-job runs it from the policy checkout, and it hands signature verification to
-the Python `pypi-attestations` package.
+`scripts/build_skill_bundle.py`, which `publish-archives.yml` runs, has no Rust
+command yet. `release-policy verify-pypi` verifies the PyPI JSON and Integrity
+API responses in Rust and hands signature verification to the Python
+`pypi-attestations` package.
 
-The PR-review scripts (`scripts/pr_review*.py`) stay in Python: they drive the
-PR-Agent engine in-process and share its virtual environment.
-`.github/ci/check_gates.py` stays Python because consumers copy it byte for
-byte. Each consumer's gate tests pin its digest (SHA-256 after CRLF to LF), so
-change it here first and copy it unchanged. The shell scripts stay shell.
+The PR-review scripts (`scripts/pr_review*.py`) keep the PR-Agent engine
+adapter and virtual environment in Python; see [PORTING.md](../PORTING.md) for
+the Wave 2 portability notes. `.github/ci/check_gates.py` stays Python because
+consumers copy it byte for byte. Each consumer's gate tests pin its digest
+(SHA-256 after CRLF to LF), so change it here first and copy it unchanged. The
+shell scripts stay shell.
 
 ## Differences from the scripts
 
@@ -88,8 +88,8 @@ These are the only known behaviour differences. Each keeps the exit code.
   exit code. Where the script raised `ValueError` or `FileExistsError` the
   message text is the same.
 - `check-canaries` reads `canaries.json` in the working directory by default,
-  and `pin-families` reads the Git repository in the working directory. The
-  scripts used their own checkout.
+  and `pin-families` and `repin-issue` read the Git repository in the working
+  directory. The scripts used their own checkout.
 - `verify-skills` runs the first `python` on `PATH`, where the script ran its
   own interpreter.
 - JSON nested deeper than the Rust parser's fixed limit is refused. Python's

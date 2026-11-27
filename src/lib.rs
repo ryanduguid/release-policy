@@ -4,6 +4,7 @@
 //! Release policy contracts, ported from the pinned Python tooling.
 pub mod archives;
 pub mod attribution;
+pub mod binary_release;
 pub mod check_canaries;
 pub mod check_reviews;
 pub mod common;
@@ -16,7 +17,9 @@ pub mod py;
 pub mod pyjson;
 mod pyunicode;
 pub mod release;
+pub mod repin_issue;
 pub mod required_checks;
+pub mod verify_pypi;
 pub mod verify_skills;
 
 pub type Result<T> = std::result::Result<T, String>;

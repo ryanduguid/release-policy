@@ -9,7 +9,9 @@ license = "Apache-2.0"
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
+crc32fast = "1"
 fancy-regex = "0.20.0"
+flate2 = "1"
 jiff = { version = "1.0.0", default-features = false, features = ["std"] }
 num-bigint = "0.5.1"
 num-traits = "0.2.19"
@@ -21,6 +23,7 @@ serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision
 sha2 = "0.11.1"
 tempfile = "3.27.0"
 toml = "1"
+ureq = "3"
 
 # init compares file IDs, which std exposes on Windows only unstably.
 [target.'cfg(windows)'.dependencies]
@@ -95,6 +98,18 @@ path = "tests/rust/verify_skills.rs"
 [[test]]
 name = "init"
 path = "tests/rust/init.rs"
+
+[[test]]
+name = "repin_issue"
+path = "tests/rust/repin_issue.rs"
+
+[[test]]
+name = "binary_release"
+path = "tests/rust/binary_release.rs"
+
+[[test]]
+name = "verify_pypi"
+path = "tests/rust/verify_pypi.rs"
 
 [profile.release]
 codegen-units = 1
